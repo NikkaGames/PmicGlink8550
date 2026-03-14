@@ -2155,12 +2155,17 @@ PmicGlink_SendData(
 
     if ((Context == NULL) || (Buffer == NULL) || (BufferLen == 0))
     {
-        return STATUS_INVALID_PARAMETER;
+        if ((Buffer == NULL) || (BufferLen == 0))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        return PMICGLINK_STATUS_DEVICE_NOT_READY;
     }
 
     if (Context->GlinkChannelRestart || !Context->GlinkChannelConnected)
     {
-        return STATUS_UNSUCCESSFUL;
+        return PMICGLINK_STATUS_DEVICE_NOT_READY;
     }
 
     status = KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
@@ -2176,7 +2181,7 @@ PmicGlink_SendData(
         if (waitCount >= 0x5DCu)
         {
             KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
-            return STATUS_UNSUCCESSFUL;
+            return PMICGLINK_STATUS_DEVICE_NOT_READY;
         }
 
         KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
@@ -7842,7 +7847,7 @@ PmicGlinkUlog_SendData(
 
     if (Context->GlinkChannelUlogRestart || !Context->GlinkChannelUlogConnected)
     {
-        return STATUS_UNSUCCESSFUL;
+        return PMICGLINK_STATUS_DEVICE_NOT_READY;
     }
 
     status = KeWaitForSingleObject(&gPmicGlinkUlogTxSync, Executive, KernelMode, FALSE, NULL);
@@ -7858,7 +7863,7 @@ PmicGlinkUlog_SendData(
         if (waitCount >= 0x3E8u)
         {
             KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
-            return STATUS_UNSUCCESSFUL;
+            return PMICGLINK_STATUS_DEVICE_NOT_READY;
         }
 
         KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
