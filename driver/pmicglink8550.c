@@ -4517,9 +4517,8 @@ PmicGlinkUCSIReadBuffer(
     }
     else if (*(ULONGLONG*)&gLatestUcsiCmd.data[8] == 1ull)
     {
-        RtlZeroMemory(OutputBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
-
         words = (USHORT*)OutputBuffer;
+        ((ULONG*)OutputBuffer)[1] = 0;
         words[0] = 0x0100;
         words[3] = 0x0800;
 
