@@ -1,6 +1,7 @@
 #include "pmicglink8550.h"
 
 #include <initguid.h>
+#include <acpiioct.h>
 
 DEFINE_GUID(
     GUID_DEVINTERFACE_PMICGLINK,
@@ -193,6 +194,7 @@ typedef struct _PMICGLINK_ABD_CONNECTION_ENTRY
 C_ASSERT(sizeof(PMICGLINK_ABD_CONNECTION_ENTRY) == 32);
 
 static PMICGLINK_ABD_CONNECTION_ENTRY gPmicGlinkAbdConnections[4];
+static UCHAR gPmicGlinkAbdConnectionMax = RTL_NUMBER_OF(gPmicGlinkAbdConnections);
 
 typedef struct _PMICGLINK_USBC_WRITE_REQ_MESSAGE
 {
@@ -243,6 +245,7 @@ static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG
 static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkAbdUpdateConnections(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN Register);
 static VOID PmicGlinkInitAbdConnections(VOID);
+static NTSTATUS PmicGlinkEvaluateAbdConnectionCount(_In_ WDFDEVICE Device);
 static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
@@ -945,6 +948,9 @@ RegisterDeviceInterfaces(
 
     if (!Register)
     {
+        WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_BATT_MNGR, NULL, FALSE);
+        WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL, FALSE);
+
         if (context->ABDAttached && (context->AbdIoTarget != NULL))
         {
             (VOID)PmicGlinkAbdUpdateConnections(context, FALSE);
@@ -1006,6 +1012,9 @@ RegisterDeviceInterfaces(
             return status;
         }
     }
+
+    WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_BATT_MNGR, NULL, TRUE);
+    WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL, TRUE);
 
     context->DeviceInterfacesRegistered = TRUE;
 
@@ -1648,6 +1657,10 @@ PmicGlinkDevice_InitContext(
     Context->BattMiniDeviceLoaded = FALSE;
 
     PmicGlinkInitAbdConnections();
+    if (Context->Device != NULL)
+    {
+        (VOID)PmicGlinkEvaluateAbdConnectionCount(Context->Device);
+    }
 
     Context->DdiInterfaceRefCount = 0;
     Context->DdiInterfacePadding = 0;
@@ -2832,6 +2845,7 @@ PmicGlinkInitAbdConnections(
     )
 {
     RtlZeroMemory(gPmicGlinkAbdConnections, sizeof(gPmicGlinkAbdConnections));
+    gPmicGlinkAbdConnectionMax = RTL_NUMBER_OF(gPmicGlinkAbdConnections);
 
     gPmicGlinkAbdConnections[0].InterfaceClassGuid = GUID_DEVINTERFACE_PMICGLINK;
     gPmicGlinkAbdConnections[0].ConnectionType = 3;
@@ -2856,6 +2870,88 @@ PmicGlinkInitAbdConnections(
     gPmicGlinkAbdConnections[3].PrimaryIoctl = IOCTL_PMICGLINK_QCMB_GET_CHARGER_INFO;
     gPmicGlinkAbdConnections[3].SecondaryIoctl = IOCTL_PMICGLINK_QCMB_GET_CHARGER_INFO;
     gPmicGlinkAbdConnections[3].MessageOpcode = 20;
+}
+
+static NTSTATUS
+PmicGlinkEvaluateAbdConnectionCount(
+    _In_ WDFDEVICE Device
+    )
+{
+    NTSTATUS status;
+    WDFIOTARGET ioTarget;
+    ACPI_EVAL_INPUT_BUFFER inputBuffer;
+    UCHAR outputStorage[sizeof(ACPI_EVAL_OUTPUT_BUFFER) + ACPI_METHOD_ARGUMENT_LENGTH(sizeof(ULONG))];
+    PACPI_EVAL_OUTPUT_BUFFER outputBuffer;
+    PACPI_METHOD_ARGUMENT outputArg;
+    WDF_MEMORY_DESCRIPTOR inputDescriptor;
+    WDF_MEMORY_DESCRIPTOR outputDescriptor;
+    ULONG_PTR bytesReturned;
+    ULONG rawValue;
+    ULONG connectionCount;
+
+    if (Device == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ioTarget = WdfDeviceGetIoTarget(Device);
+    if (ioTarget == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    RtlZeroMemory(&inputBuffer, sizeof(inputBuffer));
+    inputBuffer.Signature = ACPI_EVAL_INPUT_BUFFER_SIGNATURE;
+    RtlCopyMemory(inputBuffer.MethodName, "GEPT", sizeof(inputBuffer.MethodName));
+
+    RtlZeroMemory(outputStorage, sizeof(outputStorage));
+    bytesReturned = 0;
+
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputDescriptor, &inputBuffer, sizeof(inputBuffer));
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&outputDescriptor, outputStorage, sizeof(outputStorage));
+
+    status = WdfIoTargetSendInternalIoctlSynchronously(
+        ioTarget,
+        NULL,
+        IOCTL_ACPI_EVAL_METHOD,
+        &inputDescriptor,
+        &outputDescriptor,
+        NULL,
+        &bytesReturned);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    outputBuffer = (PACPI_EVAL_OUTPUT_BUFFER)outputStorage;
+    if ((bytesReturned < sizeof(ACPI_EVAL_OUTPUT_BUFFER))
+        || (outputBuffer->Signature != ACPI_EVAL_OUTPUT_BUFFER_SIGNATURE)
+        || (outputBuffer->Count == 0))
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    outputArg = &outputBuffer->Argument[0];
+    if ((outputArg->Type != ACPI_METHOD_ARGUMENT_INTEGER)
+        || (outputArg->DataLength < sizeof(ULONG)))
+    {
+        return STATUS_OBJECT_TYPE_MISMATCH;
+    }
+
+    rawValue = outputArg->Argument;
+    connectionCount = (rawValue >> 16) & 0xFFu;
+    if (connectionCount == 0)
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    if (connectionCount > RTL_NUMBER_OF(gPmicGlinkAbdConnections))
+    {
+        connectionCount = RTL_NUMBER_OF(gPmicGlinkAbdConnections);
+    }
+
+    gPmicGlinkAbdConnectionMax = (UCHAR)connectionCount;
+    return STATUS_SUCCESS;
 }
 
 static NTSTATUS
@@ -2962,6 +3058,7 @@ PmicGlinkAbdUpdateConnections(
     NTSTATUS status;
     ULONG ioControlCode;
     ULONG inputBufferSize;
+    ULONG connectionCount;
     ULONG index;
 
     if ((Context == NULL) || (Context->AbdIoTarget == NULL) || !Context->ABDAttached)
@@ -2975,9 +3072,14 @@ PmicGlinkAbdUpdateConnections(
     inputBufferSize = Register
         ? (ULONG)sizeof(PMICGLINK_ABD_CONNECTION_ENTRY)
         : (ULONG)sizeof(GUID);
+    connectionCount = gPmicGlinkAbdConnectionMax;
+    if (connectionCount > RTL_NUMBER_OF(gPmicGlinkAbdConnections))
+    {
+        connectionCount = RTL_NUMBER_OF(gPmicGlinkAbdConnections);
+    }
 
     status = STATUS_SUCCESS;
-    for (index = 0; index < RTL_NUMBER_OF(gPmicGlinkAbdConnections); index++)
+    for (index = 0; index < connectionCount; index++)
     {
         NTSTATUS requestStatus;
         SIZE_T bytesReturned;
