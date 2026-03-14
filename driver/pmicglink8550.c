@@ -173,6 +173,7 @@ static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 static PVOID gKeInitializeTriageDumpDataArray;
+static PVOID gKeAddTriageDumpDataBlock;
 
 #define PMICGLINK_POOLTAG_CRASHDUMP 'DmGP'
 #define PMICGLINK_CRASHDUMP_STALE_FILE_OBJECT ((WDFFILEOBJECT)(ULONG_PTR)-1)
@@ -258,6 +259,13 @@ typedef NTSTATUS
     _In_ ULONG ArraySize
     );
 
+typedef NTSTATUS
+(*PFN_KE_ADD_TRIAGE_DUMP_DATA_BLOCK)(
+    _Inout_ PVOID TriageDumpDataArray,
+    _In_reads_bytes_(DataSize) PVOID DataBuffer,
+    _In_ ULONG DataSize
+    );
+
 static NTSTATUS PmicGlink_Init(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkDevice_InitContext(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS RegisterDeviceInterfaces(_In_ WDFDEVICE Device, _In_ BOOLEAN Register);
@@ -291,6 +299,7 @@ static VOID PmicGlinkUlogTimerFunction(_In_ WDFTIMER Timer);
 static NTSTATUS PmicGlinkUlogSendSetPropertiesRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUlogSendGetBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS CrashDump_InitializeTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static VOID CrashDump_PopulateTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID CrashDumpGuidToHexKey(_In_ const GUID* Guid, _Out_writes_(33) CHAR* Key);
 static BOOLEAN CrashDumpGuidIsZero(_In_ const GUID* Guid);
 static LONG CrashDump_FileHandleSlotFind(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ WDFFILEOBJECT FileObject, _In_ ULONG DataSourceMode);
@@ -3874,6 +3883,75 @@ CrashDump_InitializeTriageDataArray(
     return STATUS_SUCCESS;
 }
 
+static VOID
+CrashDump_PopulateTriageDataArray(
+    _Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    ULONG index;
+    UNICODE_STRING routineName;
+    PFN_KE_INITIALIZE_TRIAGE_DUMP_DATA_ARRAY initializeTriageDataArray;
+    PFN_KE_ADD_TRIAGE_DUMP_DATA_BLOCK addTriageDataBlock;
+
+    if ((Context == NULL)
+        || (Context->CrashDumpTriageDataArray == NULL)
+        || (Context->CrashDumpTriageDataArraySize == 0))
+    {
+        return;
+    }
+
+    initializeTriageDataArray =
+        (PFN_KE_INITIALIZE_TRIAGE_DUMP_DATA_ARRAY)gKeInitializeTriageDumpDataArray;
+    if (initializeTriageDataArray == NULL)
+    {
+        return;
+    }
+
+    (VOID)initializeTriageDataArray(
+        Context->CrashDumpTriageDataArray,
+        Context->CrashDumpTriageDataArraySize);
+
+    if (gKeAddTriageDumpDataBlock == NULL)
+    {
+        RtlInitUnicodeString(&routineName, L"KeAddTriageDumpDataBlock");
+        gKeAddTriageDumpDataBlock = MmGetSystemRoutineAddress(&routineName);
+    }
+
+    addTriageDataBlock = (PFN_KE_ADD_TRIAGE_DUMP_DATA_BLOCK)gKeAddTriageDumpDataBlock;
+    if (addTriageDataBlock == NULL)
+    {
+        return;
+    }
+
+    for (index = 1; index < Context->CrashDumpDataSourceCount; index++)
+    {
+        PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+        PVOID dataBuffer;
+
+        source = &Context->CrashDumpDataSources[index];
+        if ((source->RingBufferData == NULL)
+            || (source->RingBufferSize == 0)
+            || (source->RingBufferSizeOfEachEntry == 0))
+        {
+            continue;
+        }
+
+        CrashDump_PrepareBugCheckSnapshot(source);
+        dataBuffer = (source->BugCheckBufferPointer != NULL)
+            ? (PVOID)source->BugCheckBufferPointer
+            : (PVOID)source->RingBufferData;
+        if (dataBuffer == NULL)
+        {
+            continue;
+        }
+
+        (VOID)addTriageDataBlock(
+            Context->CrashDumpTriageDataArray,
+            dataBuffer,
+            source->RingBufferSize);
+    }
+}
+
 static NTSTATUS
 CrashDump_RegisterGlobalCallbacks(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
@@ -4718,6 +4796,7 @@ CrashDump_BugCheckTriageDumpDataCallback(
     }
 
     WdfWaitLockAcquire(context->CrashDumpLock, NULL);
+    CrashDump_PopulateTriageDataArray(context);
     if (context->CrashDumpTriageDataArray != NULL)
     {
         reason64[0] = (ULONGLONG)(ULONG_PTR)context->CrashDumpTriageDataArray;
