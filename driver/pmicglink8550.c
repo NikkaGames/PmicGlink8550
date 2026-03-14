@@ -2131,6 +2131,9 @@ PmicGlinkStateNotificationCb(
         Context->GlinkChannelConnected = TRUE;
         Context->GlinkChannelRestart = FALSE;
         Context->GlinkLinkStateUp = TRUE;
+        Context->LastRxOpcode = 0;
+        Context->LastRxStatus = STATUS_SUCCESS;
+        Context->LastRxValid = FALSE;
         Context->GlinkRxIntent += 1;
         if ((Context->UlogInitEn != 0) && !Context->GlinkChannelUlogConnected)
         {
@@ -2141,6 +2144,9 @@ PmicGlinkStateNotificationCb(
 
     case PmicGlinkChannelLocalDisconnected:
         Context->GlinkChannelConnected = FALSE;
+        Context->LastRxOpcode = 0;
+        Context->LastRxStatus = STATUS_SUCCESS;
+        Context->LastRxValid = FALSE;
         if (Context->GlinkChannelRestart && Context->GlinkLinkStateUp)
         {
             (VOID)PmicGlink_OpenGlinkChannel(Context);
@@ -2150,6 +2156,9 @@ PmicGlinkStateNotificationCb(
     case PmicGlinkChannelRemoteDisconnected:
         Context->GlinkChannelConnected = FALSE;
         Context->GlinkChannelRestart = TRUE;
+        Context->LastRxOpcode = 0;
+        Context->LastRxStatus = STATUS_SUCCESS;
+        Context->LastRxValid = FALSE;
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         break;
 
@@ -7693,6 +7702,7 @@ PmicGlinkUlogGetLogBuffer(
 {
     NTSTATUS status;
     ULONG attempts;
+    BOOLEAN printed;
 
     if (Context == NULL)
     {
@@ -7705,6 +7715,7 @@ PmicGlinkUlogGetLogBuffer(
     }
 
     attempts = 4u;
+    printed = FALSE;
     status = STATUS_TIMEOUT;
     while (attempts > 0u)
     {
@@ -7716,11 +7727,17 @@ PmicGlinkUlogGetLogBuffer(
 
         if (PmicGlinkUlogPrintBuffer(FALSE))
         {
+            printed = TRUE;
             status = STATUS_SUCCESS;
             break;
         }
 
         attempts--;
+    }
+
+    if (!printed && NT_SUCCESS(status))
+    {
+        status = STATUS_TIMEOUT;
     }
 
     return status;
@@ -7806,12 +7823,18 @@ PmicGlinkUlogStateNotificationCb(
         deviceContext->GlinkChannelUlogFirstConnect = TRUE;
         deviceContext->GlinkChannelUlogConnected = TRUE;
         deviceContext->GlinkChannelUlogRestart = FALSE;
+        deviceContext->LastUlogRxOpcode = 0;
+        deviceContext->LastUlogRxStatus = STATUS_SUCCESS;
+        deviceContext->LastUlogRxValid = FALSE;
         deviceContext->GlinkUlogRxIntent += 1;
         (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkUlogRegisterInterfaceWorkItem);
         break;
 
     case PmicGlinkChannelLocalDisconnected:
         deviceContext->GlinkChannelUlogConnected = FALSE;
+        deviceContext->LastUlogRxOpcode = 0;
+        deviceContext->LastUlogRxStatus = STATUS_SUCCESS;
+        deviceContext->LastUlogRxValid = FALSE;
         if (deviceContext->UlogTimer != NULL)
         {
             (VOID)WdfTimerStop(deviceContext->UlogTimer, FALSE);
@@ -7826,6 +7849,9 @@ PmicGlinkUlogStateNotificationCb(
     case PmicGlinkChannelRemoteDisconnected:
         deviceContext->GlinkChannelUlogConnected = FALSE;
         deviceContext->GlinkChannelUlogRestart = TRUE;
+        deviceContext->LastUlogRxOpcode = 0;
+        deviceContext->LastUlogRxStatus = STATUS_SUCCESS;
+        deviceContext->LastUlogRxValid = FALSE;
         if (deviceContext->UlogTimer != NULL)
         {
             (VOID)WdfTimerStop(deviceContext->UlogTimer, FALSE);
