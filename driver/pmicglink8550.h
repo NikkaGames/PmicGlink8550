@@ -527,6 +527,8 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     BOOLEAN CrashDumpAdditionalCallbackRegistered;
     KBUGCHECK_REASON_CALLBACK_RECORD CrashDumpTriageCallbackRecord;
     BOOLEAN CrashDumpTriageCallbackRegistered;
+    PVOID CrashDumpTriageDataArray;
+    ULONG CrashDumpTriageDataArraySize;
     ULONG CrashDumpDataSourceCount;
     PMICGLINK_CRASHDUMP_DATA_SOURCE CrashDumpDataSources[PMICGLINK_CRASHDUMP_MAX_SOURCES];
 

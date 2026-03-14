@@ -172,6 +172,7 @@ static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
 static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
+static PVOID gKeInitializeTriageDumpDataArray;
 
 #define PMICGLINK_POOLTAG_CRASHDUMP 'DmGP'
 #define PMICGLINK_CRASHDUMP_STALE_FILE_OBJECT ((WDFFILEOBJECT)(ULONG_PTR)-1)
@@ -188,6 +189,8 @@ static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 #define PMICGLINK_ULOG_DEFAULT_TIMER_DUE_TIME_100NS (-20000000ll)
 #define PMICGLINK_100NS_PER_SECOND 10000000ll
 #define PMICGLINK_CRASHDUMP_RINGBUFFER_MAX_BYTES 1024u
+#define PMICGLINK_CRASHDUMP_TRIAGE_DATA_BLOCK_COUNT 1024u
+#define PMICGLINK_CRASHDUMP_TRIAGE_DATA_ARRAY_SIZE (16u * (PMICGLINK_CRASHDUMP_TRIAGE_DATA_BLOCK_COUNT + 3u))
 
 typedef struct _PMICGLINK_ABD_CONNECTION_ENTRY
 {
@@ -249,6 +252,12 @@ typedef struct _PMICGLINK_ULOG_GET_BUFFER_REQUEST
     ULONG Reserved;
 } PMICGLINK_ULOG_GET_BUFFER_REQUEST;
 
+typedef NTSTATUS
+(*PFN_KE_INITIALIZE_TRIAGE_DUMP_DATA_ARRAY)(
+    _Out_writes_bytes_(ArraySize) PVOID TriageDumpDataArray,
+    _In_ ULONG ArraySize
+    );
+
 static NTSTATUS PmicGlink_Init(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkDevice_InitContext(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS RegisterDeviceInterfaces(_In_ WDFDEVICE Device, _In_ BOOLEAN Register);
@@ -281,6 +290,7 @@ static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK
 static VOID PmicGlinkUlogTimerFunction(_In_ WDFTIMER Timer);
 static NTSTATUS PmicGlinkUlogSendSetPropertiesRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUlogSendGetBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static NTSTATUS CrashDump_InitializeTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID CrashDumpGuidToHexKey(_In_ const GUID* Guid, _Out_writes_(33) CHAR* Key);
 static BOOLEAN CrashDumpGuidIsZero(_In_ const GUID* Guid);
 static LONG CrashDump_FileHandleSlotFind(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ WDFFILEOBJECT FileObject, _In_ ULONG DataSourceMode);
@@ -1781,6 +1791,8 @@ PmicGlinkDevice_InitContext(
     Context->CrashDumpAdditionalCallbackRegistered = FALSE;
     RtlZeroMemory(&Context->CrashDumpTriageCallbackRecord, sizeof(Context->CrashDumpTriageCallbackRecord));
     Context->CrashDumpTriageCallbackRegistered = FALSE;
+    Context->CrashDumpTriageDataArray = NULL;
+    Context->CrashDumpTriageDataArraySize = 0;
     Context->CrashDumpDataSourceCount = PMICGLINK_CRASHDUMP_MAX_SOURCES;
     RtlZeroMemory(Context->CrashDumpDataSources, sizeof(Context->CrashDumpDataSources));
 
@@ -3810,11 +3822,65 @@ CrashDump_FindSourceFromCallbackRecord(
 }
 
 static NTSTATUS
+CrashDump_InitializeTriageDataArray(
+    _Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    NTSTATUS status;
+    UNICODE_STRING routineName;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if ((Context->CrashDumpTriageDataArray != NULL) && (Context->CrashDumpTriageDataArraySize != 0))
+    {
+        return STATUS_SUCCESS;
+    }
+
+    if (gKeInitializeTriageDumpDataArray == NULL)
+    {
+        RtlInitUnicodeString(&routineName, L"KeInitializeTriageDumpDataArray");
+        gKeInitializeTriageDumpDataArray = MmGetSystemRoutineAddress(&routineName);
+        if (gKeInitializeTriageDumpDataArray == NULL)
+        {
+            return STATUS_PROCEDURE_NOT_FOUND;
+        }
+    }
+
+    Context->CrashDumpTriageDataArraySize = PMICGLINK_CRASHDUMP_TRIAGE_DATA_ARRAY_SIZE;
+    Context->CrashDumpTriageDataArray = ExAllocatePoolZero(
+        NonPagedPoolNx,
+        Context->CrashDumpTriageDataArraySize,
+        PMICGLINK_POOLTAG_CRASHDUMP);
+    if (Context->CrashDumpTriageDataArray == NULL)
+    {
+        Context->CrashDumpTriageDataArraySize = 0;
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    status = ((PFN_KE_INITIALIZE_TRIAGE_DUMP_DATA_ARRAY)gKeInitializeTriageDumpDataArray)(
+        Context->CrashDumpTriageDataArray,
+        Context->CrashDumpTriageDataArraySize);
+    if (!NT_SUCCESS(status))
+    {
+        ExFreePoolWithTag(Context->CrashDumpTriageDataArray, PMICGLINK_POOLTAG_CRASHDUMP);
+        Context->CrashDumpTriageDataArray = NULL;
+        Context->CrashDumpTriageDataArraySize = 0;
+        return status;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
 CrashDump_RegisterGlobalCallbacks(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
     BOOLEAN additionalRegisteredHere;
+    NTSTATUS status;
 
     if (Context == NULL)
     {
@@ -3843,6 +3909,20 @@ CrashDump_RegisterGlobalCallbacks(
 
     if (!Context->CrashDumpTriageCallbackRegistered)
     {
+        status = CrashDump_InitializeTriageDataArray(Context);
+        if (!NT_SUCCESS(status))
+        {
+            if (additionalRegisteredHere)
+            {
+                (VOID)KeDeregisterBugCheckReasonCallback(&Context->CrashDumpAdditionalCallbackRecord);
+                Context->CrashDumpAdditionalCallbackRegistered = FALSE;
+                RtlZeroMemory(
+                    &Context->CrashDumpAdditionalCallbackRecord,
+                    sizeof(Context->CrashDumpAdditionalCallbackRecord));
+            }
+            return status;
+        }
+
         KeInitializeCallbackRecord(&Context->CrashDumpTriageCallbackRecord);
         if (!KeRegisterBugCheckReasonCallback(
             &Context->CrashDumpTriageCallbackRecord,
@@ -3861,6 +3941,13 @@ CrashDump_RegisterGlobalCallbacks(
                 RtlZeroMemory(
                     &Context->CrashDumpAdditionalCallbackRecord,
                     sizeof(Context->CrashDumpAdditionalCallbackRecord));
+            }
+
+            if (Context->CrashDumpTriageDataArray != NULL)
+            {
+                ExFreePoolWithTag(Context->CrashDumpTriageDataArray, PMICGLINK_POOLTAG_CRASHDUMP);
+                Context->CrashDumpTriageDataArray = NULL;
+                Context->CrashDumpTriageDataArraySize = 0;
             }
 
             return STATUS_INVALID_PARAMETER;
@@ -3929,6 +4016,13 @@ CrashDump_ResetState(
     {
         (VOID)KeDeregisterBugCheckReasonCallback(&Context->CrashDumpTriageCallbackRecord);
         Context->CrashDumpTriageCallbackRegistered = FALSE;
+    }
+
+    if (Context->CrashDumpTriageDataArray != NULL)
+    {
+        ExFreePoolWithTag(Context->CrashDumpTriageDataArray, PMICGLINK_POOLTAG_CRASHDUMP);
+        Context->CrashDumpTriageDataArray = NULL;
+        Context->CrashDumpTriageDataArraySize = 0;
     }
 
     RtlZeroMemory(&Context->CrashDumpAdditionalCallbackRecord, sizeof(Context->CrashDumpAdditionalCallbackRecord));
@@ -4601,10 +4695,10 @@ CrashDump_BugCheckTriageDumpDataCallback(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT context;
-    PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
     ULONGLONG* reason64;
 
     UNREFERENCED_PARAMETER(Reason);
+    UNREFERENCED_PARAMETER(Record);
 
     if ((ReasonSpecificData == NULL) || (ReasonSpecificDataLength < sizeof(ULONGLONG) * 2))
     {
@@ -4624,14 +4718,13 @@ CrashDump_BugCheckTriageDumpDataCallback(
     }
 
     WdfWaitLockAcquire(context->CrashDumpLock, NULL);
-    source = CrashDump_FindSourceFromCallbackRecord(context, Record);
-    if (source == NULL)
+    if (context->CrashDumpTriageDataArray != NULL)
     {
-        source = CrashDump_FindActiveDataSource(context);
+        reason64[0] = (ULONGLONG)(ULONG_PTR)context->CrashDumpTriageDataArray;
     }
-    if (source != NULL)
+    else
     {
-        reason64[0] = source->RingBufferSize;
+        reason64[0] = 0;
     }
     WdfWaitLockRelease(context->CrashDumpLock);
 }
