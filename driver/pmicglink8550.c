@@ -230,6 +230,7 @@ static NTSTATUS CrashDump_DataSourceReadInternal(_In_ PPMIC_GLINK_DEVICE_CONTEXT
 static NTSTATUS CrashDump_DataSourceCaptureInternal(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG DataSourceIndex, _Out_writes_bytes_(BufferLength) UCHAR* Buffer, _In_ SIZE_T BufferLength, _Out_ PULONG BytesWritten);
 static PMICGLINK_CRASHDUMP_DATA_SOURCE* CrashDump_FindActiveDataSource(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static PMICGLINK_CRASHDUMP_DATA_SOURCE* CrashDump_FindSourceFromCallbackRecord(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ PKBUGCHECK_REASON_CALLBACK_RECORD Record);
+static VOID CrashDump_PrepareBugCheckSnapshot(_Inout_ PMICGLINK_CRASHDUMP_DATA_SOURCE* Source);
 static NTSTATUS CrashDump_RegisterGlobalCallbacks(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID CrashDump_ResetState(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS HandleCrashDumpRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ WDFREQUEST Request, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ SIZE_T InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ SIZE_T OutputBufferSize, _Out_ SIZE_T* BytesReturned);
@@ -2495,6 +2496,11 @@ CrashDump_DmfDestroy_RingBuffer(
         ExFreePoolWithTag(source->RingBufferData, PMICGLINK_POOLTAG_CRASHDUMP);
         source->RingBufferData = NULL;
     }
+    if (source->BugCheckSnapshotBuffer != NULL)
+    {
+        ExFreePoolWithTag(source->BugCheckSnapshotBuffer, PMICGLINK_POOLTAG_CRASHDUMP);
+        source->BugCheckSnapshotBuffer = NULL;
+    }
 
     RtlZeroMemory(&source->RingBufferGuid, sizeof(source->RingBufferGuid));
     RtlZeroMemory(source->RingBufferEncryptionKey, sizeof(source->RingBufferEncryptionKey));
@@ -2504,6 +2510,8 @@ CrashDump_DmfDestroy_RingBuffer(
     source->EntriesCount = 0;
     source->CurrentRingBufferIndex = 0;
     source->ValidEntryCount = 0;
+    source->BugCheckBufferPointer = NULL;
+    source->RingBufferEnumerationOffset = 0;
 }
 
 static NTSTATUS
@@ -2546,6 +2554,16 @@ CrashDump_DataSourceCreateInternal(
         PMICGLINK_POOLTAG_CRASHDUMP);
     if (source->RingBufferData == NULL)
     {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    source->BugCheckSnapshotBuffer = (PUCHAR)ExAllocatePoolZero(
+        NonPagedPoolNx,
+        (SIZE_T)totalBytes,
+        PMICGLINK_POOLTAG_CRASHDUMP);
+    if (source->BugCheckSnapshotBuffer == NULL)
+    {
+        ExFreePoolWithTag(source->RingBufferData, PMICGLINK_POOLTAG_CRASHDUMP);
+        source->RingBufferData = NULL;
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
@@ -2936,6 +2954,10 @@ CrashDump_ResetState(
         if (source->RingBufferData != NULL)
         {
             ExFreePoolWithTag(source->RingBufferData, PMICGLINK_POOLTAG_CRASHDUMP);
+        }
+        if (source->BugCheckSnapshotBuffer != NULL)
+        {
+            ExFreePoolWithTag(source->BugCheckSnapshotBuffer, PMICGLINK_POOLTAG_CRASHDUMP);
         }
 
         RtlZeroMemory(source, sizeof(*source));
@@ -3331,6 +3353,58 @@ CrashDump_IoctlHandler(
         BytesReturned);
 }
 
+static VOID
+CrashDump_PrepareBugCheckSnapshot(
+    _Inout_ PMICGLINK_CRASHDUMP_DATA_SOURCE* Source
+    )
+{
+    ULONG validEntries;
+    ULONG oldestIndex;
+    ULONG index;
+
+    if (Source == NULL)
+    {
+        return;
+    }
+
+    Source->BugCheckBufferPointer = NULL;
+    if ((Source->BugCheckSnapshotBuffer == NULL)
+        || (Source->RingBufferSize == 0)
+        || (Source->EntriesCount == 0)
+        || (Source->RingBufferSizeOfEachEntry == 0))
+    {
+        return;
+    }
+
+    RtlZeroMemory(Source->BugCheckSnapshotBuffer, Source->RingBufferSize);
+
+    if ((Source->RingBufferData == NULL) || (Source->ValidEntryCount == 0))
+    {
+        Source->BugCheckBufferPointer = Source->BugCheckSnapshotBuffer;
+        return;
+    }
+
+    validEntries = Source->ValidEntryCount;
+    if (validEntries > Source->EntriesCount)
+    {
+        validEntries = Source->EntriesCount;
+    }
+
+    oldestIndex = (Source->CurrentRingBufferIndex + Source->EntriesCount - validEntries) % Source->EntriesCount;
+    for (index = 0; index < validEntries; index++)
+    {
+        ULONG sourceIndex;
+
+        sourceIndex = (oldestIndex + index) % Source->EntriesCount;
+        RtlCopyMemory(
+            Source->BugCheckSnapshotBuffer + ((SIZE_T)index * Source->RingBufferSizeOfEachEntry),
+            Source->RingBufferData + ((SIZE_T)sourceIndex * Source->RingBufferSizeOfEachEntry),
+            Source->RingBufferSizeOfEachEntry);
+    }
+
+    Source->BugCheckBufferPointer = Source->BugCheckSnapshotBuffer;
+}
+
 static NTSTATUS
 CrashDump_RingBufferElementsFirstBufferGet(
     _In_opt_ PVOID DmfModule,
@@ -3402,6 +3476,7 @@ CrashDump_BugCheckSecondaryDumpDataCallbackRingBuffer(
     ULONGLONG* reason64;
     ULONG* reason32;
     ULONG bytesReported;
+    UCHAR* xorBuffer;
 
     UNREFERENCED_PARAMETER(Reason);
 
@@ -3437,22 +3512,31 @@ CrashDump_BugCheckSecondaryDumpDataCallbackRingBuffer(
         {
             RtlCopyMemory(&reason64[2], &source->RingBufferGuid, sizeof(GUID));
             source->RingBufferEnumerationOffset = 0;
-            (VOID)CrashDump_RingBufferElementsXor(
-                NULL,
-                source->RingBufferData,
-                source->RingBufferSize,
-                source);
+            xorBuffer = (source->BugCheckBufferPointer != NULL)
+                ? source->BugCheckBufferPointer
+                : source->RingBufferData;
+            if (xorBuffer != NULL)
+            {
+                (VOID)CrashDump_RingBufferElementsXor(
+                    NULL,
+                    xorBuffer,
+                    source->RingBufferSize,
+                    source);
+            }
             source->RingBufferEnumerationOffset = 0;
         }
     }
     else
     {
-        source->BugCheckBufferPointer = NULL;
-        (VOID)CrashDump_RingBufferElementsFirstBufferGet(
-            NULL,
-            source->RingBufferData,
-            source->RingBufferSize,
-            source);
+        CrashDump_PrepareBugCheckSnapshot(source);
+        if (source->BugCheckBufferPointer != NULL)
+        {
+            (VOID)CrashDump_RingBufferElementsFirstBufferGet(
+                NULL,
+                source->BugCheckBufferPointer,
+                source->RingBufferSize,
+                source);
+        }
     }
 
     if (source->BugCheckBufferPointer != NULL)

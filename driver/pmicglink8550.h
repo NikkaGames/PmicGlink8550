@@ -329,6 +329,7 @@ typedef struct _PMICGLINK_CRASHDUMP_DATA_SOURCE
     ULONG CurrentRingBufferIndex;
     ULONG ValidEntryCount;
     PUCHAR BugCheckBufferPointer;
+    PUCHAR BugCheckSnapshotBuffer;
     ULONG RingBufferEnumerationOffset;
     KBUGCHECK_REASON_CALLBACK_RECORD BugCheckCallbackRecord;
     BOOLEAN BugCheckCallbackRegistered;
