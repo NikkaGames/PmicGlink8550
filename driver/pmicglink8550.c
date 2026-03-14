@@ -2042,7 +2042,7 @@ PmicGlink_SyncSendReceive(
             UCHAR WriteBuffer[PMICGLINK_UCSI_BUFFER_SIZE];
         } ucsiWriteRequest;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < PMICGLINK_UCSI_BUFFER_SIZE))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2087,41 +2087,28 @@ PmicGlink_SyncSendReceive(
     }
 
     case IOCTL_PMICGLINK_PLATFORM_USBC_NOTIFY:
-        // Preserve ACPI notification compatibility path used by this WDK rewrite.
-        if ((InputBuffer != NULL) && (InputBufferSize == sizeof(ULONG)))
+    {
+        const PMICGLINK_OEM_SET_PROP_INPUT* oemSetRequest;
+        UCHAR oemSetPropRequest[276];
+        const ULONGLONG header = 0x10000800Eull;
+        const ULONG messageOp = 258u;
+
+        if (InputBuffer == NULL)
         {
-            PmicGlinkPlatformUsbc_AcpiNotificationHandler(Context, *(ULONG*)InputBuffer);
-            return STATUS_SUCCESS;
+            return STATUS_INVALID_PARAMETER;
         }
 
-        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(PMICGLINK_OEM_SET_PROP_INPUT)))
-        {
-            const PMICGLINK_OEM_SET_PROP_INPUT* oemSetRequest;
-            UCHAR oemSetPropRequest[276];
-            const ULONGLONG header = 0x10000800Eull;
-            const ULONG messageOp = 258u;
+        oemSetRequest = (const PMICGLINK_OEM_SET_PROP_INPUT*)InputBuffer;
 
-            oemSetRequest = (const PMICGLINK_OEM_SET_PROP_INPUT*)InputBuffer;
+        RtlZeroMemory(oemSetPropRequest, sizeof(oemSetPropRequest));
+        RtlCopyMemory(oemSetPropRequest, &header, sizeof(header));
+        RtlCopyMemory(oemSetPropRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        RtlCopyMemory(oemSetPropRequest + 12, &oemSetRequest->property_id, sizeof(oemSetRequest->property_id));
+        RtlCopyMemory(oemSetPropRequest + 16, &oemSetRequest->data_size, sizeof(oemSetRequest->data_size));
+        RtlCopyMemory(oemSetPropRequest + 20, oemSetRequest->data, sizeof(oemSetRequest->data));
 
-            RtlZeroMemory(oemSetPropRequest, sizeof(oemSetPropRequest));
-            RtlCopyMemory(oemSetPropRequest, &header, sizeof(header));
-            RtlCopyMemory(oemSetPropRequest + sizeof(header), &messageOp, sizeof(messageOp));
-            RtlCopyMemory(oemSetPropRequest + 12, &oemSetRequest->property_id, sizeof(oemSetRequest->property_id));
-            RtlCopyMemory(oemSetPropRequest + 16, &oemSetRequest->data_size, sizeof(oemSetRequest->data_size));
-            RtlCopyMemory(oemSetPropRequest + 20, oemSetRequest->data, sizeof(oemSetRequest->data));
-
-            return PmicGlink_SendData(Context, 258u, oemSetPropRequest, sizeof(oemSetPropRequest), TRUE);
-        }
-
-        // Keep write-request work-item path for existing request producers.
-        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(USBPD_DPM_USBC_WRITE_BUFFER)))
-        {
-            return PmicGlinkPlatformUsbc_Request_Write(
-                Context,
-                (const USBPD_DPM_USBC_WRITE_BUFFER*)InputBuffer);
-        }
-
-        return STATUS_INVALID_PARAMETER;
+        return PmicGlink_SendData(Context, 258u, oemSetPropRequest, sizeof(oemSetPropRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_GET_OEM_MSG:
     {
@@ -2130,7 +2117,7 @@ PmicGlink_SyncSendReceive(
         const ULONGLONG header = 0x10000800Eull;
         const ULONG messageOp = 257u;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_OEM_GET_PROP_INPUT)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2930,11 +2917,8 @@ PmicGlinkNotify_PingBattMiniClass(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
-    if (Context != NULL)
-    {
-        (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 1);
-        Context->NotificationFlag = TRUE;
-    }
+    UNREFERENCED_PARAMETER(Context);
+    (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 1);
 }
 
 static VOID
@@ -4755,6 +4739,7 @@ PmicGlinkGetChargerPorts(
     )
 {
     NTSTATUS status;
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     if ((Context == NULL) || (OutputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -4778,15 +4763,10 @@ PmicGlinkGetChargerPorts(
         return status;
     }
 
-    if (OutputBufferSize < sizeof(ULONG))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     *OutputBuffer = Context->NumPorts;
     *BytesReturned = sizeof(ULONG);
 
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static NTSTATUS
@@ -4802,13 +4782,9 @@ PmicGlinkGetUSBBattMngrChgStatus(
     ULONG portIndex;
     LARGE_INTEGER now;
     NTSTATUS status;
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     if ((Context == NULL) || (InputBuffer == NULL) || (OutputBuffer == NULL) || (BytesReturned == NULL))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    if ((InputBufferSize < sizeof(ULONG)) || (OutputBufferSize < sizeof(LONG)))
     {
         return STATUS_INVALID_PARAMETER;
     }
@@ -4839,7 +4815,7 @@ PmicGlinkGetUSBBattMngrChgStatus(
     *OutputBuffer = Context->UsbinPower[portIndex];
     *BytesReturned = sizeof(ULONGLONG);
 
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static NTSTATUS
@@ -4866,11 +4842,6 @@ PmicGlinkI2CWriteBuffer(
 
     if ((InputBuffer[1] & 0x1u) != 0)
     {
-        if (InputBufferSize < PMICGLINK_I2C_HEADER_SIZE)
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-
         Context->I2CDataLength = 0;
         RtlZeroMemory(Context->I2CHeader, sizeof(Context->I2CHeader));
         RtlCopyMemory(Context->I2CHeader, InputBuffer, PMICGLINK_I2C_HEADER_SIZE);
@@ -4895,6 +4866,7 @@ PmicGlinkI2CReadBuffer(
 
     UNREFERENCED_PARAMETER(InputBuffer);
     UNREFERENCED_PARAMETER(InputBufferSize);
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     if ((Context == NULL) || (OutputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -4924,16 +4896,11 @@ PmicGlinkI2CReadBuffer(
         return STATUS_UNSUCCESSFUL;
     }
 
-    if (OutputBufferSize < PMICGLINK_I2C_HEADER_SIZE + Context->I2CDataLength)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     RtlCopyMemory(OutputBuffer, Context->I2CHeader, PMICGLINK_I2C_HEADER_SIZE);
     RtlCopyMemory(OutputBuffer + PMICGLINK_I2C_HEADER_SIZE, Context->I2CData, Context->I2CDataLength);
 
     *BytesReturned = PMICGLINK_I2C_HEADER_SIZE + Context->I2CDataLength;
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static NTSTATUS
@@ -4947,6 +4914,7 @@ PmicGlinkSendTad_GWS(
     )
 {
     NTSTATUS status;
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     if ((OutputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -4959,19 +4927,9 @@ PmicGlinkSendTad_GWS(
     }
 
     status = PmicGlink_SyncSendReceive(Context, IOCTL_PMICGLINK_TAD_GWS, InputBuffer, InputBufferSize);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    if (OutputBufferSize < sizeof(*OutputBuffer))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     *OutputBuffer = Context->gws_out;
     *BytesReturned = sizeof(*OutputBuffer);
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static NTSTATUS
@@ -4985,6 +4943,7 @@ PmicGlinkSendTad_CWS(
     )
 {
     NTSTATUS status;
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     if ((OutputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -4997,19 +4956,9 @@ PmicGlinkSendTad_CWS(
     }
 
     status = PmicGlink_SyncSendReceive(Context, IOCTL_PMICGLINK_TAD_CWS, InputBuffer, InputBufferSize);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    if (OutputBufferSize < sizeof(*OutputBuffer))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     *OutputBuffer = Context->cws_out;
     *BytesReturned = sizeof(*OutputBuffer);
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static NTSTATUS
@@ -5023,6 +4972,7 @@ PmicGlinkSendTad_STP(
     )
 {
     NTSTATUS status;
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     if ((OutputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -5035,19 +4985,9 @@ PmicGlinkSendTad_STP(
     }
 
     status = PmicGlink_SyncSendReceive(Context, IOCTL_PMICGLINK_TAD_STP, InputBuffer, InputBufferSize);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    if (OutputBufferSize < sizeof(*OutputBuffer))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     *OutputBuffer = Context->stp_out;
     *BytesReturned = sizeof(*OutputBuffer);
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static NTSTATUS
@@ -5061,6 +5001,7 @@ PmicGlinkSendTad_STV(
     )
 {
     NTSTATUS status;
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     if ((OutputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -5073,19 +5014,9 @@ PmicGlinkSendTad_STV(
     }
 
     status = PmicGlink_SyncSendReceive(Context, IOCTL_PMICGLINK_TAD_STV, InputBuffer, InputBufferSize);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    if (OutputBufferSize < sizeof(*OutputBuffer))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     *OutputBuffer = Context->stv_out;
     *BytesReturned = sizeof(*OutputBuffer);
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static NTSTATUS
@@ -5099,6 +5030,7 @@ PmicGlinkSendTad_TIP(
     )
 {
     NTSTATUS status;
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     if ((OutputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -5111,19 +5043,9 @@ PmicGlinkSendTad_TIP(
     }
 
     status = PmicGlink_SyncSendReceive(Context, IOCTL_PMICGLINK_TAD_TIP, InputBuffer, InputBufferSize);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    if (OutputBufferSize < sizeof(*OutputBuffer))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     *OutputBuffer = Context->tip_out;
     *BytesReturned = sizeof(*OutputBuffer);
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static NTSTATUS
@@ -5137,6 +5059,7 @@ PmicGlinkSendTad_TIV(
     )
 {
     NTSTATUS status;
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     if ((OutputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -5149,19 +5072,9 @@ PmicGlinkSendTad_TIV(
     }
 
     status = PmicGlink_SyncSendReceive(Context, IOCTL_PMICGLINK_TAD_TIV, InputBuffer, InputBufferSize);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    if (OutputBufferSize < sizeof(*OutputBuffer))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     *OutputBuffer = Context->tiv_out;
     *BytesReturned = sizeof(*OutputBuffer);
-    return STATUS_SUCCESS;
+    return status;
 }
 
 static ULONG
@@ -5780,7 +5693,7 @@ HandleLegacyBattMngrRequest(
             InputBufferSize);
 
     default:
-        return STATUS_SUCCESS;
+        return STATUS_NOT_SUPPORTED;
     }
 }
 
@@ -6041,7 +5954,7 @@ HandlePmicGlinkRequest(
 
         if (InputBuffer == NULL)
         {
-            return STATUS_INVALID_PARAMETER;
+            return PMICGLINK_STATUS_INVALID_ADDRESS;
         }
 
         return PmicGlinkPlatformQcmb_PreShutdown_Cmd(
@@ -6084,7 +5997,7 @@ HandlePmicGlinkRequest(
 
         if (OutputBuffer == NULL)
         {
-            return STATUS_INVALID_PARAMETER;
+            return PMICGLINK_STATUS_INVALID_ADDRESS;
         }
 
         *BytesReturned = sizeof(QCMB_GET_ACTIVE_CHARGER_INFO_CMD_EXT_DATA);
