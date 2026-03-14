@@ -1995,16 +1995,34 @@ PmicGlink_SyncSendReceive(
         return STATUS_SUCCESS;
 
     case IOCTL_BATTMNGR_SET_STATUS_CRITERIA:
-        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA)))
+    {
+        const BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA* request;
+
+        if ((InputBuffer == NULL)
+            || (InputBufferSize < sizeof(BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA)))
         {
-            RtlCopyMemory(
-                &Context->LegacyStatusCriteria,
-                InputBuffer,
-                sizeof(BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA));
+            return STATUS_INVALID_PARAMETER;
         }
-        Context->LegacyStatusNotificationPending = TRUE;
-        PmicGlinkNotify_PingBattMiniClass(Context);
+
+        request = (const BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA*)InputBuffer;
+        if (!Context->Notify
+            || (Context->LegacyStatusCriteria.batt_notify_criteria.power_state
+                != request->batt_notify_criteria.power_state)
+            || (Context->LegacyStatusCriteria.batt_notify_criteria.low_capacity
+                != request->batt_notify_criteria.low_capacity)
+            || (Context->LegacyStatusCriteria.batt_notify_criteria.high_capacity
+                != request->batt_notify_criteria.high_capacity))
+        {
+            Context->LegacyStatusCriteria = *request;
+            Context->Notify = TRUE;
+
+            // In this WDK-only rewrite, mark one pending status poll after criteria update.
+            Context->LegacyStatusNotificationPending = TRUE;
+            PmicGlinkNotify_PingBattMiniClass(Context);
+        }
+
         return STATUS_SUCCESS;
+    }
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT:
         Context->LegacyStateChangePending = TRUE;
