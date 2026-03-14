@@ -2213,7 +2213,7 @@ PmicGlink_SyncSendReceive(
         const ULONGLONG header = 0x10000800Aull;
         const ULONG messageOp = 74u;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(ULONG)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -4549,11 +4549,13 @@ PmicGlinkUCSIReadBuffer(
     )
 {
     NTSTATUS status;
-
-    UNREFERENCED_PARAMETER(InputBuffer);
-    UNREFERENCED_PARAMETER(InputBufferSize);
+    ULONG requestedLength;
+    SIZE_T copyLength;
+    USHORT* words;
 
     status = STATUS_SUCCESS;
+    requestedLength = PMICGLINK_UCSI_BUFFER_SIZE;
+    copyLength = 0;
 
     if ((OutputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -4570,25 +4572,29 @@ PmicGlinkUCSIReadBuffer(
             InputBuffer,
             InputBufferSize);
 
-        if (OutputBufferSize >= PMICGLINK_UCSI_BUFFER_SIZE)
+        if (NT_SUCCESS(status))
         {
-            RtlCopyMemory(OutputBuffer, Context->UCSIDataBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
-            *BytesReturned = PMICGLINK_UCSI_BUFFER_SIZE;
-        }
-        else
-        {
-            return STATUS_INVALID_PARAMETER;
+            if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(ULONG)))
+            {
+                requestedLength = *(ULONG*)InputBuffer;
+            }
+
+            copyLength = PMICGLINK_UCSI_BUFFER_SIZE;
+            if (OutputBufferSize < copyLength)
+            {
+                copyLength = OutputBufferSize;
+            }
+
+            if (copyLength > 0)
+            {
+                RtlCopyMemory(OutputBuffer, Context->UCSIDataBuffer, copyLength);
+            }
+
+            *BytesReturned = requestedLength;
         }
     }
     else if (*(ULONGLONG*)&gLatestUcsiCmd.data[8] == 1ull)
     {
-        USHORT* words;
-
-        if (OutputBufferSize < PMICGLINK_UCSI_BUFFER_SIZE)
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-
         RtlZeroMemory(OutputBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
 
         words = (USHORT*)OutputBuffer;
@@ -4605,8 +4611,6 @@ PmicGlinkUCSIReadBuffer(
 
     if (*BytesReturned >= (sizeof(USHORT) * 4u))
     {
-        USHORT* words;
-
         words = (USHORT*)OutputBuffer;
         PmicGlinkDDI_NotifyUcsiAlert(
             Context,
