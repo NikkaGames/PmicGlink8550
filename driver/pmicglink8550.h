@@ -425,6 +425,7 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     BOOLEAN DeviceInterfacesRegistered;
     BOOLEAN AllReqIntfArrived;
     BOOLEAN GlinkDeviceLoaded;
+    BOOLEAN ABDAttached;
     BOOLEAN GlinkChannelConnected;
     BOOLEAN GlinkChannelRestart;
     BOOLEAN GlinkChannelFirstConnect;

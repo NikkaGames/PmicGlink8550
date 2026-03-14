@@ -1122,6 +1122,7 @@ PmicGlinkInterfaceNotificationCallback(
     if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_GLINK_DEVICE_INTERFACE, sizeof(GUID)) == sizeof(GUID))
     {
         deviceContext->GlinkDeviceLoaded = arrival;
+        deviceContext->AllReqIntfArrived = (deviceContext->GlinkDeviceLoaded && deviceContext->ABDAttached) ? TRUE : FALSE;
         deviceContext->GlinkLinkStateUp = arrival;
 
         if (arrival)
@@ -1139,7 +1140,8 @@ PmicGlinkInterfaceNotificationCallback(
 
     if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_ABD_DEVINTERFACE, sizeof(GUID)) == sizeof(GUID))
     {
-        deviceContext->AllReqIntfArrived = arrival && deviceContext->GlinkDeviceLoaded;
+        deviceContext->ABDAttached = arrival;
+        deviceContext->AllReqIntfArrived = (deviceContext->GlinkDeviceLoaded && deviceContext->ABDAttached) ? TRUE : FALSE;
         return STATUS_SUCCESS;
     }
 
@@ -1265,6 +1267,7 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         }
 
         Context->AllReqIntfArrived = FALSE;
+        Context->ABDAttached = FALSE;
         Context->GlinkChannelConnected = FALSE;
         return STATUS_SUCCESS;
     }
@@ -1385,6 +1388,7 @@ PmicGlinkDevice_InitContext(
     Context->DeviceInterfacesRegistered = FALSE;
     Context->AllReqIntfArrived = FALSE;
     Context->GlinkDeviceLoaded = FALSE;
+    Context->ABDAttached = FALSE;
     Context->GlinkChannelConnected = FALSE;
     Context->GlinkChannelRestart = FALSE;
     Context->GlinkChannelFirstConnect = FALSE;
