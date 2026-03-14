@@ -2151,7 +2151,7 @@ PmicGlink_SyncSendReceive(
 
         if (InputBufferSize > PMICGLINK_OEM_SEND_BUFFER_SIZE)
         {
-            return STATUS_INVALID_PARAMETER;
+            return STATUS_BUFFER_OVERFLOW;
         }
 
         dataSize = (ULONG)InputBufferSize;
@@ -2228,7 +2228,7 @@ PmicGlink_SyncSendReceive(
         const ULONG messageOp = 96u;
         ULONG timerId;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_GWS_INBUF)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2248,7 +2248,7 @@ PmicGlink_SyncSendReceive(
         const ULONG messageOp = 97u;
         ULONG timerId;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_CWS_INBUF)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2268,7 +2268,7 @@ PmicGlink_SyncSendReceive(
         const ULONG messageOp = 98u;
         const PMICGLINK_TAD_STP_INBUF* request;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_STP_INBUF)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2289,7 +2289,7 @@ PmicGlink_SyncSendReceive(
         const ULONG messageOp = 99u;
         const PMICGLINK_TAD_STV_INBUF* request;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_STV_INBUF)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2310,7 +2310,7 @@ PmicGlink_SyncSendReceive(
         const ULONG messageOp = 100u;
         ULONG timerId;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_TIP_INBUF)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2330,7 +2330,7 @@ PmicGlink_SyncSendReceive(
         const ULONG messageOp = 101u;
         ULONG timerId;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_TIV_INBUF)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2455,7 +2455,7 @@ PmicGlink_SyncSendReceive(
             ULONG RateOfDrain;
         } battInfoRequest;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(BATT_MNGR_GET_BATT_INFO)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2492,8 +2492,7 @@ PmicGlink_SyncSendReceive(
             ULONG PowerState;
         } statusCriteriaRequest;
 
-        if ((InputBuffer == NULL)
-            || (InputBufferSize < sizeof(BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2548,7 +2547,7 @@ PmicGlink_SyncSendReceive(
             ULONG OperationalMode;
         } setModeRequest;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(BATT_MNGR_SET_OPERATIONAL_MODE)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2577,7 +2576,7 @@ PmicGlink_SyncSendReceive(
             ULONG ChargingPath;
         } setChargeRateRequest;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(BATT_MNGR_SET_CHARGE_RATE)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2608,7 +2607,7 @@ PmicGlink_SyncSendReceive(
             ULONG RequestBuffer[64];
         } genericTestInfoRequest;
 
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(ULONG)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -2639,7 +2638,7 @@ PmicGlink_SyncSendReceive(
             return STATUS_UNSUCCESSFUL;
         }
 
-        if ((InputBuffer == NULL) || (InputBufferSize < (sizeof(ULONG) * 3u)))
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
