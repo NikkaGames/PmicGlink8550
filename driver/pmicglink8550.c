@@ -7532,11 +7532,16 @@ PmicGlinkUlogTxNotificationCb(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+    PUSHORT txWords;
 
     UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(PacketContext);
-    UNREFERENCED_PARAMETER(Buffer);
-    UNREFERENCED_PARAMETER(BufferSize);
+
+    if ((Buffer != NULL) && (BufferSize >= (sizeof(USHORT) * 6u)))
+    {
+        txWords = (PUSHORT)Buffer;
+        txWords[5] = 0u;
+    }
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext != NULL)
