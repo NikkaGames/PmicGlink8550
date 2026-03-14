@@ -163,6 +163,7 @@ static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 
 #define PMICGLINK_POOLTAG_CRASHDUMP 'DmGP'
+#define PMICGLINK_CRASHDUMP_STALE_FILE_OBJECT ((WDFFILEOBJECT)(ULONG_PTR)-1)
 
 typedef struct _PMICGLINK_USBC_WRITE_REQ_MESSAGE
 {
@@ -729,7 +730,7 @@ PmicGlinkEvtFileClose(
         }
         else if (source->FileObject[1] == FileObject)
         {
-            source->FileObject[1] = NULL;
+            source->FileObject[1] = PMICGLINK_CRASHDUMP_STALE_FILE_OBJECT;
         }
     }
 
@@ -2999,8 +3000,15 @@ HandleCrashDumpRequest(
                     &createInfo->Guid,
                     sizeof(GUID)) == sizeof(GUID))
                 {
-                    existingIndex = (LONG)index;
-                    break;
+                    WDFFILEOBJECT ownerFileObject;
+
+                    ownerFileObject = Context->CrashDumpDataSources[index].FileObject[1];
+                    if ((ownerFileObject == NULL)
+                        || (ownerFileObject == PMICGLINK_CRASHDUMP_STALE_FILE_OBJECT))
+                    {
+                        existingIndex = (LONG)index;
+                        break;
+                    }
                 }
             }
         }
