@@ -162,6 +162,8 @@ static BOOLEAN gPmicGlinkRelTimeInitialized;
 static LONG gPmicGlinkNotifyGo;
 static KMUTEX gPmicGlinkTxSync;
 static LONG gPmicGlinkRxInProgress;
+static KMUTEX gPmicGlinkUlogTxSync;
+static LONG gPmicGlinkUlogRxInProgress;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 
@@ -1324,6 +1326,8 @@ PmicGlinkDevice_InitContext(
     Context->Hibernate = FALSE;
     KeInitializeMutex(&gPmicGlinkTxSync, 1);
     (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+    KeInitializeMutex(&gPmicGlinkUlogTxSync, 1);
+    (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
     Context->Notify = FALSE;
     Context->NotificationFlag = FALSE;
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
@@ -5792,6 +5796,7 @@ PmicGlinkTxNotificationCb(
     if (deviceContext != NULL)
     {
         deviceContext->NotificationFlag = TRUE;
+        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
     }
 }
 
@@ -5908,6 +5913,7 @@ PmicGlinkUlogTxNotificationCb(
     if (deviceContext != NULL)
     {
         deviceContext->NotificationFlag = TRUE;
+        (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
     }
 }
 
@@ -6051,6 +6057,9 @@ PmicGlinkUlog_SendData(
     _In_ SIZE_T BufferSize
     )
 {
+    NTSTATUS status;
+    LARGE_INTEGER pollInterval;
+    ULONG waitCount;
     ULONG opCode;
 
     if ((Context == NULL) || (Buffer == NULL))
@@ -6058,13 +6067,50 @@ PmicGlinkUlog_SendData(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (Context->GlinkChannelUlogRestart || !Context->GlinkChannelUlogConnected)
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    status = KeWaitForSingleObject(&gPmicGlinkUlogTxSync, Executive, KernelMode, FALSE, NULL);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    waitCount = 0;
+    pollInterval.QuadPart = -20000ll;
+    while (InterlockedCompareExchange(&gPmicGlinkUlogRxInProgress, 1, 1) == 1)
+    {
+        if (waitCount >= 0x3E8u)
+        {
+            KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
+        waitCount++;
+
+        status = KeWaitForSingleObject(&gPmicGlinkUlogTxSync, Executive, KernelMode, FALSE, NULL);
+        if (!NT_SUCCESS(status))
+        {
+            return status;
+        }
+    }
+
+    (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 1);
+    KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
+
     opCode = 0x15u;
     if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
     {
         opCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
     }
 
-    return PmicGlink_SendData(Context, opCode, (PVOID)Buffer, BufferSize, TRUE);
+    status = PmicGlink_SendData(Context, opCode, (PVOID)Buffer, BufferSize, TRUE);
+    (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
+    return status;
 }
 
 NTSTATUS
