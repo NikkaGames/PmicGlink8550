@@ -2366,16 +2366,6 @@ PmicGlink_SyncSendReceive(
         return PmicGlink_SendData(Context, 79u, i2cRequest, sizeof(i2cRequest), TRUE);
     }
 
-    case IOCTL_PMICGLINK_PRESHUTDOWN_CMD:
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_PRESHUTDOWN_CMD_INBUF)))
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-
-        return PmicGlinkPlatformQcmb_PreShutdown_Cmd(
-            Context,
-            ((PMICGLINK_PRESHUTDOWN_CMD_INBUF*)InputBuffer)->CmdBitMask);
-
     case IOCTL_BATTMNGR_GET_BATT_ID:
     {
         struct
