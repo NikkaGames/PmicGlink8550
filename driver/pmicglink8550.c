@@ -174,6 +174,9 @@ static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 static PVOID gKeInitializeTriageDumpDataArray;
 static PVOID gKeAddTriageDumpDataBlock;
+static ULONG gPmicGlinkLkmdTelMaxReportSize = (25u << 20);
+static ULONG gPmicGlinkLkmdTelMaxSecondarySize = ((25u << 20) - 262192u);
+static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 
 #define PMICGLINK_POOLTAG_CRASHDUMP 'DmGP'
 #define PMICGLINK_CRASHDUMP_STALE_FILE_OBJECT ((WDFFILEOBJECT)(ULONG_PTR)-1)
@@ -192,6 +195,9 @@ static PVOID gKeAddTriageDumpDataBlock;
 #define PMICGLINK_CRASHDUMP_RINGBUFFER_MAX_BYTES 1024u
 #define PMICGLINK_CRASHDUMP_TRIAGE_DATA_BLOCK_COUNT 1024u
 #define PMICGLINK_CRASHDUMP_TRIAGE_DATA_ARRAY_SIZE (16u * (PMICGLINK_CRASHDUMP_TRIAGE_DATA_BLOCK_COUNT + 3u))
+#define PMICGLINK_LKMDTEL_DEFAULT_MAX_REPORT_MB 25u
+#define PMICGLINK_LKMDTEL_MAX_REPORT_MB 200u
+#define PMICGLINK_LKMDTEL_SECONDARY_OVERHEAD_BYTES 262192u
 
 typedef struct _PMICGLINK_ABD_CONNECTION_ENTRY
 {
@@ -300,6 +306,7 @@ static NTSTATUS PmicGlinkUlogSendSetPropertiesRequest(_In_ PPMIC_GLINK_DEVICE_CO
 static NTSTATUS PmicGlinkUlogSendGetBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS CrashDump_InitializeTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID CrashDump_PopulateTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static VOID PmicGlinkLkmdTelInitializeMaxSizes(VOID);
 static VOID CrashDumpGuidToHexKey(_In_ const GUID* Guid, _Out_writes_(33) CHAR* Key);
 static BOOLEAN CrashDumpGuidIsZero(_In_ const GUID* Guid);
 static LONG CrashDump_FileHandleSlotFind(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ WDFFILEOBJECT FileObject, _In_ ULONG DataSourceMode);
@@ -3884,10 +3891,87 @@ CrashDump_InitializeTriageDataArray(
 }
 
 static VOID
+PmicGlinkLkmdTelInitializeMaxSizes(
+    VOID
+    )
+{
+    HANDLE regHandle;
+    NTSTATUS status;
+    ULONG reportSizeMb;
+    ULONG resultLength;
+    UNICODE_STRING keyPath;
+    UNICODE_STRING valueName;
+    OBJECT_ATTRIBUTES objectAttributes;
+    UCHAR valueBuffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
+    PKEY_VALUE_PARTIAL_INFORMATION valueInfo;
+
+    if (InterlockedCompareExchange(&gPmicGlinkLkmdTelMaxSizeInitialized, 1, 0) != 0)
+    {
+        return;
+    }
+
+    reportSizeMb = PMICGLINK_LKMDTEL_DEFAULT_MAX_REPORT_MB;
+    regHandle = NULL;
+    valueInfo = (PKEY_VALUE_PARTIAL_INFORMATION)valueBuffer;
+    resultLength = 0;
+
+    RtlInitUnicodeString(
+        &keyPath,
+        L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\LKMDTel");
+    InitializeObjectAttributes(
+        &objectAttributes,
+        &keyPath,
+        OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+        NULL,
+        NULL);
+
+    status = ZwOpenKey(&regHandle, KEY_READ, &objectAttributes);
+    if (NT_SUCCESS(status))
+    {
+        RtlInitUnicodeString(&valueName, L"MaxReportSizeInMB");
+        status = ZwQueryValueKey(
+            regHandle,
+            &valueName,
+            KeyValuePartialInformation,
+            valueInfo,
+            sizeof(valueBuffer),
+            &resultLength);
+        if (NT_SUCCESS(status)
+            && (valueInfo->Type == REG_DWORD)
+            && (valueInfo->DataLength == sizeof(ULONG)))
+        {
+            reportSizeMb = *(ULONG*)valueInfo->Data;
+        }
+
+        ZwClose(regHandle);
+    }
+
+    if (reportSizeMb > PMICGLINK_LKMDTEL_DEFAULT_MAX_REPORT_MB)
+    {
+        if (reportSizeMb > PMICGLINK_LKMDTEL_MAX_REPORT_MB)
+        {
+            reportSizeMb = PMICGLINK_LKMDTEL_MAX_REPORT_MB;
+        }
+
+        gPmicGlinkLkmdTelMaxReportSize = (reportSizeMb << 20);
+        if (gPmicGlinkLkmdTelMaxReportSize > PMICGLINK_LKMDTEL_SECONDARY_OVERHEAD_BYTES)
+        {
+            gPmicGlinkLkmdTelMaxSecondarySize =
+                gPmicGlinkLkmdTelMaxReportSize - PMICGLINK_LKMDTEL_SECONDARY_OVERHEAD_BYTES;
+        }
+        else
+        {
+            gPmicGlinkLkmdTelMaxSecondarySize = 0;
+        }
+    }
+}
+
+static VOID
 CrashDump_PopulateTriageDataArray(
     _Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
+    ULONG remainingSecondarySize;
     ULONG index;
     UNICODE_STRING routineName;
     PFN_KE_INITIALIZE_TRIAGE_DUMP_DATA_ARRAY initializeTriageDataArray;
@@ -3923,8 +4007,12 @@ CrashDump_PopulateTriageDataArray(
         return;
     }
 
+    PmicGlinkLkmdTelInitializeMaxSizes();
+    remainingSecondarySize = gPmicGlinkLkmdTelMaxSecondarySize;
+
     for (index = 1; index < Context->CrashDumpDataSourceCount; index++)
     {
+        ULONG dataSize;
         PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
         PVOID dataBuffer;
 
@@ -3945,10 +4033,30 @@ CrashDump_PopulateTriageDataArray(
             continue;
         }
 
+        dataSize = source->RingBufferSize;
+        if (dataSize > remainingSecondarySize)
+        {
+            dataSize = remainingSecondarySize;
+        }
+        if (dataSize == 0)
+        {
+            break;
+        }
+
         (VOID)addTriageDataBlock(
             Context->CrashDumpTriageDataArray,
             dataBuffer,
-            source->RingBufferSize);
+            dataSize);
+
+        if (remainingSecondarySize > dataSize)
+        {
+            remainingSecondarySize -= dataSize;
+        }
+        else
+        {
+            remainingSecondarySize = 0;
+            break;
+        }
     }
 }
 
