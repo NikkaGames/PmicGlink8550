@@ -159,6 +159,7 @@ DEFINE_GUID(
 static PMICGLINK_UCSI_WRITE_DATA_BUF_TYPE gLatestUcsiCmd;
 static ULONGLONG gPmicGlinkRelTimeStartTicks;
 static BOOLEAN gPmicGlinkRelTimeInitialized;
+static LONG gPmicGlinkNotifyGo;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 
@@ -2346,6 +2347,7 @@ PmicGlinkNotify_PingBattMiniClass(
 {
     if (Context != NULL)
     {
+        (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 1);
         Context->LegacyStatusNotificationPending = TRUE;
         Context->NotificationFlag = TRUE;
     }
@@ -4668,6 +4670,7 @@ PmicGlinkNotify_Interface_Free(
 
     Context->NotificationFlag = FALSE;
     Context->Notify = FALSE;
+    (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     return STATUS_SUCCESS;
 }
 
@@ -5071,6 +5074,11 @@ HandleLegacyBattMngrRequest(
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT:
         status = STATUS_SUCCESS;
+        if (InterlockedExchange(&gPmicGlinkNotifyGo, 0) != 0)
+        {
+            Context->LegacyStatusNotificationPending = TRUE;
+        }
+
         if (Context->LegacyStatusNotificationPending)
         {
             status = PmicGlink_SyncSendReceive(
