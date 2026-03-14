@@ -3268,16 +3268,6 @@ PmicGlinkEvaluateAbdConnectionCount(
 
     rawValue = outputArg->Argument;
     connectionCount = (rawValue >> 16) & 0xFFu;
-    if (connectionCount == 0)
-    {
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    if (connectionCount > RTL_NUMBER_OF(gPmicGlinkAbdConnections))
-    {
-        connectionCount = RTL_NUMBER_OF(gPmicGlinkAbdConnections);
-    }
-
     gPmicGlinkAbdConnectionMax = (UCHAR)connectionCount;
     return STATUS_SUCCESS;
 }
