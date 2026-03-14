@@ -101,6 +101,48 @@ DEFINE_GUID(
     0x3f);
 
 DEFINE_GUID(
+    GUID_USBFN_HVDCP_PROPRIETARY_CHARGER,
+    0x6265aab8,
+    0x6cbe,
+    0x4305,
+    0x8a,
+    0x82,
+    0x2d,
+    0xd5,
+    0xb4,
+    0x9c,
+    0x7c,
+    0xba);
+
+DEFINE_GUID(
+    GUID_USBFN_HVDCP_PROPRIETARY_CHARGER_V3,
+    0x701d543e,
+    0x370b,
+    0x4a2b,
+    0x88,
+    0x8e,
+    0x22,
+    0x18,
+    0xb2,
+    0x24,
+    0x3e,
+    0x23);
+
+DEFINE_GUID(
+    GUID_USBFN_TYPE_I_WALL_CHARGER,
+    0x4ab4825d,
+    0xf042,
+    0x4b35,
+    0xa2,
+    0xe0,
+    0xbc,
+    0x5d,
+    0x56,
+    0xa3,
+    0x28,
+    0xab);
+
+DEFINE_GUID(
     GUID_DDIINTERFACE_PMICGLINK,
     0x3478cb09,
     0xb9f5,
@@ -117,6 +159,8 @@ DEFINE_GUID(
 static PMICGLINK_UCSI_WRITE_DATA_BUF_TYPE gLatestUcsiCmd;
 static ULONGLONG gPmicGlinkRelTimeStartTicks;
 static BOOLEAN gPmicGlinkRelTimeInitialized;
+
+#define PMICGLINK_POOLTAG_CRASHDUMP 'DmGP'
 
 typedef struct _PMICGLINK_USBC_WRITE_REQ_MESSAGE
 {
@@ -163,9 +207,32 @@ static VOID PmicGlinkPlatformSetState_Request_Write_WorkItem(_In_ WDFWORKITEM Wo
 static VOID PmicGlinkPlatformUsbc_AcpiNotificationHandler(_In_opt_ PVOID Context, _In_ ULONG NotifyValue);
 static VOID PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
+static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
+static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
 static NTSTATUS PmicGlink_OpenGlinkChannel(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PMICGLINK_CHANNEL_EVENT Event);
+static VOID CrashDumpGuidToHexKey(_In_ const GUID* Guid, _Out_writes_(33) CHAR* Key);
+static BOOLEAN CrashDumpGuidIsZero(_In_ const GUID* Guid);
+static LONG CrashDump_FileHandleSlotFind(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ WDFFILEOBJECT FileObject, _In_ ULONG DataSourceMode);
+static LONG CrashDump_FileHandleSlotFindForDestroy(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ WDFFILEOBJECT FileObject);
+static LONG CrashDump_FileHandleSlotFree(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ WDFFILEOBJECT FileObject);
+static VOID CrashDump_DmfDestroy_RingBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG DataSourceIndex);
+static NTSTATUS CrashDump_DataSourceCreateInternal(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG DataSourceIndex, _In_ ULONG ItemCount, _In_ ULONG SizeOfEachEntry, _In_ const GUID* Guid);
+static NTSTATUS CrashDump_DataSourceDestroyInternal(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG DataSourceIndex);
+static NTSTATUS CrashDump_DataSourceDestroyAuxiliaryInternal(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ WDFFILEOBJECT FileObject);
+static NTSTATUS CrashDump_DataSourceWriteInternal(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG DataSourceIndex, _In_reads_bytes_(BufferLength) const UCHAR* Buffer, _In_ SIZE_T BufferLength);
+static NTSTATUS CrashDump_DataSourceReadInternal(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG DataSourceIndex, _Out_writes_bytes_(BufferLength) UCHAR* Buffer, _In_ SIZE_T BufferLength);
+static NTSTATUS CrashDump_DataSourceCaptureInternal(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG DataSourceIndex, _Out_writes_bytes_(BufferLength) UCHAR* Buffer, _In_ SIZE_T BufferLength, _Out_ PULONG BytesWritten);
+static VOID CrashDump_ResetState(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static NTSTATUS HandleCrashDumpRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ WDFREQUEST Request, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ SIZE_T InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ SIZE_T OutputBufferSize, _Out_ SIZE_T* BytesReturned);
+static NTSTATUS CrashDump_IoctlHandler(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ WDFREQUEST Request, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ SIZE_T InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ SIZE_T OutputBufferSize, _Out_ SIZE_T* BytesReturned);
+static NTSTATUS CrashDump_RingBufferElementsFirstBufferGet(_In_opt_ PVOID DmfModule, _Out_writes_bytes_(BufferSize) UCHAR* Buffer, _In_ ULONG BufferSize, _Inout_opt_ PVOID CallbackContext);
+static NTSTATUS CrashDump_RingBufferElementsXor(_In_opt_ PVOID DmfModule, _Inout_updates_bytes_(BufferSize) UCHAR* Buffer, _In_ ULONG BufferSize, _Inout_opt_ PVOID CallbackContext);
+static VOID CrashDump_BugCheckSecondaryDumpDataCallbackRingBuffer(_In_ KBUGCHECK_CALLBACK_REASON Reason, _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record, _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData, _In_ ULONG ReasonSpecificDataLength);
+static VOID CrashDump_BugCheckSecondaryDumpDataCallbackAdditional(_In_ KBUGCHECK_CALLBACK_REASON Reason, _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record, _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData, _In_ ULONG ReasonSpecificDataLength);
+static VOID CrashDump_BugCheckTriageDumpDataCallback(_In_ KBUGCHECK_CALLBACK_REASON Reason, _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record, _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData, _In_ ULONG ReasonSpecificDataLength);
+static VOID PmicGlinkEvtDmfDeviceModulesAdd(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request);
 
 static NTSTATUS
 PmicGlink_SendData(
@@ -558,31 +625,53 @@ PmicGlinkEvtIoDeviceControl(
         }
     }
 
-    if ((IoControlCode >> 16) == FILE_DEVICE_BATT_MNGR)
+    switch (IoControlCode)
     {
-        status = HandleLegacyBattMngrRequest(
+    case IOCTL_CRASHDUMP_DATA_SOURCE_READ:
+    case IOCTL_CRASHDUMP_DATA_SOURCE_QUERY:
+    case IOCTL_CRASHDUMP_DATA_SOURCE_CAPTURE:
+    case IOCTL_CRASHDUMP_DATA_SOURCE_CREATE:
+    case IOCTL_CRASHDUMP_DATA_SOURCE_DESTROY:
+    case IOCTL_CRASHDUMP_DATA_SOURCE_WRITE:
+        status = CrashDump_IoctlHandler(
             context,
+            Request,
             IoControlCode,
             inputBuffer,
             InputBufferLength,
             outputBuffer,
             OutputBufferLength,
             &bytesReturned);
-    }
-    else if ((IoControlCode >> 16) == FILE_DEVICE_PMIC_GLINK)
-    {
-        status = HandlePmicGlinkRequest(
-            context,
-            IoControlCode,
-            inputBuffer,
-            InputBufferLength,
-            outputBuffer,
-            OutputBufferLength,
-            &bytesReturned);
-    }
-    else
-    {
-        status = STATUS_INVALID_DEVICE_REQUEST;
+        break;
+
+    default:
+        if ((IoControlCode >> 16) == FILE_DEVICE_BATT_MNGR)
+        {
+            status = HandleLegacyBattMngrRequest(
+                context,
+                IoControlCode,
+                inputBuffer,
+                InputBufferLength,
+                outputBuffer,
+                OutputBufferLength,
+                &bytesReturned);
+        }
+        else if ((IoControlCode >> 16) == FILE_DEVICE_PMIC_GLINK)
+        {
+            status = HandlePmicGlinkRequest(
+                context,
+                IoControlCode,
+                inputBuffer,
+                InputBufferLength,
+                outputBuffer,
+                OutputBufferLength,
+                &bytesReturned);
+        }
+        else
+        {
+            status = STATUS_INVALID_DEVICE_REQUEST;
+        }
+        break;
     }
 
     WdfRequestCompleteWithInformation(Request, status, NT_SUCCESS(status) ? bytesReturned : 0);
@@ -624,6 +713,7 @@ PmicGlinkEvtReleaseHardware(
     context->GlinkLinkStateUp = FALSE;
     PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
     context->GlinkChannelConnected = FALSE;
+    CrashDump_ResetState(context);
 
     return STATUS_SUCCESS;
 }
@@ -700,6 +790,7 @@ PmicGlinkEvtSelfManagedIoCleanup(
 
     context = PmicGlinkGetDeviceContext(Device);
     (VOID)PmicGlinkDevice_RegisterForPnPNotifications(context, FALSE);
+    CrashDump_ResetState(context);
 }
 
 NTSTATUS
@@ -1177,6 +1268,22 @@ PmicGlinkDevice_InitContext(
     Context->QcmbGoodChargerThresholdUW = 4500000;
     Context->QcmbChargerStatusInfo = 0x1;
 
+    Context->HvdcpCharger.ChargerSupported = FALSE;
+    Context->HvdcpCharger.ChargerCurrent = 1500;
+    Context->HvdcpCharger.ChargerGUID = GUID_USBFN_HVDCP_PROPRIETARY_CHARGER;
+
+    Context->HvdcpV3Charger.ChargerSupported = FALSE;
+    Context->HvdcpV3Charger.ChargerCurrent = 1500;
+    Context->HvdcpV3Charger.ChargerGUID = GUID_USBFN_HVDCP_PROPRIETARY_CHARGER_V3;
+
+    Context->IWallCharger.ChargerSupported = FALSE;
+    Context->IWallCharger.ChargerCurrent = 500;
+    Context->IWallCharger.ChargerGUID = GUID_USBFN_TYPE_I_WALL_CHARGER;
+
+    Context->MaxFlashCurrent = 500;
+    Context->LastChargerVoltage = 0;
+    Context->LastChargerPortType = 0;
+
     Context->LegacyBattId.batt_id = 0xFFFF;
 
     Context->LegacyChargeStatus.power_state = 2;
@@ -1274,6 +1381,8 @@ PmicGlinkDevice_InitContext(
     Context->DdiInterfaceRefCount = 0;
     Context->DdiInterfacePadding = 0;
     RtlZeroMemory(&Context->DdiInterface, sizeof(Context->DdiInterface));
+    Context->CrashDumpDataSourceCount = PMICGLINK_CRASHDUMP_MAX_SOURCES;
+    RtlZeroMemory(Context->CrashDumpDataSources, sizeof(Context->CrashDumpDataSources));
 
     RtlZeroMemory(&Context->LastUsbcWriteRequest, sizeof(Context->LastUsbcWriteRequest));
     RtlZeroMemory(&Context->LastUsbcNotification, sizeof(Context->LastUsbcNotification));
@@ -1294,6 +1403,12 @@ PmicGlinkDevice_InitContext(
     }
 
     status = WdfWaitLockCreate(&attributes, &Context->DdiInterfaceLock);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = WdfWaitLockCreate(&attributes, &Context->CrashDumpLock);
     if (!NT_SUCCESS(status))
     {
         return status;
@@ -2135,6 +2250,1010 @@ PmicGlinkNotify_PingBattMiniClass(
     {
         Context->NotificationFlag = TRUE;
     }
+}
+
+static VOID
+CrashDumpGuidToHexKey(
+    _In_ const GUID* Guid,
+    _Out_writes_(33) CHAR* Key
+    )
+{
+    static const CHAR kHexDigits[] = "0123456789ABCDEF";
+    const UCHAR* guidBytes;
+    ULONG index;
+
+    if (Key == NULL)
+    {
+        return;
+    }
+
+    RtlZeroMemory(Key, 33);
+    if (Guid == NULL)
+    {
+        return;
+    }
+
+    guidBytes = (const UCHAR*)Guid;
+    for (index = 0; index < 16; index++)
+    {
+        Key[index * 2] = kHexDigits[(guidBytes[index] >> 4) & 0x0Fu];
+        Key[(index * 2) + 1] = kHexDigits[guidBytes[index] & 0x0Fu];
+    }
+}
+
+static BOOLEAN
+CrashDumpGuidIsZero(
+    _In_ const GUID* Guid
+    )
+{
+    GUID zeroGuid;
+
+    if (Guid == NULL)
+    {
+        return TRUE;
+    }
+
+    RtlZeroMemory(&zeroGuid, sizeof(zeroGuid));
+    return (RtlCompareMemory(Guid, &zeroGuid, sizeof(zeroGuid)) == sizeof(zeroGuid)) ? TRUE : FALSE;
+}
+
+static LONG
+CrashDump_FileHandleSlotFind(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_opt_ WDFFILEOBJECT FileObject,
+    _In_ ULONG DataSourceMode
+    )
+{
+    ULONG index;
+
+    if ((Context == NULL)
+        || (FileObject == NULL)
+        || (DataSourceMode == 0)
+        || (DataSourceMode >= RTL_NUMBER_OF(Context->CrashDumpDataSources[0].FileObject)))
+    {
+        return -1;
+    }
+
+    for (index = 1; index < Context->CrashDumpDataSourceCount; index++)
+    {
+        if (Context->CrashDumpDataSources[index].FileObject[DataSourceMode] == FileObject)
+        {
+            return (LONG)index;
+        }
+    }
+
+    return -1;
+}
+
+static LONG
+CrashDump_FileHandleSlotFindForDestroy(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_opt_ WDFFILEOBJECT FileObject
+    )
+{
+    ULONG index;
+
+    if ((Context == NULL) || (FileObject == NULL))
+    {
+        return -1;
+    }
+
+    for (index = 1; index < Context->CrashDumpDataSourceCount; index++)
+    {
+        if ((Context->CrashDumpDataSources[index].FileObject[1] == FileObject)
+            || (Context->CrashDumpDataSources[index].FileObject[2] == FileObject))
+        {
+            return (LONG)index;
+        }
+    }
+
+    return -1;
+}
+
+static LONG
+CrashDump_FileHandleSlotFree(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_opt_ WDFFILEOBJECT FileObject
+    )
+{
+    LONG slotIndex;
+    PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+
+    slotIndex = CrashDump_FileHandleSlotFindForDestroy(Context, FileObject);
+    if (slotIndex < 0)
+    {
+        return -1;
+    }
+
+    source = &Context->CrashDumpDataSources[(ULONG)slotIndex];
+    if (source->FileObject[2] == FileObject)
+    {
+        source->FileObject[2] = NULL;
+    }
+    else if (source->FileObject[1] == FileObject)
+    {
+        source->FileObject[1] = NULL;
+    }
+
+    return slotIndex;
+}
+
+static VOID
+CrashDump_DmfDestroy_RingBuffer(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG DataSourceIndex
+    )
+{
+    PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+
+    if ((Context == NULL) || (DataSourceIndex >= Context->CrashDumpDataSourceCount))
+    {
+        return;
+    }
+
+    source = &Context->CrashDumpDataSources[DataSourceIndex];
+    if (source->RingBufferData != NULL)
+    {
+        ExFreePoolWithTag(source->RingBufferData, PMICGLINK_POOLTAG_CRASHDUMP);
+        source->RingBufferData = NULL;
+    }
+
+    RtlZeroMemory(&source->RingBufferGuid, sizeof(source->RingBufferGuid));
+    RtlZeroMemory(source->RingBufferEncryptionKey, sizeof(source->RingBufferEncryptionKey));
+    source->RingBufferEncryptionKeySize = 0;
+    source->RingBufferSize = 0;
+    source->RingBufferSizeOfEachEntry = 0;
+    source->EntriesCount = 0;
+    source->CurrentRingBufferIndex = 0;
+    source->ValidEntryCount = 0;
+}
+
+static NTSTATUS
+CrashDump_DataSourceCreateInternal(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG DataSourceIndex,
+    _In_ ULONG ItemCount,
+    _In_ ULONG SizeOfEachEntry,
+    _In_ const GUID* Guid
+    )
+{
+    PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+    ULONGLONG totalBytes;
+
+    if ((Context == NULL)
+        || (Guid == NULL)
+        || (DataSourceIndex == 0)
+        || (DataSourceIndex >= Context->CrashDumpDataSourceCount)
+        || (ItemCount == 0)
+        || (SizeOfEachEntry == 0))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    totalBytes = (ULONGLONG)ItemCount * (ULONGLONG)SizeOfEachEntry;
+    if ((totalBytes == 0) || (totalBytes > MAXULONG))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    source = &Context->CrashDumpDataSources[DataSourceIndex];
+    if (source->RingBufferData != NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    source->RingBufferData = (PUCHAR)ExAllocatePoolZero(
+        NonPagedPoolNx,
+        (SIZE_T)totalBytes,
+        PMICGLINK_POOLTAG_CRASHDUMP);
+    if (source->RingBufferData == NULL)
+    {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    source->EntriesCount = ItemCount;
+    source->RingBufferSizeOfEachEntry = SizeOfEachEntry;
+    source->RingBufferSize = (ULONG)totalBytes;
+    source->CurrentRingBufferIndex = 0;
+    source->ValidEntryCount = 0;
+    source->RingBufferGuid = *Guid;
+    source->RingBufferEncryptionKeySize = 32;
+    CrashDumpGuidToHexKey(Guid, source->RingBufferEncryptionKey);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+CrashDump_DataSourceDestroyInternal(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG DataSourceIndex
+    )
+{
+    PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+
+    if ((Context == NULL) || (DataSourceIndex >= Context->CrashDumpDataSourceCount))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    source = &Context->CrashDumpDataSources[DataSourceIndex];
+    CrashDump_DmfDestroy_RingBuffer(Context, DataSourceIndex);
+    source->FileObject[1] = NULL;
+    source->FileObject[2] = NULL;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+CrashDump_DataSourceDestroyAuxiliaryInternal(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_opt_ WDFFILEOBJECT FileObject
+    )
+{
+    LONG slotIndex;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    slotIndex = CrashDump_FileHandleSlotFree(Context, FileObject);
+    if (slotIndex < 0)
+    {
+        return STATUS_INVALID_HANDLE;
+    }
+
+    return CrashDump_DataSourceDestroyInternal(Context, (ULONG)slotIndex);
+}
+
+static NTSTATUS
+CrashDump_DataSourceWriteInternal(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG DataSourceIndex,
+    _In_reads_bytes_(BufferLength) const UCHAR* Buffer,
+    _In_ SIZE_T BufferLength
+    )
+{
+    PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+    PUCHAR entry;
+    ULONG writeIndex;
+    SIZE_T bytesToCopy;
+
+    if ((Context == NULL)
+        || (Buffer == NULL)
+        || (DataSourceIndex == 0)
+        || (DataSourceIndex >= Context->CrashDumpDataSourceCount))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    source = &Context->CrashDumpDataSources[DataSourceIndex];
+    if ((source->RingBufferData == NULL)
+        || (source->EntriesCount == 0)
+        || (source->RingBufferSizeOfEachEntry == 0))
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    if (BufferLength > source->RingBufferSizeOfEachEntry)
+    {
+        return STATUS_BUFFER_OVERFLOW;
+    }
+
+    writeIndex = source->CurrentRingBufferIndex;
+    entry = source->RingBufferData + ((SIZE_T)writeIndex * source->RingBufferSizeOfEachEntry);
+    RtlZeroMemory(entry, source->RingBufferSizeOfEachEntry);
+
+    bytesToCopy = (BufferLength < source->RingBufferSizeOfEachEntry)
+        ? BufferLength
+        : source->RingBufferSizeOfEachEntry;
+    if (bytesToCopy > 0)
+    {
+        RtlCopyMemory(entry, Buffer, bytesToCopy);
+    }
+
+    source->CurrentRingBufferIndex = (writeIndex + 1u) % source->EntriesCount;
+    if (source->ValidEntryCount < source->EntriesCount)
+    {
+        source->ValidEntryCount++;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+CrashDump_DataSourceReadInternal(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG DataSourceIndex,
+    _Out_writes_bytes_(BufferLength) UCHAR* Buffer,
+    _In_ SIZE_T BufferLength
+    )
+{
+    PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+    ULONG readIndex;
+    PUCHAR entry;
+
+    if ((Context == NULL)
+        || (Buffer == NULL)
+        || (DataSourceIndex == 0)
+        || (DataSourceIndex >= Context->CrashDumpDataSourceCount))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    source = &Context->CrashDumpDataSources[DataSourceIndex];
+    if ((source->RingBufferData == NULL)
+        || (source->EntriesCount == 0)
+        || (source->RingBufferSizeOfEachEntry == 0))
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    if (BufferLength < source->RingBufferSizeOfEachEntry)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+
+    if (source->ValidEntryCount == 0)
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    readIndex = (source->CurrentRingBufferIndex + source->EntriesCount - source->ValidEntryCount) % source->EntriesCount;
+    entry = source->RingBufferData + ((SIZE_T)readIndex * source->RingBufferSizeOfEachEntry);
+    RtlCopyMemory(Buffer, entry, source->RingBufferSizeOfEachEntry);
+    source->ValidEntryCount--;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+CrashDump_DataSourceCaptureInternal(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG DataSourceIndex,
+    _Out_writes_bytes_(BufferLength) UCHAR* Buffer,
+    _In_ SIZE_T BufferLength,
+    _Out_ PULONG BytesWritten
+    )
+{
+    PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+    ULONG written;
+    NTSTATUS status;
+
+    if ((Context == NULL)
+        || (Buffer == NULL)
+        || (BytesWritten == NULL)
+        || (DataSourceIndex == 0)
+        || (DataSourceIndex >= Context->CrashDumpDataSourceCount))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    source = &Context->CrashDumpDataSources[DataSourceIndex];
+    if ((source->RingBufferData == NULL)
+        || (source->EntriesCount == 0)
+        || (source->RingBufferSizeOfEachEntry == 0))
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    if (BufferLength < source->RingBufferSize)
+    {
+        return STATUS_BUFFER_OVERFLOW;
+    }
+
+    written = 0;
+    while ((source->ValidEntryCount > 0)
+           && ((written + source->RingBufferSizeOfEachEntry) <= BufferLength))
+    {
+        status = CrashDump_DataSourceReadInternal(
+            Context,
+            DataSourceIndex,
+            Buffer + written,
+            BufferLength - written);
+        if (!NT_SUCCESS(status))
+        {
+            break;
+        }
+
+        written += source->RingBufferSizeOfEachEntry;
+    }
+
+    *BytesWritten = written;
+    return STATUS_SUCCESS;
+}
+
+static VOID
+CrashDump_ResetState(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    ULONG index;
+    ULONG sourceCount;
+
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    sourceCount = Context->CrashDumpDataSourceCount;
+    if ((sourceCount == 0) || (sourceCount > PMICGLINK_CRASHDUMP_MAX_SOURCES))
+    {
+        sourceCount = PMICGLINK_CRASHDUMP_MAX_SOURCES;
+    }
+
+    if (Context->CrashDumpLock != NULL)
+    {
+        WdfWaitLockAcquire(Context->CrashDumpLock, NULL);
+    }
+
+    for (index = 0; index < sourceCount; index++)
+    {
+        PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+
+        source = &Context->CrashDumpDataSources[index];
+        if (source->RingBufferData != NULL)
+        {
+            ExFreePoolWithTag(source->RingBufferData, PMICGLINK_POOLTAG_CRASHDUMP);
+        }
+
+        RtlZeroMemory(source, sizeof(*source));
+    }
+
+    if (Context->CrashDumpLock != NULL)
+    {
+        WdfWaitLockRelease(Context->CrashDumpLock);
+    }
+}
+
+static NTSTATUS
+HandleCrashDumpRequest(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ WDFREQUEST Request,
+    _In_ ULONG IoControlCode,
+    _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer,
+    _In_ SIZE_T InputBufferSize,
+    _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer,
+    _In_ SIZE_T OutputBufferSize,
+    _Out_ SIZE_T* BytesReturned
+    )
+{
+    NTSTATUS status;
+    WDFFILEOBJECT fileObject;
+
+    if ((Context == NULL) || (Request == NULL) || (BytesReturned == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    *BytesReturned = 0;
+    fileObject = WdfRequestGetFileObject(Request);
+
+    switch (IoControlCode)
+    {
+    case IOCTL_CRASHDUMP_DATA_SOURCE_CREATE:
+    {
+        const DATA_SOURCE_CREATE* createInfo;
+        LONG slotIndex;
+        LONG existingIndex;
+        ULONG index;
+
+        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(DATA_SOURCE_CREATE)))
+        {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        if (fileObject == NULL)
+        {
+            return PMICGLINK_STATUS_INVALID_ADDRESS;
+        }
+
+        createInfo = (const DATA_SOURCE_CREATE*)InputBuffer;
+
+        WdfWaitLockAcquire(Context->CrashDumpLock, NULL);
+
+        existingIndex = -1;
+        if (!CrashDumpGuidIsZero(&createInfo->Guid))
+        {
+            for (index = 1; index < Context->CrashDumpDataSourceCount; index++)
+            {
+                if (RtlCompareMemory(
+                    &Context->CrashDumpDataSources[index].RingBufferGuid,
+                    &createInfo->Guid,
+                    sizeof(GUID)) == sizeof(GUID))
+                {
+                    existingIndex = (LONG)index;
+                    break;
+                }
+            }
+        }
+
+        if (existingIndex >= 0)
+        {
+            Context->CrashDumpDataSources[(ULONG)existingIndex].FileObject[1] = fileObject;
+            status = STATUS_SUCCESS;
+            *BytesReturned = sizeof(DATA_SOURCE_CREATE);
+        }
+        else
+        {
+            if (CrashDump_FileHandleSlotFind(Context, fileObject, 1) >= 0)
+            {
+                status = STATUS_NO_MORE_FILES;
+            }
+            else
+            {
+                slotIndex = -1;
+                for (index = 1; index < Context->CrashDumpDataSourceCount; index++)
+                {
+                    if ((Context->CrashDumpDataSources[index].FileObject[1] == NULL)
+                        && (Context->CrashDumpDataSources[index].RingBufferData == NULL))
+                    {
+                        slotIndex = (LONG)index;
+                        break;
+                    }
+                }
+
+                if (slotIndex < 0)
+                {
+                    status = STATUS_NO_MORE_FILES;
+                }
+                else
+                {
+                    Context->CrashDumpDataSources[(ULONG)slotIndex].FileObject[1] = fileObject;
+                    status = CrashDump_DataSourceCreateInternal(
+                        Context,
+                        (ULONG)slotIndex,
+                        createInfo->EntriesCount,
+                        createInfo->EntrySize,
+                        &createInfo->Guid);
+                    if (!NT_SUCCESS(status))
+                    {
+                        Context->CrashDumpDataSources[(ULONG)slotIndex].FileObject[1] = NULL;
+                    }
+                    else
+                    {
+                        *BytesReturned = sizeof(DATA_SOURCE_CREATE);
+                    }
+                }
+            }
+        }
+
+        WdfWaitLockRelease(Context->CrashDumpLock);
+        return status;
+    }
+
+    case IOCTL_CRASHDUMP_DATA_SOURCE_DESTROY:
+        if (fileObject == NULL)
+        {
+            return PMICGLINK_STATUS_INVALID_ADDRESS;
+        }
+
+        WdfWaitLockAcquire(Context->CrashDumpLock, NULL);
+        status = CrashDump_DataSourceDestroyAuxiliaryInternal(Context, fileObject);
+        WdfWaitLockRelease(Context->CrashDumpLock);
+        return status;
+
+    case IOCTL_CRASHDUMP_DATA_SOURCE_WRITE:
+    {
+        LONG slotIndex;
+        ULONG entrySize;
+
+        if ((InputBuffer == NULL) || (InputBufferSize == 0))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (fileObject == NULL)
+        {
+            return PMICGLINK_STATUS_INVALID_ADDRESS;
+        }
+
+        WdfWaitLockAcquire(Context->CrashDumpLock, NULL);
+
+        slotIndex = CrashDump_FileHandleSlotFind(Context, fileObject, 1);
+        if (slotIndex < 0)
+        {
+            status = STATUS_INVALID_HANDLE;
+        }
+        else
+        {
+            entrySize = Context->CrashDumpDataSources[(ULONG)slotIndex].RingBufferSizeOfEachEntry;
+            if (InputBufferSize > entrySize)
+            {
+                status = STATUS_BUFFER_OVERFLOW;
+            }
+            else
+            {
+                status = CrashDump_DataSourceWriteInternal(
+                    Context,
+                    (ULONG)slotIndex,
+                    (const UCHAR*)InputBuffer,
+                    InputBufferSize);
+                if (NT_SUCCESS(status))
+                {
+                    *BytesReturned = InputBufferSize;
+                }
+            }
+        }
+
+        WdfWaitLockRelease(Context->CrashDumpLock);
+        return status;
+    }
+
+    case IOCTL_CRASHDUMP_DATA_SOURCE_QUERY:
+    {
+        const DATA_SOURCE_CREATE* queryIn;
+        DATA_SOURCE_CREATE* queryOut;
+        LONG slotIndex;
+        ULONG index;
+
+        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(DATA_SOURCE_CREATE))
+            || (OutputBuffer == NULL) || (OutputBufferSize < sizeof(DATA_SOURCE_CREATE)))
+        {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        if (fileObject == NULL)
+        {
+            return PMICGLINK_STATUS_INVALID_ADDRESS;
+        }
+
+        queryIn = (const DATA_SOURCE_CREATE*)InputBuffer;
+        queryOut = (DATA_SOURCE_CREATE*)OutputBuffer;
+        if (CrashDumpGuidIsZero(&queryIn->Guid))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        WdfWaitLockAcquire(Context->CrashDumpLock, NULL);
+
+        slotIndex = -1;
+        for (index = 1; index < Context->CrashDumpDataSourceCount; index++)
+        {
+            if (RtlCompareMemory(
+                &Context->CrashDumpDataSources[index].RingBufferGuid,
+                &queryIn->Guid,
+                sizeof(GUID)) == sizeof(GUID))
+            {
+                slotIndex = (LONG)index;
+                break;
+            }
+        }
+
+        if (slotIndex < 0)
+        {
+            status = STATUS_INVALID_PARAMETER;
+        }
+        else
+        {
+            PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+
+            source = &Context->CrashDumpDataSources[(ULONG)slotIndex];
+            source->FileObject[2] = fileObject;
+            queryOut->EntriesCount = (source->RingBufferSizeOfEachEntry == 0)
+                ? 0
+                : (source->RingBufferSize / source->RingBufferSizeOfEachEntry);
+            queryOut->EntrySize = source->RingBufferSizeOfEachEntry;
+            queryOut->Guid = source->RingBufferGuid;
+            *BytesReturned = sizeof(DATA_SOURCE_CREATE);
+            status = STATUS_SUCCESS;
+        }
+
+        WdfWaitLockRelease(Context->CrashDumpLock);
+        return status;
+    }
+
+    case IOCTL_CRASHDUMP_DATA_SOURCE_READ:
+    {
+        LONG slotIndex;
+        ULONG entrySize;
+
+        if ((OutputBuffer == NULL) || (OutputBufferSize == 0))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (fileObject == NULL)
+        {
+            return PMICGLINK_STATUS_INVALID_ADDRESS;
+        }
+
+        WdfWaitLockAcquire(Context->CrashDumpLock, NULL);
+
+        slotIndex = CrashDump_FileHandleSlotFind(Context, fileObject, 2);
+        if (slotIndex < 0)
+        {
+            status = STATUS_INVALID_HANDLE;
+        }
+        else
+        {
+            entrySize = Context->CrashDumpDataSources[(ULONG)slotIndex].RingBufferSizeOfEachEntry;
+            if (OutputBufferSize < entrySize)
+            {
+                status = STATUS_BUFFER_OVERFLOW;
+            }
+            else
+            {
+                status = CrashDump_DataSourceReadInternal(
+                    Context,
+                    (ULONG)slotIndex,
+                    (UCHAR*)OutputBuffer,
+                    OutputBufferSize);
+                if (NT_SUCCESS(status))
+                {
+                    *BytesReturned = OutputBufferSize;
+                }
+            }
+        }
+
+        WdfWaitLockRelease(Context->CrashDumpLock);
+        return status;
+    }
+
+    case IOCTL_CRASHDUMP_DATA_SOURCE_CAPTURE:
+    {
+        LONG slotIndex;
+        ULONG captureBytes;
+        ULONG ringBufferSize;
+
+        if ((OutputBuffer == NULL) || (OutputBufferSize == 0))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (fileObject == NULL)
+        {
+            return PMICGLINK_STATUS_INVALID_ADDRESS;
+        }
+
+        WdfWaitLockAcquire(Context->CrashDumpLock, NULL);
+
+        slotIndex = CrashDump_FileHandleSlotFind(Context, fileObject, 2);
+        if (slotIndex < 0)
+        {
+            status = STATUS_INVALID_HANDLE;
+        }
+        else
+        {
+            ringBufferSize = Context->CrashDumpDataSources[(ULONG)slotIndex].RingBufferSize;
+            if (OutputBufferSize < ringBufferSize)
+            {
+                status = STATUS_BUFFER_OVERFLOW;
+            }
+            else
+            {
+                captureBytes = 0;
+                status = CrashDump_DataSourceCaptureInternal(
+                    Context,
+                    (ULONG)slotIndex,
+                    (UCHAR*)OutputBuffer,
+                    OutputBufferSize,
+                    &captureBytes);
+                if (NT_SUCCESS(status))
+                {
+                    *BytesReturned = captureBytes;
+                }
+            }
+        }
+
+        WdfWaitLockRelease(Context->CrashDumpLock);
+        return status;
+    }
+
+    default:
+        return STATUS_NOT_SUPPORTED;
+    }
+}
+
+static NTSTATUS
+CrashDump_IoctlHandler(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ WDFREQUEST Request,
+    _In_ ULONG IoControlCode,
+    _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer,
+    _In_ SIZE_T InputBufferSize,
+    _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer,
+    _In_ SIZE_T OutputBufferSize,
+    _Out_ SIZE_T* BytesReturned
+    )
+{
+    return HandleCrashDumpRequest(
+        Context,
+        Request,
+        IoControlCode,
+        InputBuffer,
+        InputBufferSize,
+        OutputBuffer,
+        OutputBufferSize,
+        BytesReturned);
+}
+
+static NTSTATUS
+CrashDump_RingBufferElementsFirstBufferGet(
+    _In_opt_ PVOID DmfModule,
+    _Out_writes_bytes_(BufferSize) UCHAR* Buffer,
+    _In_ ULONG BufferSize,
+    _Inout_opt_ PVOID CallbackContext
+    )
+{
+    ULONG fillBytes;
+
+    UNREFERENCED_PARAMETER(DmfModule);
+
+    if ((Buffer == NULL) || (BufferSize == 0))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    fillBytes = BufferSize;
+    if (CallbackContext != NULL)
+    {
+        fillBytes = *(ULONG*)CallbackContext;
+        if (fillBytes > BufferSize)
+        {
+            fillBytes = BufferSize;
+        }
+    }
+
+    RtlFillMemory(Buffer, fillBytes, 0xA5);
+    if (fillBytes < BufferSize)
+    {
+        RtlZeroMemory(Buffer + fillBytes, BufferSize - fillBytes);
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+CrashDump_RingBufferElementsXor(
+    _In_opt_ PVOID DmfModule,
+    _Inout_updates_bytes_(BufferSize) UCHAR* Buffer,
+    _In_ ULONG BufferSize,
+    _Inout_opt_ PVOID CallbackContext
+    )
+{
+    ULONG index;
+    UCHAR xorByte;
+
+    UNREFERENCED_PARAMETER(DmfModule);
+
+    if ((Buffer == NULL) || (BufferSize == 0))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    xorByte = (CallbackContext != NULL) ? *(UCHAR*)CallbackContext : 0x5Au;
+    for (index = 0; index < BufferSize; index++)
+    {
+        Buffer[index] ^= xorByte;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static VOID
+CrashDump_BugCheckSecondaryDumpDataCallbackRingBuffer(
+    _In_ KBUGCHECK_CALLBACK_REASON Reason,
+    _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record,
+    _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData,
+    _In_ ULONG ReasonSpecificDataLength
+    )
+{
+    UCHAR xorByte;
+
+    UNREFERENCED_PARAMETER(Reason);
+    UNREFERENCED_PARAMETER(Record);
+
+    if ((ReasonSpecificData == NULL) || (ReasonSpecificDataLength == 0))
+    {
+        return;
+    }
+
+    xorByte = 0x5Au;
+    (VOID)CrashDump_RingBufferElementsXor(
+        NULL,
+        (UCHAR*)ReasonSpecificData,
+        ReasonSpecificDataLength,
+        &xorByte);
+}
+
+static VOID
+CrashDump_BugCheckSecondaryDumpDataCallbackAdditional(
+    _In_ KBUGCHECK_CALLBACK_REASON Reason,
+    _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record,
+    _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData,
+    _In_ ULONG ReasonSpecificDataLength
+    )
+{
+    ULONG fillBytes;
+
+    UNREFERENCED_PARAMETER(Reason);
+    UNREFERENCED_PARAMETER(Record);
+
+    if ((ReasonSpecificData == NULL) || (ReasonSpecificDataLength == 0))
+    {
+        return;
+    }
+
+    fillBytes = ReasonSpecificDataLength;
+    (VOID)CrashDump_RingBufferElementsFirstBufferGet(
+        NULL,
+        (UCHAR*)ReasonSpecificData,
+        ReasonSpecificDataLength,
+        &fillBytes);
+}
+
+static VOID
+CrashDump_BugCheckTriageDumpDataCallback(
+    _In_ KBUGCHECK_CALLBACK_REASON Reason,
+    _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record,
+    _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData,
+    _In_ ULONG ReasonSpecificDataLength
+    )
+{
+    UNREFERENCED_PARAMETER(Reason);
+    UNREFERENCED_PARAMETER(Record);
+    UNREFERENCED_PARAMETER(ReasonSpecificData);
+    UNREFERENCED_PARAMETER(ReasonSpecificDataLength);
+}
+
+static VOID
+PmicGlinkEvtDmfDeviceModulesAdd(
+    _In_ WDFQUEUE Queue,
+    _In_ WDFREQUEST Request
+    )
+{
+    UCHAR dummy;
+
+    UNREFERENCED_PARAMETER(Queue);
+    UNREFERENCED_PARAMETER(Request);
+
+    dummy = 0;
+    (VOID)CrashDump_RingBufferElementsFirstBufferGet(NULL, &dummy, sizeof(dummy), NULL);
+    CrashDump_BugCheckTriageDumpDataCallback((KBUGCHECK_CALLBACK_REASON)0, NULL, &dummy, sizeof(dummy));
+}
+
+static BOOLEAN
+PmicGlinkGuidEquals(
+    _In_ const GUID* Left,
+    _In_ const GUID* Right
+    )
+{
+    if ((Left == NULL) || (Right == NULL))
+    {
+        return FALSE;
+    }
+
+    return (RtlCompareMemory(Left, Right, sizeof(GUID)) == sizeof(GUID)) ? TRUE : FALSE;
+}
+
+static ULONG
+PmicGlinkResolveProprietaryChargerCurrent(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ const GUID* ChargerGuid
+    )
+{
+    if ((Context == NULL) || (ChargerGuid == NULL))
+    {
+        return 0;
+    }
+
+    if (Context->HvdcpCharger.ChargerSupported
+        && PmicGlinkGuidEquals(ChargerGuid, &Context->HvdcpCharger.ChargerGUID))
+    {
+        return Context->HvdcpCharger.ChargerCurrent;
+    }
+
+    if (Context->HvdcpV3Charger.ChargerSupported
+        && PmicGlinkGuidEquals(ChargerGuid, &Context->HvdcpV3Charger.ChargerGUID))
+    {
+        return Context->HvdcpV3Charger.ChargerCurrent;
+    }
+
+    if (Context->IWallCharger.ChargerSupported
+        && PmicGlinkGuidEquals(ChargerGuid, &Context->IWallCharger.ChargerGUID))
+    {
+        return Context->IWallCharger.ChargerCurrent;
+    }
+
+    return 0;
 }
 
 static NTSTATUS
@@ -3072,6 +4191,7 @@ BattMngrControlCharging(
     const BATT_MNGR_CONTROL_CHARGING* request;
     GUID zeroGuid;
     BOOLEAN guidIsZero;
+    BOOLEAN legacySimpleRequest;
 
     UNREFERENCED_PARAMETER(OutputBuffer);
     UNREFERENCED_PARAMETER(OutputBufferSize);
@@ -3090,11 +4210,6 @@ BattMngrControlCharging(
 
     request = (const BATT_MNGR_CONTROL_CHARGING*)InputBuffer;
     RtlZeroMemory(&zeroGuid, sizeof(zeroGuid));
-
-    RtlCopyMemory(
-        &Context->LegacyControlCharging,
-        request,
-        sizeof(Context->LegacyControlCharging));
 
     switch (request->batt_command)
     {
@@ -3132,6 +4247,11 @@ BattMngrControlCharging(
             return STATUS_SUCCESS;
         }
 
+        RtlCopyMemory(
+            &Context->LegacyControlCharging.charger_guid,
+            &request->charger_guid,
+            sizeof(GUID));
+
         guidIsZero = (RtlCompareMemory(&request->charger_guid, &zeroGuid, sizeof(GUID)) == sizeof(GUID));
         if (guidIsZero)
         {
@@ -3139,18 +4259,9 @@ BattMngrControlCharging(
         }
         else
         {
-            switch (request->batt_charger_source_type)
-            {
-            case 0:
-                Context->LegacyChargeRate.charge_perc = 500;
-                break;
-            case 1:
-                Context->LegacyChargeRate.charge_perc = 1500;
-                break;
-            default:
-                Context->LegacyChargeRate.charge_perc = 0;
-                break;
-            }
+            Context->LegacyChargeRate.charge_perc = PmicGlinkResolveProprietaryChargerCurrent(
+                Context,
+                &request->charger_guid);
         }
         break;
 
@@ -3161,12 +4272,13 @@ BattMngrControlCharging(
         }
 
         guidIsZero = (RtlCompareMemory(&request->charger_guid, &zeroGuid, sizeof(GUID)) == sizeof(GUID));
-        if (guidIsZero
+        legacySimpleRequest = guidIsZero
             && (request->batt_charger_source_type == 0)
             && (request->batt_charger_flags == 0)
             && (request->batt_charger_voltage == 0)
             && (request->batt_charger_port_type == 0)
-            && (request->batt_charger_port_id == 0))
+            && (request->batt_charger_port_id == 0);
+        if (legacySimpleRequest)
         {
             if (request->batt_max_charge_current == 0xFFFFFFFF)
             {
@@ -3187,28 +4299,31 @@ BattMngrControlCharging(
         }
         else
         {
-            switch (request->batt_charger_source_type)
+            RtlCopyMemory(
+                &Context->LegacyControlCharging.charger_guid,
+                &request->charger_guid,
+                sizeof(GUID));
+
+            if (guidIsZero)
             {
-            case 0:
-                Context->LegacyChargeRate.charge_perc = 500;
-                break;
-            case 1:
-                Context->LegacyChargeRate.charge_perc = 1500;
-                break;
-            default:
                 Context->LegacyChargeRate.charge_perc = 0;
-                break;
+            }
+            else
+            {
+                Context->LegacyChargeRate.charge_perc = PmicGlinkResolveProprietaryChargerCurrent(
+                    Context,
+                    &request->charger_guid);
             }
         }
+
+        Context->LastChargerVoltage = request->batt_charger_voltage;
+        Context->LastChargerPortType = request->batt_charger_port_type;
         break;
 
     default:
         return STATUS_NOT_SUPPORTED;
     }
 
-    Context->LegacyChargeStatus.rate = (LONG)Context->LegacyChargeRate.charge_perc;
-    Context->LegacyStatusNotificationPending = TRUE;
-    PmicGlinkNotify_PingBattMiniClass(Context);
     return STATUS_SUCCESS;
 }
 

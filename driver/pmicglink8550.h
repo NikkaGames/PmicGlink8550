@@ -61,9 +61,18 @@
 #define IOCTL_BATTMNGR_GET_TEST_INFO_V1            0x80090FDCu
 #define IOCTL_BATTMNGR_GET_BATT_PRESENT_V2         0x80090FE0u
 
+#define IOCTL_CRASHDUMP_DATA_SOURCE_READ           0x226010u
+#define IOCTL_CRASHDUMP_DATA_SOURCE_QUERY          0x226014u
+#define IOCTL_CRASHDUMP_DATA_SOURCE_CAPTURE        0x226018u
+#define IOCTL_CRASHDUMP_DATA_SOURCE_CREATE         0x22A000u
+#define IOCTL_CRASHDUMP_DATA_SOURCE_DESTROY        0x22A004u
+#define IOCTL_CRASHDUMP_DATA_SOURCE_WRITE          0x22A008u
+
 #define PMICGLINK_STATUS_DEVICE_NOT_READY ((NTSTATUS)0xC00000A3L)
+#define PMICGLINK_STATUS_INVALID_ADDRESS  ((NTSTATUS)0xC0000141L)
 
 #define PMICGLINK_MAX_PORTS 4u
+#define PMICGLINK_CRASHDUMP_MAX_SOURCES 16u
 #define PMICGLINK_UCSI_BUFFER_SIZE 48u
 #define PMICGLINK_OEM_PROP_WORDS 64u
 #define PMICGLINK_OEM_BUFFER_SIZE 64u
@@ -293,6 +302,34 @@ typedef struct _BATT_MNGR_GET_BATTERY_PRESENT_STATUS
     LONG battRate;
 } BATT_MNGR_GET_BATTERY_PRESENT_STATUS;
 
+typedef struct _PMICGLINK_PROP_CHARGER
+{
+    BOOLEAN ChargerSupported;
+    ULONG ChargerCurrent;
+    GUID ChargerGUID;
+} PMICGLINK_PROP_CHARGER;
+
+typedef struct _DATA_SOURCE_CREATE
+{
+    ULONG EntriesCount;
+    ULONG EntrySize;
+    GUID Guid;
+} DATA_SOURCE_CREATE;
+
+typedef struct _PMICGLINK_CRASHDUMP_DATA_SOURCE
+{
+    PUCHAR RingBufferData;
+    WDFFILEOBJECT FileObject[3];
+    GUID RingBufferGuid;
+    CHAR RingBufferEncryptionKey[33];
+    ULONG RingBufferEncryptionKeySize;
+    ULONG RingBufferSize;
+    ULONG RingBufferSizeOfEachEntry;
+    ULONG EntriesCount;
+    ULONG CurrentRingBufferIndex;
+    ULONG ValidEntryCount;
+} PMICGLINK_CRASHDUMP_DATA_SOURCE;
+
 typedef struct _BATT_MNGR_GET_CAPABILITIES_OUT
 {
     ULONGLONG batt_mngr_capabilities;
@@ -422,6 +459,12 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONG QcmbGoodChargerThresholdUW;
     ULONG QcmbChargerStatusInfo;
     KEVENT QcmbNotifyEvent;
+    PMICGLINK_PROP_CHARGER HvdcpCharger;
+    PMICGLINK_PROP_CHARGER HvdcpV3Charger;
+    PMICGLINK_PROP_CHARGER IWallCharger;
+    ULONG MaxFlashCurrent;
+    ULONG LastChargerVoltage;
+    ULONG LastChargerPortType;
 
     BATT_MNGR_GET_BATT_ID_OUT LegacyBattId;
     BATT_MNGR_CHG_STATUS_OUT LegacyChargeStatus;
@@ -458,8 +501,11 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     PMICGLINK_DEVICE_DDIINTERFACE_TYPE DdiInterface;
     WDFSPINLOCK StateLock;
     WDFWAITLOCK DdiInterfaceLock;
+    WDFWAITLOCK CrashDumpLock;
     USHORT DdiInterfaceRefCount;
     USHORT DdiInterfacePadding;
+    ULONG CrashDumpDataSourceCount;
+    PMICGLINK_CRASHDUMP_DATA_SOURCE CrashDumpDataSources[PMICGLINK_CRASHDUMP_MAX_SOURCES];
 
     USBPD_DPM_USBC_WRITE_BUFFER LastUsbcWriteRequest;
     USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA LastUsbcNotification;
