@@ -2174,11 +2174,6 @@ PmicGlink_SyncSendReceive(
             ULONG MessageOp;
         } chargerPortsRequest;
 
-        if (Context->NumPorts == 0)
-        {
-            Context->NumPorts = 1;
-        }
-
         chargerPortsRequest.Header = 0x10000800Aull;
         chargerPortsRequest.MessageOp = 73u;
         return PmicGlink_SendData(Context, 73u, &chargerPortsRequest, sizeof(chargerPortsRequest), TRUE);
@@ -2189,21 +2184,6 @@ PmicGlink_SyncSendReceive(
         UCHAR chargerPowerRequest[12];
         const ULONGLONG header = 0x10000800Aull;
         const ULONG messageOp = 74u;
-
-        if (InputBuffer == NULL)
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-
-        if (*(ULONG*)InputBuffer >= PMICGLINK_MAX_PORTS)
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-
-        if (Context->UsbinPower[*(ULONG*)InputBuffer] == 0)
-        {
-            Context->UsbinPower[*(ULONG*)InputBuffer] = 5000000;
-        }
 
         RtlZeroMemory(chargerPowerRequest, sizeof(chargerPowerRequest));
         RtlCopyMemory(chargerPowerRequest, &header, sizeof(header));
@@ -2359,11 +2339,6 @@ PmicGlink_SyncSendReceive(
         transferLength = (ULONG)InputBuffer[5];
 
         if ((deviceAddress == 0u) || (registerOffset == 0u) || (transferLength == 0u))
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-
-        if ((readWriteFlag == 0u) && (InputBufferSize < (PMICGLINK_I2C_HEADER_SIZE + transferLength)))
         {
             return STATUS_INVALID_PARAMETER;
         }
