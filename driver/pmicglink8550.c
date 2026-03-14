@@ -170,6 +170,10 @@ static LARGE_INTEGER gPmicGlinkLastUsbIoctlEvent;
 static ULONGLONG gPmicGlinkLastBattIdQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
 static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
+static CHAR gPmicGlinkUlogData[8192];
+static CHAR gPmicGlinkUlogInitData[8192];
+static ULONG gPmicGlinkUlogDataLength;
+static ULONG gPmicGlinkUlogInitDataLength;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 static PVOID gKeInitializeTriageDumpDataArray;
@@ -5144,7 +5148,7 @@ PmicGlink_OemHandleCommand(
 {
     if ((Context == NULL) || (InputBuffer == NULL) || (IsOEMCmd == NULL))
     {
-        return STATUS_UNSUCCESSFUL;
+        return STATUS_INVALID_PARAMETER;
     }
 
     *IsOEMCmd = (InputBuffer[0] == 0xFFu) ? TRUE : FALSE;
@@ -7097,17 +7101,19 @@ PmicGlink_RetrieveRxData(
         if (BufferSize >= 16u)
         {
             ULONG dataLength;
-            SIZE_T copySize;
 
             RtlCopyMemory(&dataLength, Buffer + 12, sizeof(dataLength));
-            copySize = (dataLength <= PMICGLINK_I2C_DATA_SIZE)
-                ? (SIZE_T)dataLength
-                : PMICGLINK_I2C_DATA_SIZE;
-            if (BufferSize >= (16u + copySize))
+            Context->I2CDataLength = 0;
+            RtlZeroMemory(Context->I2CData, sizeof(Context->I2CData));
+
+            if ((dataLength <= PMICGLINK_I2C_DATA_SIZE)
+                && (BufferSize >= (16u + (SIZE_T)dataLength)))
             {
-                Context->I2CDataLength = (ULONG)copySize;
-                RtlZeroMemory(Context->I2CData, sizeof(Context->I2CData));
-                RtlCopyMemory(Context->I2CData, Buffer + 16, copySize);
+                Context->I2CDataLength = dataLength;
+                if (dataLength > 0u)
+                {
+                    RtlCopyMemory(Context->I2CData, Buffer + 16, dataLength);
+                }
             }
         }
         break;
@@ -7204,7 +7210,14 @@ PmicGlink_RetrieveRxData(
         break;
 
     case 258u:
-        if (BufferSize < 16u)
+        if (BufferSize >= 16u)
+        {
+            ULONG fwStatus;
+
+            RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
+            status = (NTSTATUS)(LONG)fwStatus;
+        }
+        else
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -7214,16 +7227,17 @@ PmicGlink_RetrieveRxData(
         if (BufferSize >= 16u)
         {
             ULONG dataLength;
-            SIZE_T copySize;
 
             RtlCopyMemory(&dataLength, Buffer + 12, sizeof(dataLength));
-            copySize = (dataLength <= PMICGLINK_OEM_BUFFER_SIZE)
-                ? (SIZE_T)dataLength
-                : PMICGLINK_OEM_BUFFER_SIZE;
-            if (BufferSize >= (16u + copySize))
+            RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
+
+            if ((dataLength <= PMICGLINK_OEM_BUFFER_SIZE)
+                && (BufferSize >= (16u + (SIZE_T)dataLength)))
             {
-                RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
-                RtlCopyMemory(Context->OemReceivedData, Buffer + 16, copySize);
+                if (dataLength > 0u)
+                {
+                    RtlCopyMemory(Context->OemReceivedData, Buffer + 16, dataLength);
+                }
             }
         }
         break;
@@ -7268,7 +7282,7 @@ PmicGlinkNotifyRxIntentReqCb(
         return FALSE;
     }
 
-    return TRUE;
+    return ((PPMIC_GLINK_DEVICE_CONTEXT)Context)->GlinkChannelConnected ? TRUE : FALSE;
 }
 
 VOID
@@ -7287,7 +7301,6 @@ PmicGlinkNotifyRxIntentCb(
     if (deviceContext != NULL)
     {
         deviceContext->GlinkRxIntent += 1;
-        deviceContext->EventID += 1;
     }
 }
 
@@ -7641,8 +7654,7 @@ PmicGlinkUlogStateNotificationCb(
             (VOID)WdfTimerStop(deviceContext->UlogTimer, FALSE);
         }
         if (deviceContext->GlinkChannelUlogRestart
-            && deviceContext->GlinkLinkStateUp
-            && (deviceContext->UlogInitEn != 0))
+            && deviceContext->GlinkLinkStateUp)
         {
             (VOID)PmicGlinkUlog_OpenGlinkChannelUlog(deviceContext);
         }
@@ -7654,10 +7666,6 @@ PmicGlinkUlogStateNotificationCb(
         if (deviceContext->UlogTimer != NULL)
         {
             (VOID)WdfTimerStop(deviceContext->UlogTimer, FALSE);
-        }
-        if (deviceContext->GlinkLinkStateUp && (deviceContext->UlogInitEn != 0))
-        {
-            (VOID)PmicGlinkUlog_OpenGlinkChannelUlog(deviceContext);
         }
         break;
 
@@ -7678,14 +7686,13 @@ PmicGlinkUlogNotifyRxIntentReqCb(
     UNREFERENCED_PARAMETER(Handle);
     
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
-    if ((deviceContext == NULL)
-        || (RequestedSize == 0)
-        || !deviceContext->GlinkChannelUlogConnected)
+    UNREFERENCED_PARAMETER(RequestedSize);
+
+    if ((deviceContext == NULL) || !deviceContext->GlinkChannelUlogConnected)
     {
         return FALSE;
     }
 
-    deviceContext->GlinkUlogRxIntent += 1;
     return TRUE;
 }
 
@@ -7713,11 +7720,6 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     if (Context == NULL)
     {
         return STATUS_INVALID_PARAMETER;
-    }
-
-    if (Context->UlogInitEn == 0)
-    {
-        return STATUS_UNSUCCESSFUL;
     }
 
     Context->GlinkChannelUlogFirstConnect = TRUE;
@@ -7749,20 +7751,63 @@ PmicGlinkUlog_RetrieveRxData(
     {
         const UCHAR* payload;
         SIZE_T payloadSize;
+        CHAR* targetBuffer;
+        ULONG* targetLength;
         SIZE_T copySize;
+        SIZE_T i;
 
         payload = (const UCHAR*)Buffer + sizeof(ULONGLONG) + sizeof(ULONG);
         payloadSize = BufferSize - (sizeof(ULONGLONG) + sizeof(ULONG));
-        if (payloadSize > 0)
+
+        if (opCode == 24u)
         {
-            copySize = payloadSize;
-            if (copySize >= sizeof(Context->OemReceivedData))
+            targetBuffer = gPmicGlinkUlogData;
+            targetLength = &gPmicGlinkUlogDataLength;
+        }
+        else
+        {
+            targetBuffer = gPmicGlinkUlogInitData;
+            targetLength = &gPmicGlinkUlogInitDataLength;
+        }
+
+        RtlZeroMemory(targetBuffer, 8192);
+        *targetLength = 0;
+
+        copySize = payloadSize;
+        for (i = 0; i < payloadSize; i++)
+        {
+            if (payload[i] == '\0')
             {
-                copySize = sizeof(Context->OemReceivedData) - 1u;
+                copySize = i;
+                break;
+            }
+        }
+
+        if (copySize >= 8192u)
+        {
+            copySize = 8191u;
+        }
+
+        if (copySize > 0)
+        {
+            RtlCopyMemory(targetBuffer, payload, copySize);
+        }
+
+        targetBuffer[copySize] = '\0';
+        *targetLength = (ULONG)copySize;
+
+        RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
+        if (copySize > 0)
+        {
+            SIZE_T oemCopySize;
+
+            oemCopySize = copySize;
+            if (oemCopySize >= sizeof(Context->OemReceivedData))
+            {
+                oemCopySize = sizeof(Context->OemReceivedData) - 1u;
             }
 
-            RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
-            RtlCopyMemory(Context->OemReceivedData, payload, copySize);
+            RtlCopyMemory(Context->OemReceivedData, payload, oemCopySize);
         }
 
         return STATUS_SUCCESS;
