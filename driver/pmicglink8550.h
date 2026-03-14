@@ -451,6 +451,9 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONG ModernStandbyState;
     PCALLBACK_OBJECT ModernStandbyCallbackObject;
     PVOID ModernStandbyCallbackHandle;
+    PVOID GlinkNotificationEntry;
+    PVOID AbdNotificationEntry;
+    PVOID BattMiniNotificationEntry;
 
     PMICGLINK_DEVICE_DDIINTERFACE_TYPE DdiInterface;
     WDFSPINLOCK StateLock;

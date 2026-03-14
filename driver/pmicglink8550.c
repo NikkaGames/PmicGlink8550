@@ -45,6 +45,62 @@ DEFINE_GUID(
     0xb7);
 
 DEFINE_GUID(
+    GUID_ABD_DEVINTERFACE,
+    0x2b0fc0d0,
+    0xdec1,
+    0x40c1,
+    0xaf,
+    0x2e,
+    0x03,
+    0x18,
+    0x36,
+    0xa0,
+    0x66,
+    0xa8);
+
+DEFINE_GUID(
+    GUID_GLINK_DEVICE_INTERFACE,
+    0xf9d15453,
+    0x8335,
+    0x434c,
+    0xaa,
+    0x72,
+    0xfc,
+    0xd9,
+    0x25,
+    0xf1,
+    0x35,
+    0xf3);
+
+DEFINE_GUID(
+    GUID_DEVICE_INTERFACE_ARRIVAL_LOCAL,
+    0xcb3a4004,
+    0x46f0,
+    0x11d0,
+    0xb0,
+    0x8f,
+    0x00,
+    0x60,
+    0x97,
+    0x13,
+    0x05,
+    0x3f);
+
+DEFINE_GUID(
+    GUID_DEVICE_INTERFACE_REMOVAL_LOCAL,
+    0xcb3a4005,
+    0x46f0,
+    0x11d0,
+    0xb0,
+    0x8f,
+    0x00,
+    0x60,
+    0x97,
+    0x13,
+    0x05,
+    0x3f);
+
+DEFINE_GUID(
     GUID_DDIINTERFACE_PMICGLINK,
     0x3478cb09,
     0xb9f5,
@@ -94,6 +150,7 @@ static NTSTATUS PmicGlink_Init(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkDevice_InitContext(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS RegisterDeviceInterfaces(_In_ WDFDEVICE Device, _In_ BOOLEAN Register);
 static NTSTATUS PmicGlinkDevice_RegisterForPnPNotifications(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN Register);
+static NTSTATUS PmicGlinkInterfaceNotificationCallback(_In_ PVOID NotificationStructure, _Inout_opt_ PVOID Context);
 static VOID PmicGlinkPower_ModernStandby_Callback(_In_opt_ PVOID CallbackContext, _In_opt_ PVOID Argument1, _In_opt_ PVOID Argument2);
 static VOID PmicGlinkDDI_InterfaceReference(_In_opt_ PVOID Context);
 static VOID PmicGlinkDDI_InterfaceDereference(_In_opt_ PVOID Context);
@@ -844,12 +901,77 @@ PmicGlinkDDI_NotifyUcsiAlert(
 }
 
 static NTSTATUS
+PmicGlinkInterfaceNotificationCallback(
+    _In_ PVOID NotificationStructure,
+    _Inout_opt_ PVOID Context
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+    PDEVICE_INTERFACE_CHANGE_NOTIFICATION notification;
+    BOOLEAN arrival;
+
+    if ((NotificationStructure == NULL) || (Context == NULL))
+    {
+        return STATUS_SUCCESS;
+    }
+
+    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
+    notification = (PDEVICE_INTERFACE_CHANGE_NOTIFICATION)NotificationStructure;
+
+    arrival = FALSE;
+    if (RtlCompareMemory(&notification->Event, &GUID_DEVICE_INTERFACE_ARRIVAL_LOCAL, sizeof(GUID)) == sizeof(GUID))
+    {
+        arrival = TRUE;
+    }
+    else if (RtlCompareMemory(&notification->Event, &GUID_DEVICE_INTERFACE_REMOVAL_LOCAL, sizeof(GUID)) == sizeof(GUID))
+    {
+        arrival = FALSE;
+    }
+    else
+    {
+        return STATUS_SUCCESS;
+    }
+
+    if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_GLINK_DEVICE_INTERFACE, sizeof(GUID)) == sizeof(GUID))
+    {
+        deviceContext->GlinkDeviceLoaded = arrival;
+        deviceContext->GlinkLinkStateUp = arrival;
+
+        if (arrival)
+        {
+            (VOID)PmicGlink_OpenGlinkChannel(deviceContext);
+        }
+        else
+        {
+            deviceContext->GlinkChannelConnected = FALSE;
+            deviceContext->GlinkChannelRestart = TRUE;
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_ABD_DEVINTERFACE, sizeof(GUID)) == sizeof(GUID))
+    {
+        deviceContext->AllReqIntfArrived = arrival && deviceContext->GlinkDeviceLoaded;
+        return STATUS_SUCCESS;
+    }
+
+    if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_DEVINTERFACE_PMIC_BATT_MINI, sizeof(GUID)) == sizeof(GUID))
+    {
+        deviceContext->NotificationFlag = arrival;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
 PmicGlinkDevice_RegisterForPnPNotifications(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _In_ BOOLEAN Register
     )
 {
     NTSTATUS status;
+    PDRIVER_OBJECT driverObject;
     UNICODE_STRING callbackName;
     OBJECT_ATTRIBUTES callbackAttributes;
 
@@ -860,6 +982,24 @@ PmicGlinkDevice_RegisterForPnPNotifications(
 
     if (!Register)
     {
+        if (Context->GlinkNotificationEntry != NULL)
+        {
+            (VOID)IoUnregisterPlugPlayNotification(Context->GlinkNotificationEntry);
+            Context->GlinkNotificationEntry = NULL;
+        }
+
+        if (Context->AbdNotificationEntry != NULL)
+        {
+            (VOID)IoUnregisterPlugPlayNotification(Context->AbdNotificationEntry);
+            Context->AbdNotificationEntry = NULL;
+        }
+
+        if (Context->BattMiniNotificationEntry != NULL)
+        {
+            (VOID)IoUnregisterPlugPlayNotification(Context->BattMiniNotificationEntry);
+            Context->BattMiniNotificationEntry = NULL;
+        }
+
         if (Context->ModernStandbyCallbackHandle != NULL)
         {
             ExUnregisterCallback(Context->ModernStandbyCallbackHandle);
@@ -875,6 +1015,68 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         Context->AllReqIntfArrived = FALSE;
         Context->GlinkChannelConnected = FALSE;
         return STATUS_SUCCESS;
+    }
+
+    if (Context->Device == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    driverObject = WdfDriverWdmGetDriverObject(WdfDeviceGetDriver(Context->Device));
+    if (driverObject == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    if (Context->GlinkNotificationEntry == NULL)
+    {
+        status = IoRegisterPlugPlayNotification(
+            EventCategoryDeviceInterfaceChange,
+            PNPNOTIFY_DEVICE_INTERFACE_INCLUDE_EXISTING_INTERFACES,
+            (PVOID)&GUID_GLINK_DEVICE_INTERFACE,
+            driverObject,
+            PmicGlinkInterfaceNotificationCallback,
+            Context,
+            &Context->GlinkNotificationEntry);
+        if (!NT_SUCCESS(status))
+        {
+            Context->GlinkNotificationEntry = NULL;
+            return status;
+        }
+    }
+
+    if (Context->AbdNotificationEntry == NULL)
+    {
+        status = IoRegisterPlugPlayNotification(
+            EventCategoryDeviceInterfaceChange,
+            PNPNOTIFY_DEVICE_INTERFACE_INCLUDE_EXISTING_INTERFACES,
+            (PVOID)&GUID_ABD_DEVINTERFACE,
+            driverObject,
+            PmicGlinkInterfaceNotificationCallback,
+            Context,
+            &Context->AbdNotificationEntry);
+        if (!NT_SUCCESS(status))
+        {
+            Context->AbdNotificationEntry = NULL;
+            return status;
+        }
+    }
+
+    if (Context->BattMiniNotificationEntry == NULL)
+    {
+        status = IoRegisterPlugPlayNotification(
+            EventCategoryDeviceInterfaceChange,
+            PNPNOTIFY_DEVICE_INTERFACE_INCLUDE_EXISTING_INTERFACES,
+            (PVOID)&GUID_DEVINTERFACE_PMIC_BATT_MINI,
+            driverObject,
+            PmicGlinkInterfaceNotificationCallback,
+            Context,
+            &Context->BattMiniNotificationEntry);
+        if (!NT_SUCCESS(status))
+        {
+            Context->BattMiniNotificationEntry = NULL;
+            return status;
+        }
     }
 
     if (Context->ModernStandbyCallbackHandle == NULL)
@@ -1065,6 +1267,9 @@ PmicGlinkDevice_InitContext(
     Context->ModernStandbyState = 0;
     Context->ModernStandbyCallbackObject = NULL;
     Context->ModernStandbyCallbackHandle = NULL;
+    Context->GlinkNotificationEntry = NULL;
+    Context->AbdNotificationEntry = NULL;
+    Context->BattMiniNotificationEntry = NULL;
 
     Context->DdiInterfaceRefCount = 0;
     Context->DdiInterfacePadding = 0;
