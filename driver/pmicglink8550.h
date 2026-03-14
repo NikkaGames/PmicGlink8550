@@ -436,6 +436,8 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     BOOLEAN NotificationFlag;
 
     ULONG EventID;
+    ULONG GlinkRxIntent;
+    ULONG GlinkUlogRxIntent;
 
     ULONG NumPorts;
     LONG UsbinPower[PMICGLINK_MAX_PORTS];

@@ -1316,6 +1316,8 @@ PmicGlinkDevice_InitContext(
     Context->NotificationFlag = FALSE;
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     Context->EventID = 0;
+    Context->GlinkRxIntent = 0;
+    Context->GlinkUlogRxIntent = 0;
 
     Context->NumPorts = 1;
     Context->UsbinPower[0] = 5000000;
@@ -1343,7 +1345,7 @@ PmicGlinkDevice_InitContext(
     Context->tiv_out.TimerValueRemain = 0;
 
     Context->QcmbConnected = TRUE;
-    Context->QcmbStatus = 0x4;
+    Context->QcmbStatus = 0x5;
     Context->QcmbCurrentChargerPowerUW = 12000000;
     Context->QcmbGoodChargerThresholdUW = 4500000;
     Context->QcmbChargerStatusInfo = 0x1;
@@ -1585,18 +1587,59 @@ PmicGlinkRegisterInterfaceWorkItem(
     if ((context != NULL) && context->GlinkChannelConnected)
     {
         USBPD_DPM_USBC_WRITE_BUFFER request;
+        LARGE_INTEGER delayInterval;
+        UCHAR qcmbMessage[64];
+        ULONG qcmbStatus;
+        NTSTATUS status;
+        BOOLEAN firstConnect;
 
+        firstConnect = context->GlinkChannelFirstConnect;
         context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
         RtlZeroMemory(&context->LastUsbcNotification, sizeof(context->LastUsbcNotification));
         RtlZeroMemory(&context->LastUsbcWriteRequest, sizeof(context->LastUsbcWriteRequest));
 
-        if (context->GlinkChannelFirstConnect)
+        if (firstConnect)
         {
             RtlZeroMemory(&request, sizeof(request));
             request.cmd_type = 16u;
             request.cmd_payload.read_sel = 0u;
+            delayInterval.QuadPart = -500000ll;
+            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &delayInterval);
             (VOID)PmicGlinkPlatformUsbc_Request_Write(context, &request);
         }
+
+        if (*(ULONGLONG*)&gLatestUcsiCmd.data[8] != 0ull)
+        {
+            (VOID)PmicGlink_SyncSendReceive(
+                context,
+                IOCTL_PMICGLINK_UCSI_WRITE,
+                gLatestUcsiCmd.data,
+                PMICGLINK_UCSI_BUFFER_SIZE);
+        }
+
+        context->QcmbConnected = FALSE;
+        context->QcmbStatus = 0;
+        context->QcmbCurrentChargerPowerUW = 0;
+        context->QcmbGoodChargerThresholdUW = 0;
+        context->QcmbChargerStatusInfo = 0;
+        KeClearEvent(&context->QcmbNotifyEvent);
+
+        status = PmicGlinkPlatformQcmb_WriteMBToBuffer(context, qcmbMessage, sizeof(qcmbMessage));
+        if (NT_SUCCESS(status))
+        {
+            status = PmicGlink_SendData(context, 0x81u, qcmbMessage, sizeof(qcmbMessage), TRUE);
+            if (NT_SUCCESS(status))
+            {
+                qcmbStatus = 0;
+                status = PmicGlinkPlatformQcmb_GetStatus(context, &qcmbStatus);
+                if (NT_SUCCESS(status))
+                {
+                    context->QcmbConnected = ((qcmbStatus & 1u) != 0u) ? TRUE : FALSE;
+                }
+            }
+        }
+
+        context->GlinkChannelFirstConnect = FALSE;
     }
 
     WdfObjectDelete(WorkItem);
@@ -1623,6 +1666,7 @@ PmicGlinkStateNotificationCb(
         Context->GlinkChannelConnected = TRUE;
         Context->GlinkChannelRestart = FALSE;
         Context->GlinkLinkStateUp = TRUE;
+        Context->GlinkRxIntent += 1;
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         break;
 
@@ -1709,7 +1753,8 @@ PmicGlink_SendData(
         return STATUS_SUCCESS;
 
     case 0x81:
-        Context->QcmbStatus = 0x4;
+        Context->QcmbStatus = 0x5;
+        Context->QcmbConnected = TRUE;
         KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
         return STATUS_SUCCESS;
 
@@ -2134,11 +2179,6 @@ PmicGlinkPlatformQcmb_GetStatus(
 
     *QcmbStatus = 0;
 
-    if (!Context->QcmbConnected)
-    {
-        return STATUS_SUCCESS;
-    }
-
     requestMessage.Header = 0x100008010ull;
     requestMessage.MessageOp = 128u;
 
@@ -2205,7 +2245,7 @@ PmicGlinkPlatformQcmb_PreShutdown_Cmd(
     }
 
     WdfSpinLockAcquire(Context->StateLock);
-    Context->QcmbStatus = 0x2;
+    Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x2u;
     if ((CmdBitMask & 0x3u) != 0)
     {
         Context->ModernStandbyState = ((CmdBitMask & 0x2u) != 0) ? 1u : 0u;
@@ -2224,7 +2264,7 @@ PmicGlinkPlatformQcmb_PreShutdown_Cmd(
         (VOID)PmicGlinkPlatformQcmb_WaitCmdStatus(Context, 50u);
     }
 
-    Context->QcmbStatus = 0x4;
+    Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x4u;
 
     return status;
 }
@@ -2256,7 +2296,7 @@ PmicGlinkPlatformQcmb_GetChargerInfo_Cmd(
         return STATUS_SUCCESS;
     }
 
-    Context->QcmbStatus = 0x2;
+    Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x2u;
     status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
     if (!NT_SUCCESS(status))
     {
@@ -5541,22 +5581,18 @@ PmicGlink_GetStringFromBuffer(
         return;
     }
 
-    outIndex = 0;
-    StringBuffer[0] = '\0';
-
-    if (Buffer == NULL)
+    if ((Buffer == NULL) || ((ULONG)StringSize < ((ULONG)BufferSize * 3u)))
     {
+        StringBuffer[0] = '\0';
         return;
     }
+
+    outIndex = 0;
+    StringBuffer[0] = '\0';
 
     for (i = 0; i < BufferSize; i++)
     {
         UCHAR value;
-
-        if ((outIndex + 3u) >= StringSize)
-        {
-            break;
-        }
 
         value = Buffer[i];
         StringBuffer[outIndex++] = hexDigits[(value >> 4) & 0x0Fu];
@@ -5578,22 +5614,26 @@ PmicGlink_ANSIToUniString(
     _In_ SIZE_T UnicodeChars
     )
 {
-    SIZE_T i;
+    ANSI_STRING ansi;
+    UNICODE_STRING unicode;
 
     if ((AnsiString == NULL) || (UnicodeString == NULL) || (UnicodeChars == 0))
     {
         return STATUS_INVALID_PARAMETER;
     }
 
-    i = 0;
-    while ((i + 1u) < UnicodeChars && (AnsiString[i] != '\0'))
+    if (UnicodeChars > ((SIZE_T)0xFFFFu / sizeof(WCHAR)))
     {
-        UnicodeString[i] = (WCHAR)(UCHAR)AnsiString[i];
-        i++;
+        return STATUS_INVALID_PARAMETER;
     }
 
-    UnicodeString[i] = L'\0';
-    return STATUS_SUCCESS;
+    RtlInitAnsiString(&ansi, AnsiString);
+
+    unicode.Buffer = UnicodeString;
+    unicode.Length = 0;
+    unicode.MaximumLength = (USHORT)(UnicodeChars * sizeof(WCHAR));
+
+    return RtlAnsiStringToUnicodeString(&unicode, &ansi, FALSE);
 }
 
 NTSTATUS
@@ -5637,8 +5677,13 @@ PmicGlinkNotifyRxIntentReqCb(
     )
 {
     UNREFERENCED_PARAMETER(Handle);
-    UNREFERENCED_PARAMETER(Context);
     UNREFERENCED_PARAMETER(RequestedSize);
+
+    if (Context == NULL)
+    {
+        return FALSE;
+    }
+
     return TRUE;
 }
 
@@ -5657,6 +5702,7 @@ PmicGlinkNotifyRxIntentCb(
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext != NULL)
     {
+        deviceContext->GlinkRxIntent += 1;
         deviceContext->EventID += 1;
     }
 }
@@ -5822,8 +5868,12 @@ PmicGlinkUlogNotifyRxIntentCb(
     )
 {
     UNREFERENCED_PARAMETER(Handle);
-    UNREFERENCED_PARAMETER(Context);
     UNREFERENCED_PARAMETER(Size);
+
+    if (Context != NULL)
+    {
+        ((PPMIC_GLINK_DEVICE_CONTEXT)Context)->GlinkUlogRxIntent += 1;
+    }
 }
 
 NTSTATUS
