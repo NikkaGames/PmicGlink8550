@@ -187,6 +187,7 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_ABD_IOCTL_UNREGISTER_CONNECTION 0xC3502FA8u
 #define PMICGLINK_ULOG_MSG_HEADER 0x10000800Aull
 #define PMICGLINK_ULOG_SET_PROPERTIES_OPCODE 25u
+#define PMICGLINK_ULOG_GET_LOG_BUFFER_OPCODE 24u
 #define PMICGLINK_ULOG_GET_BUFFER_OPCODE 35u
 #define PMICGLINK_ULOG_DEFAULT_LEVEL 4u
 #define PMICGLINK_ULOG_DEFAULT_CATEGORIES 0x0000000E00008000ull
@@ -303,6 +304,7 @@ static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PMICGLINK_CHANNEL_EVENT Event);
 static VOID PmicGlinkUlogTimerFunction(_In_ WDFTIMER Timer);
 static NTSTATUS PmicGlinkUlogSendSetPropertiesRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static NTSTATUS PmicGlinkUlogSendGetLogBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUlogSendGetBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS CrashDump_InitializeTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID CrashDump_PopulateTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
@@ -7523,6 +7525,25 @@ PmicGlinkUlogSendSetPropertiesRequest(
 }
 
 static NTSTATUS
+PmicGlinkUlogSendGetLogBufferRequest(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    PMICGLINK_ULOG_GET_BUFFER_REQUEST request;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    RtlZeroMemory(&request, sizeof(request));
+    request.Header = PMICGLINK_ULOG_MSG_HEADER;
+    request.MessageOp = PMICGLINK_ULOG_GET_LOG_BUFFER_OPCODE;
+
+    return PmicGlinkUlog_SendData(Context, &request, sizeof(request));
+}
+
+static NTSTATUS
 PmicGlinkUlogSendGetBufferRequest(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
@@ -7575,6 +7596,8 @@ PmicGlinkUlogTimerFunction(
 
             attempts--;
         }
+
+        (VOID)PmicGlinkUlogSendGetLogBufferRequest(context);
     }
 
     if ((context->UlogInterval != 0u) && (context->UlogTimer != NULL))
