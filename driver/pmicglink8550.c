@@ -2428,18 +2428,6 @@ PmicGlink_SyncSendReceive(
         return PmicGlink_SendData(Context, 9u, &battInfoRequest, sizeof(battInfoRequest), TRUE);
     }
 
-    case IOCTL_BATTMNGR_CONTROL_CHARGING:
-        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(BATT_MNGR_CONTROL_CHARGING)))
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-
-        RtlCopyMemory(
-            &Context->LegacyControlCharging,
-            InputBuffer,
-            sizeof(BATT_MNGR_CONTROL_CHARGING));
-        return STATUS_SUCCESS;
-
     case IOCTL_BATTMNGR_SET_STATUS_CRITERIA:
     {
         const BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA* request;
