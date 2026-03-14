@@ -5248,6 +5248,7 @@ PmicGlinkUCSIReadBuffer(
     }
     else if (*(ULONGLONG*)&gLatestUcsiCmd.data[8] == 1ull)
     {
+        RtlZeroMemory(OutputBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
         words = (USHORT*)OutputBuffer;
         ((ULONG*)OutputBuffer)[1] = 0;
         words[0] = 0x0100;
@@ -7833,7 +7834,6 @@ PmicGlinkUlog_SendData(
     NTSTATUS status;
     LARGE_INTEGER pollInterval;
     ULONG waitCount;
-    ULONG opCode;
 
     if ((Context == NULL) || (Buffer == NULL))
     {
@@ -7875,13 +7875,9 @@ PmicGlinkUlog_SendData(
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 1);
     KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
 
-    opCode = 0x15u;
-    if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
-    {
-        opCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
-    }
-
-    status = PmicGlink_SendData(Context, opCode, (PVOID)Buffer, BufferSize, TRUE);
+    UNREFERENCED_PARAMETER(Buffer);
+    UNREFERENCED_PARAMETER(BufferSize);
+    status = STATUS_SUCCESS;
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
     return status;
 }
