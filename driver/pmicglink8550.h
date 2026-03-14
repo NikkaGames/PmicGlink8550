@@ -464,7 +464,8 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
 
     UCHAR I2CHeader[PMICGLINK_I2C_HEADER_SIZE];
     UCHAR I2CData[PMICGLINK_I2C_DATA_SIZE];
-    ULONG I2CDataLength;
+    UCHAR I2CDataLength;
+    UCHAR ReservedI2C[3];
 
     PMICGLINK_TAD_GWS_OUTBUF gws_out;
     PMICGLINK_TAD_CWS_OUTBUF cws_out;
@@ -541,7 +542,6 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONG CrashDumpDataSourceCount;
     PMICGLINK_CRASHDUMP_DATA_SOURCE CrashDumpDataSources[PMICGLINK_CRASHDUMP_MAX_SOURCES];
 
-    UCHAR PlatformState;
     UCHAR UsbcPinAssignmentNotifyEn;
     UCHAR UlogInitEn;
     UCHAR Reserved2[2];

@@ -1840,7 +1840,6 @@ PmicGlinkDevice_InitContext(
 
     RtlZeroMemory(&gPmicGlinkUsbcNotification, sizeof(gPmicGlinkUsbcNotification));
     gPmicGlinkPendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
-    Context->PlatformState = 0;
     Context->UsbcPinAssignmentNotifyEn = 0;
     Context->UlogInitEn = 0;
     Context->Reserved2[0] = 0;
@@ -1934,13 +1933,6 @@ PmicGlink_Init(
         &regKey);
     if (NT_SUCCESS(status))
     {
-        RtlInitUnicodeString(&regValueName, L"PmicGlinkPlatformState");
-        queryStatus = PmicGlinkRegistryQuery(regKey, &regValueName, &regValueData);
-        if (NT_SUCCESS(queryStatus))
-        {
-            Context->PlatformState = (UCHAR)regValueData;
-        }
-
         RtlInitUnicodeString(&regValueName, L"PlatformConfig");
         status = WdfRegistryOpenKey(
             regKey,
@@ -5265,7 +5257,6 @@ PmicGlinkPlatformUsbc_AcpiNotificationHandler(
     gPmicGlinkPendingPlatformState = (UCHAR)NotifyValue;
     if (deviceContext != NULL)
     {
-        deviceContext->PlatformState = (UCHAR)NotifyValue;
         (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkPlatformSetState_Request_Write_WorkItem);
     }
 }
@@ -5387,7 +5378,6 @@ PmicGlinkUCSIReadBuffer(
     }
     else if (*(ULONGLONG*)&gLatestUcsiCmd.data[8] == 1ull)
     {
-        RtlZeroMemory(OutputBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
         words = (USHORT*)OutputBuffer;
         ((ULONG*)OutputBuffer)[1] = 0;
         words[0] = 0x0100;
@@ -7256,7 +7246,7 @@ PmicGlink_RetrieveRxData(
             if ((dataLength <= PMICGLINK_I2C_DATA_SIZE)
                 && (BufferSize >= (16u + (SIZE_T)dataLength)))
             {
-                Context->I2CDataLength = dataLength;
+                Context->I2CDataLength = (UCHAR)dataLength;
                 if (dataLength > 0u)
                 {
                     RtlCopyMemory(Context->I2CData, Buffer + 16, dataLength);
