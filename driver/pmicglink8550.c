@@ -1268,6 +1268,8 @@ PmicGlinkDevice_RegisterForPnPNotifications(
 
         Context->AllReqIntfArrived = FALSE;
         Context->ABDAttached = FALSE;
+        Context->GlinkDeviceLoaded = FALSE;
+        Context->NotificationFlag = FALSE;
         Context->GlinkChannelConnected = FALSE;
         return STATUS_SUCCESS;
     }
@@ -1852,60 +1854,8 @@ PmicGlink_SendData(
     (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 1);
     KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
 
+    UNREFERENCED_PARAMETER(OpCode);
     status = STATUS_SUCCESS;
-    switch (OpCode)
-    {
-    case 0x15:
-        if (BufferLen >= sizeof(PMICGLINK_USBC_WRITE_REQ_MESSAGE))
-        {
-            const PMICGLINK_USBC_WRITE_REQ_MESSAGE* requestMessage;
-
-            requestMessage = (const PMICGLINK_USBC_WRITE_REQ_MESSAGE*)Buffer;
-            Context->LastUsbcWriteRequest = requestMessage->Request;
-
-            switch (requestMessage->Request.cmd_type)
-            {
-            case 16u:
-                if (Context->PendingPan >= PMICGLINK_MAX_PORTS)
-                {
-                    Context->PendingPan = 0;
-                }
-
-                RtlZeroMemory(&Context->LastUsbcNotification, sizeof(Context->LastUsbcNotification));
-                Context->LastUsbcNotification.detail.common.port_index = Context->PendingPan;
-                break;
-
-            case 17u:
-            case 19u:
-                Context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
-                break;
-
-            case 20u:
-                if (requestMessage->Request.cmd_payload.read_sel < PMICGLINK_MAX_PORTS)
-                {
-                    Context->PendingPan = (UCHAR)requestMessage->Request.cmd_payload.read_sel;
-                }
-                break;
-
-            default:
-                break;
-            }
-        }
-        break;
-
-    case 0x52:
-        if (BufferLen >= sizeof(PMICGLINK_USBC_SET_STATE_MESSAGE))
-        {
-            const PMICGLINK_USBC_SET_STATE_MESSAGE* setStateMessage;
-
-            setStateMessage = (const PMICGLINK_USBC_SET_STATE_MESSAGE*)Buffer;
-            Context->PlatformState = (UCHAR)setStateMessage->State;
-        }
-        break;
-
-    default:
-        break;
-    }
 
     if (!WaitForRx)
     {
