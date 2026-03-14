@@ -428,6 +428,9 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     BOOLEAN GlinkChannelConnected;
     BOOLEAN GlinkChannelRestart;
     BOOLEAN GlinkChannelFirstConnect;
+    BOOLEAN GlinkChannelUlogConnected;
+    BOOLEAN GlinkChannelUlogRestart;
+    BOOLEAN GlinkChannelUlogFirstConnect;
     BOOLEAN GlinkLinkStateUp;
     BOOLEAN RpeInitialized;
     BOOLEAN Hibernate;
