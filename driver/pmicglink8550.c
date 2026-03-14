@@ -44,9 +44,37 @@ DEFINE_GUID(
     0x23,
     0xb7);
 
+DEFINE_GUID(
+    GUID_DDIINTERFACE_PMICGLINK,
+    0x3478cb09,
+    0xb9f5,
+    0x4105,
+    0xac,
+    0x72,
+    0x2f,
+    0xae,
+    0xec,
+    0xb3,
+    0xec,
+    0xa4);
+
 static PMICGLINK_UCSI_WRITE_DATA_BUF_TYPE gLatestUcsiCmd;
 static ULONGLONG gPmicGlinkRelTimeStartTicks;
 static BOOLEAN gPmicGlinkRelTimeInitialized;
+
+typedef struct _PMICGLINK_USBC_WRITE_REQ_MESSAGE
+{
+    ULONGLONG Header;
+    ULONG MessageOp;
+    USBPD_DPM_USBC_WRITE_BUFFER Request;
+} PMICGLINK_USBC_WRITE_REQ_MESSAGE;
+
+typedef struct _PMICGLINK_USBC_SET_STATE_MESSAGE
+{
+    ULONGLONG Header;
+    ULONG MessageOp;
+    ULONG State;
+} PMICGLINK_USBC_SET_STATE_MESSAGE;
 
 typedef struct _PEP_Modern_Standby_Notif_Struct
 {
@@ -55,11 +83,32 @@ typedef struct _PEP_Modern_Standby_Notif_Struct
     PVOID reserved;
 } PEP_Modern_Standby_Notif_Struct;
 
+typedef enum _PMICGLINK_CHANNEL_EVENT
+{
+    PmicGlinkChannelConnected = 0,
+    PmicGlinkChannelLocalDisconnected = 1,
+    PmicGlinkChannelRemoteDisconnected = 2
+} PMICGLINK_CHANNEL_EVENT;
+
 static NTSTATUS PmicGlink_Init(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkDevice_InitContext(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS RegisterDeviceInterfaces(_In_ WDFDEVICE Device, _In_ BOOLEAN Register);
 static NTSTATUS PmicGlinkDevice_RegisterForPnPNotifications(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN Register);
 static VOID PmicGlinkPower_ModernStandby_Callback(_In_opt_ PVOID CallbackContext, _In_opt_ PVOID Argument1, _In_opt_ PVOID Argument2);
+static VOID PmicGlinkDDI_InterfaceReference(_In_opt_ PVOID Context);
+static VOID PmicGlinkDDI_InterfaceDereference(_In_opt_ PVOID Context);
+static NTSTATUS PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(_In_ WDFDEVICE Device, _In_ const GUID* InterfaceType, _Inout_ PINTERFACE ExposedInterface, _In_opt_ PVOID ExposedInterfaceSpecificData);
+static VOID PmicGlinkDDI_NotifyUcsiAlert(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG EventCode, _In_ ULONG EventData);
+static NTSTATUS PmicGlinkCreateDeviceWorkItem(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PFN_WDF_WORKITEM WorkItemRoutine);
+static NTSTATUS PmicGlinkPlatformUsbc_Request_Write(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const USBPD_DPM_USBC_WRITE_BUFFER* Request);
+static VOID PmicGlinkPlatformUsbc_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
+static VOID PmicGlinkPlatformSetState_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
+static VOID PmicGlinkPlatformUsbc_AcpiNotificationHandler(_In_opt_ PVOID Context, _In_ ULONG NotifyValue);
+static VOID PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
+static NTSTATUS PmicGlink_OpenGlinkChannel(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
+static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PMICGLINK_CHANNEL_EVENT Event);
 
 static NTSTATUS
 PmicGlink_SendData(
@@ -95,6 +144,25 @@ static NTSTATUS
 PmicGlinkPlatformQcmb_GetChargerInfo_Cmd(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _Out_ QCMB_GET_ACTIVE_CHARGER_INFO_CMD_EXT_DATA* ChargerInfo
+    );
+
+static NTSTATUS
+PmicGlinkPlatformQcmb_WriteMBToBuffer(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _Out_writes_bytes_(BufferSize) PUCHAR Buffer,
+    _In_ SIZE_T BufferSize
+    );
+
+static NTSTATUS
+PmicGlinkPlatformQcmb_GetStatus(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _Out_ PULONG QcmbStatus
+    );
+
+static NTSTATUS
+PmicGlinkPlatformQcmb_WaitCmdStatus(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG WaitInMs
     );
 
 static ULONG
@@ -352,13 +420,13 @@ PmicGlinkEvtDeviceAdd(
     }
 
     context = PmicGlinkGetDeviceContext(device);
+    context->Device = device;
+
     status = PmicGlinkDevice_InitContext(context);
     if (!NT_SUCCESS(status))
     {
         return status;
     }
-
-    context->Device = device;
 
     status = RegisterDeviceInterfaces(device, TRUE);
     if (!NT_SUCCESS(status))
@@ -478,8 +546,8 @@ PmicGlinkEvtPrepareHardware(
     context = PmicGlinkGetDeviceContext(Device);
     context->GlinkDeviceLoaded = TRUE;
     context->AllReqIntfArrived = TRUE;
-    context->GlinkChannelConnected = TRUE;
     context->GlinkLinkStateUp = TRUE;
+    PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelConnected);
 
     return STATUS_SUCCESS;
 }
@@ -496,8 +564,9 @@ PmicGlinkEvtReleaseHardware(
 
     context = PmicGlinkGetDeviceContext(Device);
     context->GlinkDeviceLoaded = FALSE;
-    context->GlinkChannelConnected = FALSE;
     context->GlinkLinkStateUp = FALSE;
+    PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
+    context->GlinkChannelConnected = FALSE;
 
     return STATUS_SUCCESS;
 }
@@ -514,7 +583,11 @@ PmicGlinkEvtD0Entry(
 
     context = PmicGlinkGetDeviceContext(Device);
     context->Hibernate = FALSE;
-    context->GlinkChannelConnected = TRUE;
+
+    if (!context->GlinkChannelConnected)
+    {
+        (VOID)PmicGlink_OpenGlinkChannel(context);
+    }
 
     return STATUS_SUCCESS;
 }
@@ -534,6 +607,7 @@ PmicGlinkEvtD0Exit(
         context->Hibernate = TRUE;
     }
 
+    PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
     context->GlinkChannelConnected = FALSE;
     context->GlinkChannelRestart = FALSE;
 
@@ -598,12 +672,14 @@ RegisterDeviceInterfaces(
     )
 {
     NTSTATUS status;
+    WDF_QUERY_INTERFACE_CONFIG queryInterfaceConfig;
     PPMIC_GLINK_DEVICE_CONTEXT context;
 
     context = PmicGlinkGetDeviceContext(Device);
 
     if (!Register)
     {
+        context->DdiInterface.PmicGlinkUCSIAlertCallback = NULL;
         context->DeviceInterfacesRegistered = FALSE;
         return STATUS_SUCCESS;
     }
@@ -611,6 +687,26 @@ RegisterDeviceInterfaces(
     if (context->DeviceInterfacesRegistered)
     {
         return STATUS_SUCCESS;
+    }
+
+    RtlZeroMemory(&context->DdiInterface, sizeof(context->DdiInterface));
+    context->DdiInterface.InterfaceHeader.Size = (USHORT)sizeof(context->DdiInterface);
+    context->DdiInterface.InterfaceHeader.Version = 1;
+    context->DdiInterface.InterfaceHeader.Context = Device;
+    context->DdiInterface.InterfaceHeader.InterfaceReference = PmicGlinkDDI_InterfaceReference;
+    context->DdiInterface.InterfaceHeader.InterfaceDereference = PmicGlinkDDI_InterfaceDereference;
+
+    WDF_QUERY_INTERFACE_CONFIG_INIT(
+        &queryInterfaceConfig,
+        (PINTERFACE)&context->DdiInterface,
+        &GUID_DDIINTERFACE_PMICGLINK,
+        PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest);
+    queryInterfaceConfig.ImportInterface = TRUE;
+
+    status = WdfDeviceAddQueryInterface(Device, &queryInterfaceConfig);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
     }
 
     status = WdfDeviceCreateDeviceInterface(Device, &GUID_DEVINTERFACE_BATT_MNGR, NULL);
@@ -634,6 +730,117 @@ RegisterDeviceInterfaces(
     context->DeviceInterfacesRegistered = TRUE;
 
     return STATUS_SUCCESS;
+}
+
+static VOID
+PmicGlinkDDI_InterfaceReference(
+    _In_opt_ PVOID Context
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    deviceContext = PmicGlinkGetDeviceContext((WDFDEVICE)Context);
+    if ((deviceContext == NULL) || (deviceContext->DdiInterfaceLock == NULL))
+    {
+        return;
+    }
+
+    WdfWaitLockAcquire(deviceContext->DdiInterfaceLock, NULL);
+    deviceContext->DdiInterfaceRefCount += 1;
+    WdfWaitLockRelease(deviceContext->DdiInterfaceLock);
+}
+
+static VOID
+PmicGlinkDDI_InterfaceDereference(
+    _In_opt_ PVOID Context
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    deviceContext = PmicGlinkGetDeviceContext((WDFDEVICE)Context);
+    if ((deviceContext == NULL) || (deviceContext->DdiInterfaceLock == NULL))
+    {
+        return;
+    }
+
+    WdfWaitLockAcquire(deviceContext->DdiInterfaceLock, NULL);
+    if (deviceContext->DdiInterfaceRefCount > 0)
+    {
+        deviceContext->DdiInterfaceRefCount -= 1;
+    }
+    WdfWaitLockRelease(deviceContext->DdiInterfaceLock);
+}
+
+static NTSTATUS
+PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(
+    _In_ WDFDEVICE Device,
+    _In_ const GUID* InterfaceType,
+    _Inout_ PINTERFACE ExposedInterface,
+    _In_opt_ PVOID ExposedInterfaceSpecificData
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT context;
+    PPMICGLINK_DEVICE_DDIINTERFACE_TYPE exposedDdi;
+
+    UNREFERENCED_PARAMETER(InterfaceType);
+    UNREFERENCED_PARAMETER(ExposedInterfaceSpecificData);
+
+    if ((Device == NULL) || (ExposedInterface == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    context = PmicGlinkGetDeviceContext(Device);
+    if (context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    exposedDdi = (PPMICGLINK_DEVICE_DDIINTERFACE_TYPE)ExposedInterface;
+    if (exposedDdi->PmicGlinkUCSIAlertCallback == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    context->DdiInterface.PmicGlinkUCSIAlertCallback = exposedDdi->PmicGlinkUCSIAlertCallback;
+    *exposedDdi = context->DdiInterface;
+
+    return STATUS_SUCCESS;
+}
+
+static VOID
+PmicGlinkDDI_NotifyUcsiAlert(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG EventCode,
+    _In_ ULONG EventData
+    )
+{
+    PFN_PMICGLINK_UCSI_ALERT_CALLBACK callback;
+
+    if ((Context == NULL) || (Context->DdiInterfaceLock == NULL))
+    {
+        return;
+    }
+
+    callback = NULL;
+    WdfWaitLockAcquire(Context->DdiInterfaceLock, NULL);
+    callback = Context->DdiInterface.PmicGlinkUCSIAlertCallback;
+    WdfWaitLockRelease(Context->DdiInterfaceLock);
+
+    if (callback != NULL)
+    {
+        callback(Context->Device, EventCode, EventData);
+    }
 }
 
 static NTSTATUS
@@ -859,10 +1066,29 @@ PmicGlinkDevice_InitContext(
     Context->ModernStandbyCallbackObject = NULL;
     Context->ModernStandbyCallbackHandle = NULL;
 
+    Context->DdiInterfaceRefCount = 0;
+    Context->DdiInterfacePadding = 0;
+    RtlZeroMemory(&Context->DdiInterface, sizeof(Context->DdiInterface));
+
+    RtlZeroMemory(&Context->LastUsbcWriteRequest, sizeof(Context->LastUsbcWriteRequest));
+    RtlZeroMemory(&Context->LastUsbcNotification, sizeof(Context->LastUsbcNotification));
+    Context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
+    Context->PlatformState = 0;
+    Context->Reserved2[0] = 0;
+    Context->Reserved2[1] = 0;
+
+    KeInitializeEvent(&Context->QcmbNotifyEvent, NotificationEvent, FALSE);
+
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = Context->Device;
 
     status = WdfSpinLockCreate(&attributes, &Context->StateLock);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = WdfWaitLockCreate(&attributes, &Context->DdiInterfaceLock);
     if (!NT_SUCCESS(status))
     {
         return status;
@@ -878,6 +1104,11 @@ PmicGlink_Init(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
+    NTSTATUS status;
+    WDFKEY regKey;
+    UNICODE_STRING regValueName;
+    ULONG regValueData;
+
     if (Context == NULL)
     {
         return STATUS_INVALID_PARAMETER;
@@ -889,7 +1120,127 @@ PmicGlink_Init(
     Context->RpeInitialized = FALSE;
     Context->Hibernate = FALSE;
 
+    regValueData = 0;
+    status = WdfDeviceOpenRegistryKey(
+        Context->Device,
+        PLUGPLAY_REGKEY_DEVICE,
+        KEY_READ,
+        WDF_NO_OBJECT_ATTRIBUTES,
+        &regKey);
+    if (NT_SUCCESS(status))
+    {
+        RtlInitUnicodeString(&regValueName, L"PmicGlinkPlatformState");
+        status = PmicGlinkRegistryQuery(regKey, &regValueName, &regValueData);
+        if (NT_SUCCESS(status))
+        {
+            Context->PlatformState = (UCHAR)regValueData;
+        }
+
+        WdfRegistryClose(regKey);
+    }
+
+    status = PmicGlink_OpenGlinkChannel(Context);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
     return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+PmicGlink_OpenGlinkChannel(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    Context->GlinkChannelFirstConnect = TRUE;
+    Context->GlinkChannelConnected = TRUE;
+    Context->GlinkChannelRestart = FALSE;
+    Context->GlinkLinkStateUp = TRUE;
+
+    return PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
+}
+
+static VOID
+PmicGlinkRegisterInterfaceWorkItem(
+    _In_ WDFWORKITEM WorkItem
+    )
+{
+    WDFOBJECT parentObject;
+    PPMIC_GLINK_DEVICE_CONTEXT context;
+
+    parentObject = WdfWorkItemGetParentObject(WorkItem);
+    context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
+
+    if ((context != NULL) && context->GlinkChannelConnected)
+    {
+        USBPD_DPM_USBC_WRITE_BUFFER request;
+
+        context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
+        RtlZeroMemory(&context->LastUsbcNotification, sizeof(context->LastUsbcNotification));
+        RtlZeroMemory(&context->LastUsbcWriteRequest, sizeof(context->LastUsbcWriteRequest));
+
+        if (context->GlinkChannelFirstConnect)
+        {
+            RtlZeroMemory(&request, sizeof(request));
+            request.cmd_type = 16u;
+            request.cmd_payload.read_sel = 0u;
+            (VOID)PmicGlinkPlatformUsbc_Request_Write(context, &request);
+        }
+    }
+
+    WdfObjectDelete(WorkItem);
+}
+
+static VOID
+PmicGlinkStateNotificationCb(
+    _In_opt_ PVOID Handle,
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ PMICGLINK_CHANNEL_EVENT Event
+    )
+{
+    UNREFERENCED_PARAMETER(Handle);
+
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    switch (Event)
+    {
+    case PmicGlinkChannelConnected:
+        Context->GlinkChannelFirstConnect = TRUE;
+        Context->GlinkChannelConnected = TRUE;
+        Context->GlinkChannelRestart = FALSE;
+        Context->GlinkLinkStateUp = TRUE;
+        (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
+        break;
+
+    case PmicGlinkChannelLocalDisconnected:
+        Context->GlinkChannelConnected = FALSE;
+        if (Context->GlinkChannelRestart && Context->GlinkLinkStateUp)
+        {
+            (VOID)PmicGlink_OpenGlinkChannel(Context);
+        }
+        break;
+
+    case PmicGlinkChannelRemoteDisconnected:
+        Context->GlinkChannelConnected = FALSE;
+        Context->GlinkChannelRestart = TRUE;
+        if (Context->GlinkLinkStateUp)
+        {
+            (VOID)PmicGlink_OpenGlinkChannel(Context);
+        }
+        break;
+
+    default:
+        break;
+    }
 }
 
 static NTSTATUS
@@ -911,13 +1262,61 @@ PmicGlink_SendData(
     switch (OpCode)
     {
     case 0x15:
+        if (BufferLen >= sizeof(PMICGLINK_USBC_WRITE_REQ_MESSAGE))
+        {
+            const PMICGLINK_USBC_WRITE_REQ_MESSAGE* requestMessage;
+
+            requestMessage = (const PMICGLINK_USBC_WRITE_REQ_MESSAGE*)Buffer;
+            Context->LastUsbcWriteRequest = requestMessage->Request;
+
+            switch (requestMessage->Request.cmd_type)
+            {
+            case 16u:
+                if (Context->PendingPan >= PMICGLINK_MAX_PORTS)
+                {
+                    Context->PendingPan = 0;
+                }
+
+                RtlZeroMemory(&Context->LastUsbcNotification, sizeof(Context->LastUsbcNotification));
+                Context->LastUsbcNotification.detail.common.port_index = Context->PendingPan;
+                break;
+
+            case 17u:
+            case 19u:
+                Context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
+                break;
+
+            case 20u:
+                if (requestMessage->Request.cmd_payload.read_sel < PMICGLINK_MAX_PORTS)
+                {
+                    Context->PendingPan = (UCHAR)requestMessage->Request.cmd_payload.read_sel;
+                }
+                break;
+
+            default:
+                break;
+            }
+        }
         return STATUS_SUCCESS;
 
     case 0x80:
+        KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
         return STATUS_SUCCESS;
 
     case 0x81:
         Context->QcmbStatus = 0x4;
+        KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
+        return STATUS_SUCCESS;
+
+    case 0x52:
+        if (BufferLen >= sizeof(PMICGLINK_USBC_SET_STATE_MESSAGE))
+        {
+            const PMICGLINK_USBC_SET_STATE_MESSAGE* setStateMessage;
+
+            setStateMessage = (const PMICGLINK_USBC_SET_STATE_MESSAGE*)Buffer;
+            Context->PlatformState = (UCHAR)setStateMessage->State;
+        }
+
         return STATUS_SUCCESS;
 
     default:
@@ -979,7 +1378,35 @@ PmicGlink_SyncSendReceive(
         return STATUS_SUCCESS;
 
     case IOCTL_PMICGLINK_PLATFORM_USBC_READ:
+        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(USBPD_DPM_USBC_WRITE_BUFFER)))
+        {
+            const USBPD_DPM_USBC_WRITE_BUFFER* request;
+
+            request = (const USBPD_DPM_USBC_WRITE_BUFFER*)InputBuffer;
+            Context->LastUsbcWriteRequest = *request;
+
+            if (request->cmd_type == 16u)
+            {
+                Context->PendingPan = (UCHAR)Context->LastUsbcNotification.detail.common.port_index;
+            }
+        }
+
+        return STATUS_SUCCESS;
+
     case IOCTL_PMICGLINK_PLATFORM_USBC_NOTIFY:
+        if ((InputBuffer != NULL) && (InputBufferSize == sizeof(ULONG)))
+        {
+            PmicGlinkPlatformUsbc_AcpiNotificationHandler(Context, *(ULONG*)InputBuffer);
+            return STATUS_SUCCESS;
+        }
+
+        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(USBPD_DPM_USBC_WRITE_BUFFER)))
+        {
+            return PmicGlinkPlatformUsbc_Request_Write(
+                Context,
+                (const USBPD_DPM_USBC_WRITE_BUFFER*)InputBuffer);
+        }
+
         return STATUS_SUCCESS;
 
     case IOCTL_PMICGLINK_GET_OEM_MSG:
@@ -1176,6 +1603,7 @@ PmicGlink_SyncSendReceive(
                 sizeof(BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA));
         }
         Context->LegacyStatusNotificationPending = TRUE;
+        PmicGlinkNotify_PingBattMiniClass(Context);
         return STATUS_SUCCESS;
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT:
@@ -1234,11 +1662,116 @@ PmicGlink_SyncSendReceive(
 }
 
 static NTSTATUS
+PmicGlinkPlatformQcmb_WriteMBToBuffer(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _Out_writes_bytes_(BufferSize) PUCHAR Buffer,
+    _In_ SIZE_T BufferSize
+    )
+{
+    if ((Context == NULL) || (Buffer == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (BufferSize < 64u)
+    {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+
+    RtlZeroMemory(Buffer, BufferSize);
+    ((ULONG*)Buffer)[0] = Context->QcmbStatus;
+    ((ULONG*)Buffer)[1] = Context->QcmbCurrentChargerPowerUW;
+    ((ULONG*)Buffer)[2] = Context->QcmbGoodChargerThresholdUW;
+    ((ULONG*)Buffer)[3] = Context->QcmbChargerStatusInfo;
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+PmicGlinkPlatformQcmb_GetStatus(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _Out_ PULONG QcmbStatus
+    )
+{
+    NTSTATUS status;
+    struct
+    {
+        ULONGLONG Header;
+        ULONG MessageOp;
+    } requestMessage;
+
+    if (Context == NULL)
+    {
+        return (NTSTATUS)0xC00000EFL;
+    }
+
+    if (QcmbStatus == NULL)
+    {
+        return (NTSTATUS)0xC00000F0L;
+    }
+
+    *QcmbStatus = 0;
+
+    if (!Context->QcmbConnected)
+    {
+        return STATUS_SUCCESS;
+    }
+
+    requestMessage.Header = 0x100008010ull;
+    requestMessage.MessageOp = 128u;
+
+    status = PmicGlink_SendData(Context, 0x80u, &requestMessage, sizeof(requestMessage), TRUE);
+    if (NT_SUCCESS(status))
+    {
+        *QcmbStatus = Context->QcmbStatus;
+    }
+
+    return status;
+}
+
+static NTSTATUS
+PmicGlinkPlatformQcmb_WaitCmdStatus(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG WaitInMs
+    )
+{
+    NTSTATUS status;
+    ULONG qcmbStatus;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    status = PmicGlinkPlatformQcmb_GetStatus(Context, &qcmbStatus);
+    if (NT_SUCCESS(status) && ((qcmbStatus & 0xEu) == 0x2u) && (WaitInMs > 0))
+    {
+        LARGE_INTEGER timeout;
+
+        timeout.QuadPart = -10000ll * (LONGLONG)WaitInMs;
+        (VOID)KeWaitForSingleObject(
+            &Context->QcmbNotifyEvent,
+            Executive,
+            KernelMode,
+            FALSE,
+            &timeout);
+        KeClearEvent(&Context->QcmbNotifyEvent);
+
+        status = PmicGlinkPlatformQcmb_GetStatus(Context, &qcmbStatus);
+    }
+
+    return status;
+}
+
+static NTSTATUS
 PmicGlinkPlatformQcmb_PreShutdown_Cmd(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _In_ ULONG CmdBitMask
     )
 {
+    NTSTATUS status;
+    UCHAR qcmbMessage[64];
+
     if (Context == NULL)
     {
         return (NTSTATUS)0xC00000EFL;
@@ -1250,16 +1783,28 @@ PmicGlinkPlatformQcmb_PreShutdown_Cmd(
     }
 
     WdfSpinLockAcquire(Context->StateLock);
-    Context->QcmbStatus = 0x4;
-
+    Context->QcmbStatus = 0x2;
     if ((CmdBitMask & 0x3u) != 0)
     {
         Context->ModernStandbyState = ((CmdBitMask & 0x2u) != 0) ? 1u : 0u;
     }
-
     WdfSpinLockRelease(Context->StateLock);
 
-    return STATUS_SUCCESS;
+    status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = PmicGlink_SendData(Context, 0x81u, qcmbMessage, sizeof(qcmbMessage), TRUE);
+    if (NT_SUCCESS(status))
+    {
+        (VOID)PmicGlinkPlatformQcmb_WaitCmdStatus(Context, 50u);
+    }
+
+    Context->QcmbStatus = 0x4;
+
+    return status;
 }
 
 static NTSTATUS
@@ -1268,6 +1813,10 @@ PmicGlinkPlatformQcmb_GetChargerInfo_Cmd(
     _Out_ QCMB_GET_ACTIVE_CHARGER_INFO_CMD_EXT_DATA* ChargerInfo
     )
 {
+    NTSTATUS status;
+    ULONG qcmbStatus;
+    UCHAR qcmbMessage[64];
+
     if (Context == NULL)
     {
         return (NTSTATUS)0xC00000EFL;
@@ -1283,6 +1832,30 @@ PmicGlinkPlatformQcmb_GetChargerInfo_Cmd(
     if (!Context->QcmbConnected)
     {
         return STATUS_SUCCESS;
+    }
+
+    Context->QcmbStatus = 0x2;
+    status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = PmicGlink_SendData(Context, 0x81u, qcmbMessage, sizeof(qcmbMessage), TRUE);
+    if (NT_SUCCESS(status))
+    {
+        (VOID)PmicGlinkPlatformQcmb_WaitCmdStatus(Context, 50u);
+    }
+
+    status = PmicGlinkPlatformQcmb_GetStatus(Context, &qcmbStatus);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    if ((qcmbStatus & 0xEu) != 0x4u)
+    {
+        return STATUS_UNSUCCESSFUL;
     }
 
     WdfSpinLockAcquire(Context->StateLock);
@@ -1321,6 +1894,190 @@ PmicGlinkPower_ModernStandby_Callback(
             context,
             context->ModernStandbyState ? 2u : 1u);
     }
+}
+
+static NTSTATUS
+PmicGlinkRegistryQuery(
+    _In_ WDFKEY RegKey,
+    _In_ PCUNICODE_STRING RegName,
+    _Out_ PULONG ReadData
+    )
+{
+    ULONG value;
+    NTSTATUS status;
+
+    if ((RegName == NULL) || (ReadData == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    value = 0;
+    status = WdfRegistryQueryULong(RegKey, RegName, &value);
+    if (NT_SUCCESS(status))
+    {
+        *ReadData = value;
+    }
+
+    return status;
+}
+
+static VOID
+PmicGlinkNotify_PingBattMiniClass(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    if (Context != NULL)
+    {
+        Context->NotificationFlag = TRUE;
+    }
+}
+
+static NTSTATUS
+PmicGlinkCreateDeviceWorkItem(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ PFN_WDF_WORKITEM WorkItemRoutine
+    )
+{
+    NTSTATUS status;
+    WDF_OBJECT_ATTRIBUTES attributes;
+    WDF_WORKITEM_CONFIG workItemConfig;
+    WDFWORKITEM workItem;
+
+    if ((Context == NULL) || (Context->Device == NULL) || (WorkItemRoutine == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    WDF_WORKITEM_CONFIG_INIT(&workItemConfig, WorkItemRoutine);
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = Context->Device;
+
+    status = WdfWorkItemCreate(&workItemConfig, &attributes, &workItem);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    WdfWorkItemEnqueue(workItem);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+PmicGlinkPlatformUsbc_Request_Write(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ const USBPD_DPM_USBC_WRITE_BUFFER* Request
+    )
+{
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_HANDLE;
+    }
+
+    if (Request == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    Context->LastUsbcWriteRequest = *Request;
+    return PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkPlatformUsbc_Request_Write_WorkItem);
+}
+
+static VOID
+PmicGlinkPlatformUsbc_Request_Write_WorkItem(
+    _In_ WDFWORKITEM WorkItem
+    )
+{
+    WDFOBJECT parentObject;
+    PPMIC_GLINK_DEVICE_CONTEXT context;
+    PMICGLINK_USBC_WRITE_REQ_MESSAGE message;
+
+    parentObject = WdfWorkItemGetParentObject(WorkItem);
+    context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
+
+    if (context != NULL)
+    {
+        RtlZeroMemory(&message, sizeof(message));
+        message.Header = 0x10000800Cull;
+        message.MessageOp = 21u;
+        message.Request = context->LastUsbcWriteRequest;
+
+        if ((message.Request.cmd_type == 17u) || (message.Request.cmd_type == 19u))
+        {
+            context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
+        }
+
+        (VOID)PmicGlink_SendData(context, 0x15u, &message, sizeof(message), TRUE);
+    }
+
+    WdfObjectDelete(WorkItem);
+}
+
+static VOID
+PmicGlinkPlatformSetState_Request_Write_WorkItem(
+    _In_ WDFWORKITEM WorkItem
+    )
+{
+    WDFOBJECT parentObject;
+    PPMIC_GLINK_DEVICE_CONTEXT context;
+    PMICGLINK_USBC_SET_STATE_MESSAGE message;
+
+    parentObject = WdfWorkItemGetParentObject(WorkItem);
+    context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
+
+    if (context != NULL)
+    {
+        RtlZeroMemory(&message, sizeof(message));
+        message.Header = 0x1000080E8ull;
+        message.MessageOp = 82u;
+        message.State = context->PlatformState;
+
+        (VOID)PmicGlink_SendData(context, 0x52u, &message, sizeof(message), TRUE);
+    }
+
+    WdfObjectDelete(WorkItem);
+}
+
+static VOID
+PmicGlinkPlatformUsbc_AcpiNotificationHandler(
+    _In_opt_ PVOID Context,
+    _In_ ULONG NotifyValue
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+    USBPD_DPM_USBC_WRITE_BUFFER request;
+
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
+    RtlZeroMemory(&request, sizeof(request));
+
+    if ((NotifyValue == 240u) || (NotifyValue == 241u))
+    {
+        if (deviceContext->PendingPan >= PMICGLINK_MAX_PORTS)
+        {
+            return;
+        }
+
+        request.cmd_payload.pan_ack.port_index = deviceContext->PendingPan;
+        request.cmd_type = (NotifyValue == 241u) ? 19u : 17u;
+        (VOID)PmicGlinkPlatformUsbc_Request_Write(deviceContext, &request);
+        return;
+    }
+
+    if ((NotifyValue >= 244u) && (NotifyValue <= 247u))
+    {
+        request.cmd_type = 20u;
+        request.cmd_payload.read_sel = (ULONG)(UCHAR)(NotifyValue + 12u);
+        (VOID)PmicGlinkPlatformUsbc_Request_Write(deviceContext, &request);
+        return;
+    }
+
+    deviceContext->PlatformState = (UCHAR)NotifyValue;
+    (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkPlatformSetState_Request_Write_WorkItem);
 }
 
 static NTSTATUS
@@ -1400,6 +2157,8 @@ PmicGlinkUCSIReadBuffer(
         return STATUS_INVALID_PARAMETER;
     }
 
+    *BytesReturned = 0;
+
     if (Context->GlinkChannelConnected)
     {
         status = PmicGlink_SyncSendReceive(
@@ -1439,6 +2198,17 @@ PmicGlinkUCSIReadBuffer(
     if (((USHORT*)OutputBuffer)[3] & (USHORT)0xA000u)
     {
         *(ULONGLONG*)&gLatestUcsiCmd.data[8] = 0;
+    }
+
+    if (*BytesReturned >= (sizeof(USHORT) * 4u))
+    {
+        USHORT* words;
+
+        words = (USHORT*)OutputBuffer;
+        PmicGlinkDDI_NotifyUcsiAlert(
+            Context,
+            (ULONG)words[3],
+            (ULONG)words[0]);
     }
 
     return status;
@@ -2233,6 +3003,7 @@ BattMngrControlCharging(
 
     Context->LegacyChargeStatus.rate = (LONG)Context->LegacyChargeRate.charge_perc;
     Context->LegacyStatusNotificationPending = TRUE;
+    PmicGlinkNotify_PingBattMiniClass(Context);
     return STATUS_SUCCESS;
 }
 

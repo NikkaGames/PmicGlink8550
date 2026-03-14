@@ -102,6 +102,40 @@ typedef struct _USBPD_DPM_USBC_WRITE_BUFFER
     USBPD_DPM_USBC_WRITE_BUFFER_CMD_PAYLOAD cmd_payload;
 } USBPD_DPM_USBC_WRITE_BUFFER;
 
+typedef struct _USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_COMMON_DATA
+{
+    ULONG port_index : 8;
+    ULONG orientation : 8;
+    ULONG mux_ctrl : 8;
+    ULONG reserved : 8;
+    ULONG vid : 16;
+    ULONG svid : 16;
+} USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_COMMON_DATA;
+
+typedef struct _USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DETAIL_DATA
+{
+    USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_COMMON_DATA common;
+    UCHAR extended[8];
+} USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DETAIL_DATA;
+
+typedef union _USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA
+{
+    UCHAR AsUINT8[16];
+    USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DETAIL_DATA detail;
+} USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA;
+
+typedef VOID (*PFN_PMICGLINK_UCSI_ALERT_CALLBACK)(
+    _In_opt_ PVOID Context,
+    _In_ ULONG EventCode,
+    _In_ ULONG EventData
+    );
+
+typedef struct _PMICGLINK_DEVICE_DDIINTERFACE_TYPE
+{
+    INTERFACE InterfaceHeader;
+    PFN_PMICGLINK_UCSI_ALERT_CALLBACK PmicGlinkUCSIAlertCallback;
+} PMICGLINK_DEVICE_DDIINTERFACE_TYPE, *PPMICGLINK_DEVICE_DDIINTERFACE_TYPE;
+
 typedef struct _QCMB_CHARGER_STATUS_INFO_DATA
 {
     ULONG AsUINT32;
@@ -387,6 +421,7 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONG QcmbCurrentChargerPowerUW;
     ULONG QcmbGoodChargerThresholdUW;
     ULONG QcmbChargerStatusInfo;
+    KEVENT QcmbNotifyEvent;
 
     BATT_MNGR_GET_BATT_ID_OUT LegacyBattId;
     BATT_MNGR_CHG_STATUS_OUT LegacyChargeStatus;
@@ -417,7 +452,17 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     PCALLBACK_OBJECT ModernStandbyCallbackObject;
     PVOID ModernStandbyCallbackHandle;
 
+    PMICGLINK_DEVICE_DDIINTERFACE_TYPE DdiInterface;
     WDFSPINLOCK StateLock;
+    WDFWAITLOCK DdiInterfaceLock;
+    USHORT DdiInterfaceRefCount;
+    USHORT DdiInterfacePadding;
+
+    USBPD_DPM_USBC_WRITE_BUFFER LastUsbcWriteRequest;
+    USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA LastUsbcNotification;
+    UCHAR PendingPan;
+    UCHAR PlatformState;
+    UCHAR Reserved2[2];
 } PMIC_GLINK_DEVICE_CONTEXT, *PPMIC_GLINK_DEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(PMIC_GLINK_DEVICE_CONTEXT, PmicGlinkGetDeviceContext)
