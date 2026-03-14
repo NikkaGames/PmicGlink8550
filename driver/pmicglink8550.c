@@ -240,6 +240,7 @@ static NTSTATUS PmicGlinkPlatformUsbc_Request_Write(_In_ PPMIC_GLINK_DEVICE_CONT
 static VOID PmicGlinkPlatformUsbc_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkPlatformSetState_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkPlatformUsbc_AcpiNotificationHandler(_In_opt_ PVOID Context, _In_ ULONG NotifyValue);
+static NTSTATUS PmicGlinkEnsureBclCriticalCallback(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
@@ -1133,6 +1134,56 @@ PmicGlinkDDI_NotifyUcsiAlert(
 }
 
 static NTSTATUS
+PmicGlinkEnsureBclCriticalCallback(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    NTSTATUS status;
+    UNICODE_STRING callbackName;
+    OBJECT_ATTRIBUTES callbackAttributes;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Context->BclCriticalCallbackObject != NULL)
+    {
+        if (Context->ABDAttached)
+        {
+            Context->BclCriticalCallbackEnabled = TRUE;
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    if (!Context->GlinkDeviceLoaded || !Context->BattMiniDeviceLoaded)
+    {
+        return STATUS_SUCCESS;
+    }
+
+    RtlInitUnicodeString(&callbackName, L"\\Callback\\PmicGlinkBCLCriticalCB");
+    InitializeObjectAttributes(
+        &callbackAttributes,
+        &callbackName,
+        OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+        NULL,
+        NULL);
+
+    status = ExCreateCallback(
+        &Context->BclCriticalCallbackObject,
+        &callbackAttributes,
+        TRUE,
+        TRUE);
+    if (NT_SUCCESS(status) && Context->ABDAttached)
+    {
+        Context->BclCriticalCallbackEnabled = TRUE;
+    }
+
+    return status;
+}
+
+static NTSTATUS
 PmicGlinkInterfaceNotificationCallback(
     _In_ PVOID NotificationStructure,
     _Inout_opt_ PVOID Context
@@ -1174,11 +1225,13 @@ PmicGlinkInterfaceNotificationCallback(
         if (arrival)
         {
             (VOID)PmicGlink_OpenGlinkChannel(deviceContext);
+            (VOID)PmicGlinkEnsureBclCriticalCallback(deviceContext);
         }
         else
         {
             deviceContext->GlinkChannelConnected = FALSE;
             deviceContext->GlinkChannelRestart = TRUE;
+            deviceContext->BclCriticalCallbackEnabled = FALSE;
         }
 
         return STATUS_SUCCESS;
@@ -1218,6 +1271,10 @@ PmicGlinkInterfaceNotificationCallback(
                             WdfIoTargetClose(deviceContext->AbdIoTarget);
                             deviceContext->ABDAttached = FALSE;
                         }
+                        else
+                        {
+                            (VOID)PmicGlinkEnsureBclCriticalCallback(deviceContext);
+                        }
                     }
                 }
             }
@@ -1231,6 +1288,7 @@ PmicGlinkInterfaceNotificationCallback(
             }
 
             deviceContext->ABDAttached = FALSE;
+            deviceContext->BclCriticalCallbackEnabled = FALSE;
         }
 
         deviceContext->AllReqIntfArrived = (deviceContext->GlinkDeviceLoaded && deviceContext->ABDAttached) ? TRUE : FALSE;
@@ -1269,6 +1327,7 @@ PmicGlinkInterfaceNotificationCallback(
                     if (NT_SUCCESS(status))
                     {
                         deviceContext->BattMiniDeviceLoaded = TRUE;
+                        (VOID)PmicGlinkEnsureBclCriticalCallback(deviceContext);
                     }
                 }
             }
@@ -1284,6 +1343,7 @@ PmicGlinkInterfaceNotificationCallback(
 
             deviceContext->BattMiniDeviceLoaded = FALSE;
             deviceContext->NotificationFlag = FALSE;
+            deviceContext->BclCriticalCallbackEnabled = FALSE;
         }
 
         if (deviceContext->BattMiniNotifyLock != NULL)
@@ -1364,6 +1424,13 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             ObDereferenceObject(Context->ModernStandbyCallbackObject);
             Context->ModernStandbyCallbackObject = NULL;
         }
+
+        if (Context->BclCriticalCallbackObject != NULL)
+        {
+            ObDereferenceObject(Context->BclCriticalCallbackObject);
+            Context->BclCriticalCallbackObject = NULL;
+        }
+        Context->BclCriticalCallbackEnabled = FALSE;
 
         Context->AllReqIntfArrived = FALSE;
         Context->ABDAttached = FALSE;
@@ -1648,6 +1715,8 @@ PmicGlinkDevice_InitContext(
     Context->ModernStandbyState = 0;
     Context->ModernStandbyCallbackObject = NULL;
     Context->ModernStandbyCallbackHandle = NULL;
+    Context->BclCriticalCallbackObject = NULL;
+    Context->BclCriticalCallbackEnabled = FALSE;
     Context->GlinkNotificationEntry = NULL;
     Context->AbdNotificationEntry = NULL;
     Context->AbdIoTarget = NULL;

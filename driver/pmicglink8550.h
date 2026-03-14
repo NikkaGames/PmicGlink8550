@@ -507,6 +507,8 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONG ModernStandbyState;
     PCALLBACK_OBJECT ModernStandbyCallbackObject;
     PVOID ModernStandbyCallbackHandle;
+    PCALLBACK_OBJECT BclCriticalCallbackObject;
+    BOOLEAN BclCriticalCallbackEnabled;
     PVOID GlinkNotificationEntry;
     PVOID AbdNotificationEntry;
     WDFIOTARGET AbdIoTarget;
