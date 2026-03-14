@@ -7698,6 +7698,11 @@ PmicGlinkUlogGetLogBuffer(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (!Context->GlinkChannelUlogConnected)
+    {
+        return STATUS_SUCCESS;
+    }
+
     attempts = 4u;
     status = STATUS_TIMEOUT;
     while (attempts > 0u)
@@ -8013,6 +8018,7 @@ PmicGlinkUlog_SendData(
     ULONG waitCount;
     ULONG opCode;
     BOOLEAN matchedResponse;
+    BOOLEAN waitForRx;
 
     if ((Context == NULL) || (Buffer == NULL))
     {
@@ -8059,6 +8065,7 @@ PmicGlinkUlog_SendData(
     {
         opCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
     }
+    waitForRx = (opCode == PMICGLINK_ULOG_SET_PROPERTIES_OPCODE) ? TRUE : FALSE;
 
     status = STATUS_SUCCESS;
     Context->NotificationFlag = FALSE;
@@ -8087,7 +8094,7 @@ PmicGlinkUlog_SendData(
         waitCount++;
     }
 
-    if (!matchedResponse)
+    if (!matchedResponse && waitForRx)
     {
         waitCount = 0;
         while (waitCount < 140u)
@@ -8109,7 +8116,7 @@ PmicGlinkUlog_SendData(
         }
     }
 
-    if (!matchedResponse)
+    if (!matchedResponse && waitForRx)
     {
         status = STATUS_TIMEOUT;
     }
