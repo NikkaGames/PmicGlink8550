@@ -304,6 +304,7 @@ static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget,
 static NTSTATUS PmicGlinkAbdUpdateConnections(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN Register);
 static VOID PmicGlinkInitAbdConnections(VOID);
 static NTSTATUS PmicGlinkEvaluateAbdConnectionCount(_In_ WDFDEVICE Device);
+static NTSTATUS PmicGlinkNotifyLinkStateAcpi(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG LinkState);
 static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
@@ -2090,7 +2091,7 @@ PmicGlinkRegisterInterfaceWorkItem(
         context->QcmbCurrentChargerPowerUW = 0;
         context->QcmbGoodChargerThresholdUW = 0;
         context->QcmbChargerStatusInfo = 0;
-        KeClearEvent(&context->QcmbNotifyEvent);
+        KeInitializeEvent(&context->QcmbNotifyEvent, NotificationEvent, FALSE);
 
         status = PmicGlinkPlatformQcmb_WriteMBToBuffer(context, qcmbMessage, sizeof(qcmbMessage));
         if (NT_SUCCESS(status))
@@ -2108,6 +2109,13 @@ PmicGlinkRegisterInterfaceWorkItem(
         }
 
         context->GlinkChannelFirstConnect = FALSE;
+    }
+
+    if (context != NULL)
+    {
+        (VOID)PmicGlinkNotifyLinkStateAcpi(
+            context,
+            context->GlinkChannelConnected ? 1u : 0u);
     }
 
     WdfObjectDelete(WorkItem);
@@ -3272,6 +3280,57 @@ PmicGlinkEvaluateAbdConnectionCount(
 
     gPmicGlinkAbdConnectionMax = (UCHAR)connectionCount;
     return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+PmicGlinkNotifyLinkStateAcpi(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG LinkState
+    )
+{
+    NTSTATUS status;
+    WDFIOTARGET ioTarget;
+    ACPI_EVAL_INPUT_BUFFER_SIMPLE_INTEGER inputBuffer;
+    UCHAR outputStorage[sizeof(ACPI_EVAL_OUTPUT_BUFFER) + ACPI_METHOD_ARGUMENT_LENGTH(sizeof(ULONG))];
+    PACPI_EVAL_OUTPUT_BUFFER outputBuffer;
+    WDF_MEMORY_DESCRIPTOR inputDescriptor;
+    WDF_MEMORY_DESCRIPTOR outputDescriptor;
+    ULONG_PTR bytesReturned;
+
+    if ((Context == NULL) || (Context->Device == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ioTarget = WdfDeviceGetIoTarget(Context->Device);
+    if (ioTarget == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    RtlZeroMemory(&inputBuffer, sizeof(inputBuffer));
+    inputBuffer.Signature = ACPI_EVAL_INPUT_BUFFER_SIMPLE_INTEGER_SIGNATURE;
+    RtlCopyMemory(inputBuffer.MethodName, "LKST", sizeof(inputBuffer.MethodName));
+    inputBuffer.IntegerArgument = LinkState;
+
+    RtlZeroMemory(outputStorage, sizeof(outputStorage));
+    outputBuffer = (PACPI_EVAL_OUTPUT_BUFFER)outputStorage;
+    outputBuffer->Signature = ACPI_EVAL_OUTPUT_BUFFER_SIGNATURE;
+
+    bytesReturned = 0;
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputDescriptor, &inputBuffer, sizeof(inputBuffer));
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&outputDescriptor, outputStorage, sizeof(outputStorage));
+
+    status = WdfIoTargetSendInternalIoctlSynchronously(
+        ioTarget,
+        NULL,
+        IOCTL_ACPI_EVAL_METHOD,
+        &inputDescriptor,
+        &outputDescriptor,
+        NULL,
+        &bytesReturned);
+
+    return status;
 }
 
 static NTSTATUS
