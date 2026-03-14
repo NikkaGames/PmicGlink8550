@@ -4512,6 +4512,7 @@ PmicGlinkUCSIWriteBuffer(
 {
     UNREFERENCED_PARAMETER(OutputBuffer);
     UNREFERENCED_PARAMETER(OutputBufferSize);
+    UNREFERENCED_PARAMETER(InputBufferSize);
 
     if (BytesReturned == NULL)
     {
@@ -4621,6 +4622,8 @@ PmicGlinkGetOemMsg(
 {
     NTSTATUS status;
 
+    UNREFERENCED_PARAMETER(OutputBufferSize);
+
     if ((OutputBuffer == NULL) || (BytesReturned == NULL))
     {
         return STATUS_INVALID_PARAMETER;
@@ -4649,11 +4652,6 @@ PmicGlinkGetOemMsg(
         }
     }
 
-    if (OutputBufferSize < sizeof(*OutputBuffer))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     RtlCopyMemory(OutputBuffer->data, Context->OemPropData, sizeof(Context->OemPropData));
     *BytesReturned = sizeof(*OutputBuffer);
 
@@ -4674,6 +4672,7 @@ PmicGlinkReadOemBuffer(
 
     UNREFERENCED_PARAMETER(InputBuffer);
     UNREFERENCED_PARAMETER(InputBufferSize);
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     if ((OutputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -4693,11 +4692,6 @@ PmicGlinkReadOemBuffer(
 
     if (NT_SUCCESS(status))
     {
-        if (OutputBufferSize < sizeof(*OutputBuffer))
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
-
         RtlCopyMemory(OutputBuffer->data, Context->OemReceivedData, sizeof(OutputBuffer->data));
         *BytesReturned = sizeof(*OutputBuffer);
     }
@@ -4721,6 +4715,7 @@ PmicGlinkWriteOemBuffer(
 
     UNREFERENCED_PARAMETER(OutputBuffer);
     UNREFERENCED_PARAMETER(OutputBufferSize);
+    UNREFERENCED_PARAMETER(InputBufferSize);
 
     if ((Context == NULL) || (InputBuffer == NULL) || (BytesReturned == NULL))
     {
@@ -4738,11 +4733,6 @@ PmicGlinkWriteOemBuffer(
     payloadSize = (InputBuffer[1] <= PMICGLINK_OEM_BUFFER_SIZE)
         ? (SIZE_T)(InputBuffer[1] + 2u)
         : PMICGLINK_OEM_SEND_BUFFER_SIZE;
-
-    if (payloadSize > InputBufferSize)
-    {
-        payloadSize = InputBufferSize;
-    }
 
     if (isOemCmd)
     {
