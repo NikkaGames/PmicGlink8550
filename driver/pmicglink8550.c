@@ -2163,16 +2163,6 @@ PmicGlink_SyncSendReceive(
         RtlCopyMemory(oemSendReceiveRequest + 12, &dataSize, sizeof(dataSize));
         RtlCopyMemory(oemSendReceiveRequest + 16, InputBuffer, copyLength);
 
-        if (effectiveIoctl == IOCTL_PMICGLINK_OEM_WRITE_BUFFER)
-        {
-            // Keep fallback data when running without a connected remote endpoint.
-            RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
-            RtlCopyMemory(
-                Context->OemReceivedData,
-                InputBuffer,
-                (copyLength < sizeof(Context->OemReceivedData)) ? copyLength : sizeof(Context->OemReceivedData));
-        }
-
         return PmicGlink_SendData(Context, 260u, oemSendReceiveRequest, sizeof(oemSendReceiveRequest), TRUE);
     }
 
@@ -2396,11 +2386,6 @@ PmicGlink_SyncSendReceive(
                 ? (SIZE_T)transferLength
                 : PMICGLINK_I2C_DATA_SIZE;
             RtlCopyMemory(i2cRequest + 36, InputBuffer + PMICGLINK_I2C_HEADER_SIZE, safeCopyLength);
-
-            // Keep local fallback payload for compatibility when no RX frame is delivered.
-            Context->I2CDataLength = (ULONG)safeCopyLength;
-            RtlZeroMemory(Context->I2CData, sizeof(Context->I2CData));
-            RtlCopyMemory(Context->I2CData, InputBuffer + PMICGLINK_I2C_HEADER_SIZE, safeCopyLength);
         }
 
         return PmicGlink_SendData(Context, 79u, i2cRequest, sizeof(i2cRequest), TRUE);
@@ -2483,6 +2468,7 @@ PmicGlink_SyncSendReceive(
     case IOCTL_BATTMNGR_SET_STATUS_CRITERIA:
     {
         const BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA* request;
+        NTSTATUS sendStatus;
         struct
         {
             ULONGLONG Header;
@@ -2506,19 +2492,18 @@ PmicGlink_SyncSendReceive(
             || (Context->LegacyStatusCriteria.batt_notify_criteria.high_capacity
                 != request->batt_notify_criteria.high_capacity))
         {
-            Context->LegacyStatusCriteria = *request;
-            Context->Notify = TRUE;
-
-            // In this WDK-only rewrite, mark one pending status poll after criteria update.
-            Context->LegacyStatusNotificationPending = TRUE;
-            PmicGlinkNotify_PingBattMiniClass(Context);
-
             statusCriteriaRequest.Header = 0x10000800Aull;
             statusCriteriaRequest.MessageOp = 4u;
             statusCriteriaRequest.HighCapacity = request->batt_notify_criteria.high_capacity;
             statusCriteriaRequest.LowCapacity = request->batt_notify_criteria.low_capacity;
             statusCriteriaRequest.PowerState = request->batt_notify_criteria.power_state;
-            return PmicGlink_SendData(Context, 4u, &statusCriteriaRequest, sizeof(statusCriteriaRequest), TRUE);
+            sendStatus = PmicGlink_SendData(Context, 4u, &statusCriteriaRequest, sizeof(statusCriteriaRequest), TRUE);
+            if (NT_SUCCESS(sendStatus))
+            {
+                Context->LegacyStatusCriteria = *request;
+                Context->Notify = TRUE;
+            }
+            return sendStatus;
         }
 
         return STATUS_SUCCESS;
