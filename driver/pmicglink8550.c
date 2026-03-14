@@ -160,6 +160,8 @@ static PMICGLINK_UCSI_WRITE_DATA_BUF_TYPE gLatestUcsiCmd;
 static ULONGLONG gPmicGlinkRelTimeStartTicks;
 static BOOLEAN gPmicGlinkRelTimeInitialized;
 static LONG gPmicGlinkNotifyGo;
+static KMUTEX gPmicGlinkTxSync;
+static LONG gPmicGlinkRxInProgress;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 
@@ -1320,6 +1322,8 @@ PmicGlinkDevice_InitContext(
     Context->GlinkLinkStateUp = FALSE;
     Context->RpeInitialized = FALSE;
     Context->Hibernate = FALSE;
+    KeInitializeMutex(&gPmicGlinkTxSync, 1);
+    (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
     Context->Notify = FALSE;
     Context->NotificationFlag = FALSE;
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
@@ -1716,13 +1720,51 @@ PmicGlink_SendData(
     _In_ BOOLEAN WaitForRx
     )
 {
-    UNREFERENCED_PARAMETER(WaitForRx);
+    NTSTATUS status;
+    LARGE_INTEGER pollInterval;
+    ULONG waitCount;
 
     if ((Context == NULL) || (Buffer == NULL) || (BufferLen == 0))
     {
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (Context->GlinkChannelRestart || !Context->GlinkChannelConnected)
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    status = KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    waitCount = 0;
+    pollInterval.QuadPart = -20000ll;
+    while (InterlockedCompareExchange(&gPmicGlinkRxInProgress, 1, 1) == 1)
+    {
+        if (waitCount >= 0x5DCu)
+        {
+            KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
+        waitCount++;
+
+        status = KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
+        if (!NT_SUCCESS(status))
+        {
+            return status;
+        }
+    }
+
+    (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 1);
+    KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
+
+    status = STATUS_SUCCESS;
     switch (OpCode)
     {
     case 0x15:
@@ -1761,17 +1803,17 @@ PmicGlink_SendData(
                 break;
             }
         }
-        return STATUS_SUCCESS;
+        break;
 
     case 0x80:
         KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
-        return STATUS_SUCCESS;
+        break;
 
     case 0x81:
         Context->QcmbStatus = 0x5;
         Context->QcmbConnected = TRUE;
         KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
-        return STATUS_SUCCESS;
+        break;
 
     case 0x52:
         if (BufferLen >= sizeof(PMICGLINK_USBC_SET_STATE_MESSAGE))
@@ -1781,12 +1823,20 @@ PmicGlink_SendData(
             setStateMessage = (const PMICGLINK_USBC_SET_STATE_MESSAGE*)Buffer;
             Context->PlatformState = (UCHAR)setStateMessage->State;
         }
-
-        return STATUS_SUCCESS;
+        break;
 
     default:
-        return STATUS_SUCCESS;
+        break;
     }
+
+    if (!WaitForRx)
+    {
+        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+        return status;
+    }
+
+    (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+    return status;
 }
 
 static NTSTATUS
