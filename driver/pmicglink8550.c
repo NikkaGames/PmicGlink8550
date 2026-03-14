@@ -2139,9 +2139,6 @@ PmicGlinkStateNotificationCb(
         Context->GlinkChannelConnected = TRUE;
         Context->GlinkChannelRestart = FALSE;
         Context->GlinkLinkStateUp = TRUE;
-        Context->LastRxOpcode = 0;
-        Context->LastRxStatus = STATUS_SUCCESS;
-        Context->LastRxValid = FALSE;
         Context->GlinkRxIntent += 1;
         if ((Context->UlogInitEn != 0) && !Context->GlinkChannelUlogConnected)
         {
@@ -2152,9 +2149,6 @@ PmicGlinkStateNotificationCb(
 
     case PmicGlinkChannelLocalDisconnected:
         Context->GlinkChannelConnected = FALSE;
-        Context->LastRxOpcode = 0;
-        Context->LastRxStatus = STATUS_SUCCESS;
-        Context->LastRxValid = FALSE;
         if (Context->GlinkChannelRestart && Context->GlinkLinkStateUp)
         {
             (VOID)PmicGlink_OpenGlinkChannel(Context);
@@ -2162,12 +2156,12 @@ PmicGlinkStateNotificationCb(
         break;
 
     case PmicGlinkChannelRemoteDisconnected:
-        Context->GlinkChannelConnected = FALSE;
-        Context->GlinkChannelRestart = TRUE;
-        Context->LastRxOpcode = 0;
-        Context->LastRxStatus = STATUS_SUCCESS;
-        Context->LastRxValid = FALSE;
-        (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
+        if (Context->GlinkChannelConnected)
+        {
+            Context->GlinkChannelConnected = FALSE;
+            Context->GlinkChannelRestart = TRUE;
+            (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
+        }
         break;
 
     default:
