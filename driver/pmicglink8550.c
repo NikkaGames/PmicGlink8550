@@ -180,6 +180,13 @@ static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 #define PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS (-100000000ll)
 #define PMICGLINK_ABD_IOCTL_REGISTER_CONNECTION 0xC3502FA4u
 #define PMICGLINK_ABD_IOCTL_UNREGISTER_CONNECTION 0xC3502FA8u
+#define PMICGLINK_ULOG_MSG_HEADER 0x10000800Aull
+#define PMICGLINK_ULOG_SET_PROPERTIES_OPCODE 25u
+#define PMICGLINK_ULOG_GET_BUFFER_OPCODE 35u
+#define PMICGLINK_ULOG_DEFAULT_LEVEL 4u
+#define PMICGLINK_ULOG_DEFAULT_CATEGORIES 0x0000000E00008000ull
+#define PMICGLINK_ULOG_DEFAULT_TIMER_DUE_TIME_100NS (-20000000ll)
+#define PMICGLINK_100NS_PER_SECOND 10000000ll
 
 typedef struct _PMICGLINK_ABD_CONNECTION_ENTRY
 {
@@ -224,6 +231,23 @@ typedef enum _PMICGLINK_CHANNEL_EVENT
     PmicGlinkChannelRemoteDisconnected = 2
 } PMICGLINK_CHANNEL_EVENT;
 
+typedef struct _PMICGLINK_ULOG_SET_PROPERTIES_REQUEST
+{
+    ULONGLONG Header;
+    ULONG MessageOp;
+    ULONG Reserved;
+    ULONGLONG Categories;
+    ULONG Level;
+    ULONG Padding;
+} PMICGLINK_ULOG_SET_PROPERTIES_REQUEST;
+
+typedef struct _PMICGLINK_ULOG_GET_BUFFER_REQUEST
+{
+    ULONGLONG Header;
+    ULONG MessageOp;
+    ULONG Reserved;
+} PMICGLINK_ULOG_GET_BUFFER_REQUEST;
+
 static NTSTATUS PmicGlink_Init(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkDevice_InitContext(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS RegisterDeviceInterfaces(_In_ WDFDEVICE Device, _In_ BOOLEAN Register);
@@ -253,6 +277,9 @@ static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_C
 static NTSTATUS PmicGlink_OpenGlinkChannel(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PMICGLINK_CHANNEL_EVENT Event);
+static VOID PmicGlinkUlogTimerFunction(_In_ WDFTIMER Timer);
+static NTSTATUS PmicGlinkUlogSendSetPropertiesRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static NTSTATUS PmicGlinkUlogSendGetBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID CrashDumpGuidToHexKey(_In_ const GUID* Guid, _Out_writes_(33) CHAR* Key);
 static BOOLEAN CrashDumpGuidIsZero(_In_ const GUID* Guid);
 static LONG CrashDump_FileHandleSlotFind(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ WDFFILEOBJECT FileObject, _In_ ULONG DataSourceMode);
@@ -529,6 +556,13 @@ NTSTATUS
 PmicGlinkUlog_RetrieveRxData(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _In_reads_bytes_(BufferSize) const CHAR* Buffer,
+    _In_ SIZE_T BufferSize
+    );
+
+NTSTATUS
+PmicGlinkUlog_SendData(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_reads_bytes_(BufferSize) const VOID* Buffer,
     _In_ SIZE_T BufferSize
     );
 
@@ -826,6 +860,10 @@ PmicGlinkEvtReleaseHardware(
     PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
     context->GlinkChannelConnected = FALSE;
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
+    if (context->UlogTimer != NULL)
+    {
+        (VOID)WdfTimerStop(context->UlogTimer, TRUE);
+    }
     CrashDump_ResetState(context);
     if (gCrashDumpContext == context)
     {
@@ -908,6 +946,10 @@ PmicGlinkEvtSelfManagedIoCleanup(
     context = PmicGlinkGetDeviceContext(Device);
     (VOID)PmicGlinkDevice_RegisterForPnPNotifications(context, FALSE);
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
+    if (context->UlogTimer != NULL)
+    {
+        (VOID)WdfTimerStop(context->UlogTimer, TRUE);
+    }
     CrashDump_ResetState(context);
     if (gCrashDumpContext == context)
     {
@@ -1750,6 +1792,9 @@ PmicGlinkDevice_InitContext(
     Context->Reserved2[0] = 0;
     Context->Reserved2[1] = 0;
     Context->UlogInterval = 0;
+    Context->UlogLevel = PMICGLINK_ULOG_DEFAULT_LEVEL;
+    Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
+    Context->UlogTimer = NULL;
 
     KeInitializeEvent(&Context->QcmbNotifyEvent, NotificationEvent, FALSE);
 
@@ -1814,6 +1859,9 @@ PmicGlink_Init(
     Context->UsbcPinAssignmentNotifyEn = 0;
     Context->UlogInitEn = 0;
     Context->UlogInterval = 0;
+    Context->UlogLevel = PMICGLINK_ULOG_DEFAULT_LEVEL;
+    Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
+    Context->UlogTimer = NULL;
 
     regValueData = 0;
     configRegKey = NULL;
@@ -1863,6 +1911,45 @@ PmicGlink_Init(
             if (NT_SUCCESS(queryStatus))
             {
                 Context->UlogInterval = regValueData;
+            }
+
+            regValueData = 0;
+            RtlInitUnicodeString(&regValueName, L"UlogLevel");
+            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
+            if (NT_SUCCESS(queryStatus))
+            {
+                Context->UlogLevel = regValueData;
+            }
+            else
+            {
+                Context->UlogLevel = PMICGLINK_ULOG_DEFAULT_LEVEL;
+            }
+
+            Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
+            regValueData = 0;
+            RtlInitUnicodeString(&regValueName, L"UlogCategoriesL");
+            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
+            if (NT_SUCCESS(queryStatus))
+            {
+                ULONGLONG categoriesLow;
+                ULONG categoriesHigh;
+
+                categoriesLow = (ULONGLONG)regValueData;
+                categoriesHigh = 0;
+                RtlInitUnicodeString(&regValueName, L"UlogCategoriesH");
+                queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &categoriesHigh);
+                if (NT_SUCCESS(queryStatus))
+                {
+                    Context->UlogCategories = categoriesLow | ((ULONGLONG)categoriesHigh << 32);
+                }
+                else
+                {
+                    Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
+                }
+            }
+            else
+            {
+                Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
             }
 
             WdfRegistryClose(configRegKey);
@@ -7001,6 +7088,10 @@ PmicGlinkRpeADSPStateNotificationCallback(
         deviceContext->GlinkChannelRestart = TRUE;
         deviceContext->GlinkChannelUlogConnected = FALSE;
         deviceContext->GlinkChannelUlogRestart = TRUE;
+        if (deviceContext->UlogTimer != NULL)
+        {
+            (VOID)WdfTimerStop(deviceContext->UlogTimer, FALSE);
+        }
     }
 }
 
@@ -7065,6 +7156,10 @@ PmicGlinkUlogRegisterInterfaceWorkItem(
     _In_ WDFWORKITEM WorkItem
     )
 {
+    NTSTATUS status;
+    LONGLONG dueTime100ns;
+    WDF_TIMER_CONFIG timerConfig;
+    WDF_OBJECT_ATTRIBUTES timerAttributes;
     WDFOBJECT parentObject;
     PPMIC_GLINK_DEVICE_CONTEXT context;
 
@@ -7072,10 +7167,135 @@ PmicGlinkUlogRegisterInterfaceWorkItem(
     context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
     if (context != NULL)
     {
+        if (context->GlinkChannelUlogConnected)
+        {
+            if (context->UlogInterval != 0u)
+            {
+                (VOID)PmicGlinkUlogSendSetPropertiesRequest(context);
+            }
+
+            if (context->UlogTimer == NULL)
+            {
+                WDF_TIMER_CONFIG_INIT(&timerConfig, PmicGlinkUlogTimerFunction);
+                timerConfig.AutomaticSerialization = FALSE;
+
+                WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
+                timerAttributes.ParentObject = parentObject;
+                timerAttributes.ExecutionLevel = WdfExecutionLevelPassive;
+
+                status = WdfTimerCreate(&timerConfig, &timerAttributes, &context->UlogTimer);
+                if (!NT_SUCCESS(status))
+                {
+                    context->UlogTimer = NULL;
+                }
+            }
+
+            if (context->UlogTimer != NULL)
+            {
+                dueTime100ns = (context->UlogInterval != 0u)
+                    ? (-((LONGLONG)context->UlogInterval * PMICGLINK_100NS_PER_SECOND))
+                    : PMICGLINK_ULOG_DEFAULT_TIMER_DUE_TIME_100NS;
+                (VOID)WdfTimerStart(context->UlogTimer, dueTime100ns);
+            }
+        }
+
         context->GlinkChannelUlogFirstConnect = FALSE;
     }
 
     WdfObjectDelete(WorkItem);
+}
+
+static NTSTATUS
+PmicGlinkUlogSendSetPropertiesRequest(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    PMICGLINK_ULOG_SET_PROPERTIES_REQUEST request;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Context->UlogCategories == 0ull)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Context->UlogLevel > 5u)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    RtlZeroMemory(&request, sizeof(request));
+    request.Header = PMICGLINK_ULOG_MSG_HEADER;
+    request.MessageOp = PMICGLINK_ULOG_SET_PROPERTIES_OPCODE;
+    request.Categories = Context->UlogCategories;
+    request.Level = Context->UlogLevel;
+
+    return PmicGlinkUlog_SendData(Context, &request, sizeof(request));
+}
+
+static NTSTATUS
+PmicGlinkUlogSendGetBufferRequest(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    PMICGLINK_ULOG_GET_BUFFER_REQUEST request;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    RtlZeroMemory(&request, sizeof(request));
+    request.Header = PMICGLINK_ULOG_MSG_HEADER;
+    request.MessageOp = PMICGLINK_ULOG_GET_BUFFER_OPCODE;
+
+    return PmicGlinkUlog_SendData(Context, &request, sizeof(request));
+}
+
+static VOID
+PmicGlinkUlogTimerFunction(
+    _In_ WDFTIMER Timer
+    )
+{
+    ULONG attempts;
+    LONGLONG dueTime100ns;
+    WDFOBJECT parentObject;
+    PPMIC_GLINK_DEVICE_CONTEXT context;
+
+    parentObject = WdfTimerGetParentObject(Timer);
+    context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
+    if (context == NULL)
+    {
+        return;
+    }
+
+    if ((context->UlogInterval == 0u) && (context->UlogInitEn == 0u))
+    {
+        return;
+    }
+
+    if (context->GlinkChannelUlogConnected)
+    {
+        attempts = (context->UlogInterval == 0u) ? 4u : 1u;
+        while (attempts > 0u)
+        {
+            if (!NT_SUCCESS(PmicGlinkUlogSendGetBufferRequest(context)))
+            {
+                break;
+            }
+
+            attempts--;
+        }
+    }
+
+    if ((context->UlogInterval != 0u) && (context->UlogTimer != NULL))
+    {
+        dueTime100ns = -((LONGLONG)context->UlogInterval * PMICGLINK_100NS_PER_SECOND);
+        (VOID)WdfTimerStart(context->UlogTimer, dueTime100ns);
+    }
 }
 
 VOID
@@ -7107,6 +7327,10 @@ PmicGlinkUlogStateNotificationCb(
 
     case PmicGlinkChannelLocalDisconnected:
         deviceContext->GlinkChannelUlogConnected = FALSE;
+        if (deviceContext->UlogTimer != NULL)
+        {
+            (VOID)WdfTimerStop(deviceContext->UlogTimer, FALSE);
+        }
         if (deviceContext->GlinkChannelUlogRestart
             && deviceContext->GlinkLinkStateUp
             && (deviceContext->UlogInitEn != 0))
@@ -7118,6 +7342,10 @@ PmicGlinkUlogStateNotificationCb(
     case PmicGlinkChannelRemoteDisconnected:
         deviceContext->GlinkChannelUlogConnected = FALSE;
         deviceContext->GlinkChannelUlogRestart = TRUE;
+        if (deviceContext->UlogTimer != NULL)
+        {
+            (VOID)WdfTimerStop(deviceContext->UlogTimer, FALSE);
+        }
         if (deviceContext->GlinkLinkStateUp && (deviceContext->UlogInitEn != 0))
         {
             (VOID)PmicGlinkUlog_OpenGlinkChannelUlog(deviceContext);
