@@ -165,6 +165,10 @@ static KMUTEX gPmicGlinkTxSync;
 static LONG gPmicGlinkRxInProgress;
 static KMUTEX gPmicGlinkUlogTxSync;
 static LONG gPmicGlinkUlogRxInProgress;
+static LARGE_INTEGER gPmicGlinkLastUsbIoctlEvent;
+static ULONGLONG gPmicGlinkLastBattIdQueryMsec;
+static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
+static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 
@@ -1346,6 +1350,7 @@ PmicGlinkDevice_InitContext(
     Context->UsbinPower[3] = 0;
 
     Context->LastUsbBattMngrQueryTime.QuadPart = 0;
+    gPmicGlinkLastUsbIoctlEvent.QuadPart = 0;
 
     RtlZeroMemory(Context->UCSIDataBuffer, sizeof(Context->UCSIDataBuffer));
 
@@ -4823,12 +4828,12 @@ PmicGlinkGetUSBBattMngrChgStatus(
     now = PmicGlinkQuerySystemTime();
     status = STATUS_SUCCESS;
 
-    if ((now.QuadPart - Context->LastUsbBattMngrQueryTime.QuadPart) > 10000000ll)
+    if ((now.QuadPart - gPmicGlinkLastUsbIoctlEvent.QuadPart) > 10000000ll)
     {
         status = PmicGlink_SyncSendReceive(Context, IOCTL_PMICGLINK_GET_USB_CHG_STATUS, InputBuffer, InputBufferSize);
     }
 
-    Context->LastUsbBattMngrQueryTime = now;
+    gPmicGlinkLastUsbIoctlEvent = now;
 
     if (!NT_SUCCESS(status))
     {
@@ -5457,9 +5462,9 @@ HandleLegacyBattMngrRequest(
 
         status = STATUS_SUCCESS;
         nowMsec = PmicGlink_Helper_get_rel_time_msec();
-        if ((Context->LegacyLastBattIdQueryMsec == 0)
-            || (nowMsec < Context->LegacyLastBattIdQueryMsec)
-            || ((nowMsec - Context->LegacyLastBattIdQueryMsec) >= 500))
+        if ((gPmicGlinkLastBattIdQueryMsec == 0)
+            || (nowMsec < gPmicGlinkLastBattIdQueryMsec)
+            || ((nowMsec - gPmicGlinkLastBattIdQueryMsec) >= 500))
         {
             status = PmicGlink_SyncSendReceive(
                 Context,
@@ -5467,7 +5472,7 @@ HandleLegacyBattMngrRequest(
                 (PUCHAR)InputBuffer,
                 InputBufferSize);
 
-            Context->LegacyLastBattIdQueryMsec = nowMsec;
+            gPmicGlinkLastBattIdQueryMsec = nowMsec;
             if (!NT_SUCCESS(status))
             {
                 status = STATUS_SUCCESS;
@@ -5490,9 +5495,9 @@ HandleLegacyBattMngrRequest(
 
         status = STATUS_SUCCESS;
         nowMsec = PmicGlink_Helper_get_rel_time_msec();
-        if ((Context->LegacyLastChargeStatusQueryMsec == 0)
-            || (nowMsec < Context->LegacyLastChargeStatusQueryMsec)
-            || ((nowMsec - Context->LegacyLastChargeStatusQueryMsec) >= 250))
+        if ((gPmicGlinkLastChargeStatusQueryMsec == 0)
+            || (nowMsec < gPmicGlinkLastChargeStatusQueryMsec)
+            || ((nowMsec - gPmicGlinkLastChargeStatusQueryMsec) >= 250))
         {
             status = PmicGlink_SyncSendReceive(
                 Context,
@@ -5500,7 +5505,7 @@ HandleLegacyBattMngrRequest(
                 (PUCHAR)InputBuffer,
                 InputBufferSize);
 
-            Context->LegacyLastChargeStatusQueryMsec = nowMsec;
+            gPmicGlinkLastChargeStatusQueryMsec = nowMsec;
             if (!NT_SUCCESS(status))
             {
                 status = STATUS_SUCCESS;
@@ -5541,9 +5546,9 @@ HandleLegacyBattMngrRequest(
         status = STATUS_SUCCESS;
         nowMsec = PmicGlink_Helper_get_rel_time_msec();
 
-        if ((Context->LegacyLastBattInfoQueryMsec == 0)
-            || (nowMsec < Context->LegacyLastBattInfoQueryMsec)
-            || ((nowMsec - Context->LegacyLastBattInfoQueryMsec) >= 250)
+        if ((gPmicGlinkLastBattInfoQueryMsec == 0)
+            || (nowMsec < gPmicGlinkLastBattInfoQueryMsec)
+            || ((nowMsec - gPmicGlinkLastBattInfoQueryMsec) >= 250)
             || (request->batt_info_type == 2)
             || ((request->rate_of_drain != 0) && (request->batt_info_type == 3)))
         {
@@ -5555,7 +5560,7 @@ HandleLegacyBattMngrRequest(
 
             if (NT_SUCCESS(status))
             {
-                Context->LegacyLastBattInfoQueryMsec = nowMsec;
+                gPmicGlinkLastBattInfoQueryMsec = nowMsec;
             }
             else
             {
