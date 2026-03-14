@@ -170,6 +170,8 @@ static LARGE_INTEGER gPmicGlinkLastUsbIoctlEvent;
 static ULONGLONG gPmicGlinkLastBattIdQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
 static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
+static USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA gPmicGlinkUsbcNotification;
+static UCHAR gPmicGlinkPendingPan = PMICGLINK_MAX_PORTS;
 static UCHAR gPmicGlinkPendingPlatformState;
 static USBPD_DPM_USBC_WRITE_BUFFER gPmicGlinkPendingUsbcWriteRequest;
 static CHAR gPmicGlinkUlogData[8192];
@@ -1836,9 +1838,8 @@ PmicGlinkDevice_InitContext(
     Context->CrashDumpDataSourceCount = PMICGLINK_CRASHDUMP_MAX_SOURCES;
     RtlZeroMemory(Context->CrashDumpDataSources, sizeof(Context->CrashDumpDataSources));
 
-    RtlZeroMemory(&Context->LastUsbcWriteRequest, sizeof(Context->LastUsbcWriteRequest));
-    RtlZeroMemory(&Context->LastUsbcNotification, sizeof(Context->LastUsbcNotification));
-    Context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
+    RtlZeroMemory(&gPmicGlinkUsbcNotification, sizeof(gPmicGlinkUsbcNotification));
+    gPmicGlinkPendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
     Context->PlatformState = 0;
     Context->UsbcPinAssignmentNotifyEn = 0;
     Context->UlogInitEn = 0;
@@ -2067,9 +2068,8 @@ PmicGlinkRegisterInterfaceWorkItem(
         BOOLEAN firstConnect;
 
         firstConnect = context->GlinkChannelFirstConnect;
-        context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
-        RtlZeroMemory(&context->LastUsbcNotification, sizeof(context->LastUsbcNotification));
-        RtlZeroMemory(&context->LastUsbcWriteRequest, sizeof(context->LastUsbcWriteRequest));
+        gPmicGlinkPendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
+        RtlZeroMemory(&gPmicGlinkUsbcNotification, sizeof(gPmicGlinkUsbcNotification));
         RtlZeroMemory(&gPmicGlinkPendingUsbcWriteRequest, sizeof(gPmicGlinkPendingUsbcWriteRequest));
 
         if (firstConnect && (context->UsbcPinAssignmentNotifyEn != 0))
@@ -5176,7 +5176,6 @@ PmicGlinkPlatformUsbc_Request_Write(
     }
 
     gPmicGlinkPendingUsbcWriteRequest = *Request;
-    Context->LastUsbcWriteRequest = *Request;
     return PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkPlatformUsbc_Request_Write_WorkItem);
 }
 
@@ -5198,11 +5197,6 @@ PmicGlinkPlatformUsbc_Request_Write_WorkItem(
         message.Header = 0x10000800Cull;
         message.MessageOp = 21u;
         message.Request = gPmicGlinkPendingUsbcWriteRequest;
-
-        if ((message.Request.cmd_type == 17u) || (message.Request.cmd_type == 19u))
-        {
-            context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
-        }
 
         (VOID)PmicGlink_SendData(context, 0x15u, &message, sizeof(message), TRUE);
     }
@@ -5244,22 +5238,17 @@ PmicGlinkPlatformUsbc_AcpiNotificationHandler(
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     USBPD_DPM_USBC_WRITE_BUFFER request;
 
-    if (Context == NULL)
-    {
-        return;
-    }
-
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     RtlZeroMemory(&request, sizeof(request));
 
     if ((NotifyValue == 240u) || (NotifyValue == 241u))
     {
-        if (deviceContext->PendingPan >= PMICGLINK_MAX_PORTS)
+        if (gPmicGlinkPendingPan >= PMICGLINK_MAX_PORTS)
         {
             return;
         }
 
-        request.cmd_payload.pan_ack.port_index = deviceContext->PendingPan;
+        request.cmd_payload.pan_ack.port_index = gPmicGlinkPendingPan;
         request.cmd_type = (NotifyValue == 241u) ? 19u : 17u;
         (VOID)PmicGlinkPlatformUsbc_Request_Write(deviceContext, &request);
         return;
@@ -5273,9 +5262,12 @@ PmicGlinkPlatformUsbc_AcpiNotificationHandler(
         return;
     }
 
-    deviceContext->PlatformState = (UCHAR)NotifyValue;
     gPmicGlinkPendingPlatformState = (UCHAR)NotifyValue;
-    (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkPlatformSetState_Request_Write_WorkItem);
+    if (deviceContext != NULL)
+    {
+        deviceContext->PlatformState = (UCHAR)NotifyValue;
+        (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkPlatformSetState_Request_Write_WorkItem);
+    }
 }
 
 static NTSTATUS
@@ -7002,13 +6994,13 @@ PmicGlink_RetrieveRxData(
 
     if (BufferSize < (sizeof(ULONGLONG) + sizeof(ULONG)))
     {
-        if (BufferSize >= sizeof(Context->LastUsbcNotification.AsUINT8))
+        if (BufferSize >= sizeof(gPmicGlinkUsbcNotification.AsUINT8))
         {
             RtlCopyMemory(
-                Context->LastUsbcNotification.AsUINT8,
+                gPmicGlinkUsbcNotification.AsUINT8,
                 Buffer,
-                sizeof(Context->LastUsbcNotification.AsUINT8));
-            Context->PendingPan = (UCHAR)Context->LastUsbcNotification.detail.common.port_index;
+                sizeof(gPmicGlinkUsbcNotification.AsUINT8));
+            gPmicGlinkPendingPan = (UCHAR)gPmicGlinkUsbcNotification.detail.common.port_index;
         }
         else
         {
@@ -7398,13 +7390,13 @@ PmicGlink_RetrieveRxData(
         break;
 
     default:
-        if (BufferSize >= sizeof(Context->LastUsbcNotification.AsUINT8))
+        if (BufferSize >= sizeof(gPmicGlinkUsbcNotification.AsUINT8))
         {
             RtlCopyMemory(
-                Context->LastUsbcNotification.AsUINT8,
+                gPmicGlinkUsbcNotification.AsUINT8,
                 Buffer,
-                sizeof(Context->LastUsbcNotification.AsUINT8));
-            Context->PendingPan = (UCHAR)Context->LastUsbcNotification.detail.common.port_index;
+                sizeof(gPmicGlinkUsbcNotification.AsUINT8));
+            gPmicGlinkPendingPan = (UCHAR)gPmicGlinkUsbcNotification.detail.common.port_index;
         }
         else
         {
@@ -7493,8 +7485,8 @@ PmicGlinkRxNotificationWorkItem(
     {
         (VOID)PmicGlink_RetrieveRxData(
             context,
-            context->LastUsbcNotification.AsUINT8,
-            sizeof(context->LastUsbcNotification.AsUINT8));
+            gPmicGlinkUsbcNotification.AsUINT8,
+            sizeof(gPmicGlinkUsbcNotification.AsUINT8));
     }
 
     WdfObjectDelete(WorkItem);

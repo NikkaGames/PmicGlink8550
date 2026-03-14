@@ -541,9 +541,6 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONG CrashDumpDataSourceCount;
     PMICGLINK_CRASHDUMP_DATA_SOURCE CrashDumpDataSources[PMICGLINK_CRASHDUMP_MAX_SOURCES];
 
-    USBPD_DPM_USBC_WRITE_BUFFER LastUsbcWriteRequest;
-    USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA LastUsbcNotification;
-    UCHAR PendingPan;
     UCHAR PlatformState;
     UCHAR UsbcPinAssignmentNotifyEn;
     UCHAR UlogInitEn;
