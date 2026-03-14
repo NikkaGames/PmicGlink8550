@@ -4528,7 +4528,7 @@ PmicGlinkUCSIWriteBuffer(
                 (PUCHAR)InputBuffer,
                 InputBufferSize);
         }
-        else if (InputBufferSize >= PMICGLINK_UCSI_BUFFER_SIZE)
+        else
         {
             RtlCopyMemory(gLatestUcsiCmd.data, InputBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
         }
@@ -4572,26 +4572,23 @@ PmicGlinkUCSIReadBuffer(
             InputBuffer,
             InputBufferSize);
 
-        if (NT_SUCCESS(status))
+        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(ULONG)))
         {
-            if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(ULONG)))
-            {
-                requestedLength = *(ULONG*)InputBuffer;
-            }
-
-            copyLength = PMICGLINK_UCSI_BUFFER_SIZE;
-            if (OutputBufferSize < copyLength)
-            {
-                copyLength = OutputBufferSize;
-            }
-
-            if (copyLength > 0)
-            {
-                RtlCopyMemory(OutputBuffer, Context->UCSIDataBuffer, copyLength);
-            }
-
-            *BytesReturned = requestedLength;
+            requestedLength = *(ULONG*)InputBuffer;
         }
+
+        copyLength = PMICGLINK_UCSI_BUFFER_SIZE;
+        if (OutputBufferSize < copyLength)
+        {
+            copyLength = OutputBufferSize;
+        }
+
+        if (copyLength > 0)
+        {
+            RtlCopyMemory(OutputBuffer, Context->UCSIDataBuffer, copyLength);
+        }
+
+        *BytesReturned = requestedLength;
     }
     else if (*(ULONGLONG*)&gLatestUcsiCmd.data[8] == 1ull)
     {
@@ -4649,16 +4646,25 @@ PmicGlinkGetOemMsg(
         InputBuffer,
         InputBufferSize);
 
-    if (NT_SUCCESS(status))
+    if (!NT_SUCCESS(status))
     {
-        if (OutputBufferSize < sizeof(*OutputBuffer))
+        if (status >= 0)
         {
-            return STATUS_INVALID_PARAMETER;
+            status = STATUS_SUCCESS;
         }
-
-        RtlCopyMemory(OutputBuffer->data, Context->OemPropData, sizeof(Context->OemPropData));
-        *BytesReturned = sizeof(*OutputBuffer);
+        else
+        {
+            status = STATUS_SUCCESS;
+        }
     }
+
+    if (OutputBufferSize < sizeof(*OutputBuffer))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    RtlCopyMemory(OutputBuffer->data, Context->OemPropData, sizeof(Context->OemPropData));
+    *BytesReturned = sizeof(*OutputBuffer);
 
     return status;
 }
