@@ -48,10 +48,18 @@ static PMICGLINK_UCSI_WRITE_DATA_BUF_TYPE gLatestUcsiCmd;
 static ULONGLONG gPmicGlinkRelTimeStartTicks;
 static BOOLEAN gPmicGlinkRelTimeInitialized;
 
+typedef struct _PEP_Modern_Standby_Notif_Struct
+{
+    ULONG version;
+    ULONG ModernStandbyState;
+    PVOID reserved;
+} PEP_Modern_Standby_Notif_Struct;
+
 static NTSTATUS PmicGlink_Init(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkDevice_InitContext(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS RegisterDeviceInterfaces(_In_ WDFDEVICE Device, _In_ BOOLEAN Register);
 static NTSTATUS PmicGlinkDevice_RegisterForPnPNotifications(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN Register);
+static VOID PmicGlinkPower_ModernStandby_Callback(_In_opt_ PVOID CallbackContext, _In_opt_ PVOID Argument1, _In_opt_ PVOID Argument2);
 
 static NTSTATUS
 PmicGlink_SendData(
@@ -634,6 +642,10 @@ PmicGlinkDevice_RegisterForPnPNotifications(
     _In_ BOOLEAN Register
     )
 {
+    NTSTATUS status;
+    UNICODE_STRING callbackName;
+    OBJECT_ATTRIBUTES callbackAttributes;
+
     if (Context == NULL)
     {
         return STATUS_INVALID_HANDLE;
@@ -641,9 +653,56 @@ PmicGlinkDevice_RegisterForPnPNotifications(
 
     if (!Register)
     {
+        if (Context->ModernStandbyCallbackHandle != NULL)
+        {
+            ExUnregisterCallback(Context->ModernStandbyCallbackHandle);
+            Context->ModernStandbyCallbackHandle = NULL;
+        }
+
+        if (Context->ModernStandbyCallbackObject != NULL)
+        {
+            ObDereferenceObject(Context->ModernStandbyCallbackObject);
+            Context->ModernStandbyCallbackObject = NULL;
+        }
+
         Context->AllReqIntfArrived = FALSE;
         Context->GlinkChannelConnected = FALSE;
         return STATUS_SUCCESS;
+    }
+
+    if (Context->ModernStandbyCallbackHandle == NULL)
+    {
+        RtlInitUnicodeString(&callbackName, L"\\Callback\\QcModernStandby");
+        InitializeObjectAttributes(
+            &callbackAttributes,
+            &callbackName,
+            OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+            NULL,
+            NULL);
+
+        status = ExCreateCallback(
+            &Context->ModernStandbyCallbackObject,
+            &callbackAttributes,
+            TRUE,
+            TRUE);
+        if (!NT_SUCCESS(status))
+        {
+            Context->ModernStandbyCallbackObject = NULL;
+            return status;
+        }
+
+        Context->ModernStandbyCallbackHandle = ExRegisterCallback(
+            Context->ModernStandbyCallbackObject,
+            PmicGlinkPower_ModernStandby_Callback,
+            Context);
+        if (Context->ModernStandbyCallbackHandle == NULL)
+        {
+            ObDereferenceObject(Context->ModernStandbyCallbackObject);
+            Context->ModernStandbyCallbackObject = NULL;
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        Context->ModernStandbyState = 0;
     }
 
     Context->AllReqIntfArrived = TRUE;
@@ -797,6 +856,8 @@ PmicGlinkDevice_InitContext(
     Context->LegacyLastBattInfoQueryMsec = 0;
 
     Context->ModernStandbyState = 0;
+    Context->ModernStandbyCallbackObject = NULL;
+    Context->ModernStandbyCallbackHandle = NULL;
 
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     attributes.ParentObject = Context->Device;
@@ -1231,6 +1292,35 @@ PmicGlinkPlatformQcmb_GetChargerInfo_Cmd(
     WdfSpinLockRelease(Context->StateLock);
 
     return STATUS_SUCCESS;
+}
+
+static VOID
+PmicGlinkPower_ModernStandby_Callback(
+    _In_opt_ PVOID CallbackContext,
+    _In_opt_ PVOID Argument1,
+    _In_opt_ PVOID Argument2
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT context;
+    PEP_Modern_Standby_Notif_Struct* standbyNotification;
+
+    UNREFERENCED_PARAMETER(Argument2);
+
+    if ((CallbackContext == NULL) || (Argument1 == NULL))
+    {
+        return;
+    }
+
+    context = (PPMIC_GLINK_DEVICE_CONTEXT)CallbackContext;
+    standbyNotification = (PEP_Modern_Standby_Notif_Struct*)Argument1;
+
+    if (context->ModernStandbyState != standbyNotification->ModernStandbyState)
+    {
+        context->ModernStandbyState = standbyNotification->ModernStandbyState;
+        (VOID)PmicGlinkPlatformQcmb_PreShutdown_Cmd(
+            context,
+            context->ModernStandbyState ? 2u : 1u);
+    }
 }
 
 static NTSTATUS

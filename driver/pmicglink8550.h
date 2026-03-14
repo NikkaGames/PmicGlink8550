@@ -414,6 +414,8 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONGLONG LegacyLastBattInfoQueryMsec;
 
     ULONG ModernStandbyState;
+    PCALLBACK_OBJECT ModernStandbyCallbackObject;
+    PVOID ModernStandbyCallbackHandle;
 
     WDFSPINLOCK StateLock;
 } PMIC_GLINK_DEVICE_CONTEXT, *PPMIC_GLINK_DEVICE_CONTEXT;
