@@ -3615,11 +3615,20 @@ CrashDump_BugCheckSecondaryDumpDataCallbackAdditional(
     }
     else
     {
-        reason64[4] = (ULONGLONG)(ULONG_PTR)source->RingBufferData;
-        bytesReported = reason32[3];
-        if (source->RingBufferSize < bytesReported)
+        CrashDump_PrepareBugCheckSnapshot(source);
+        if (source->BugCheckBufferPointer != NULL)
         {
-            bytesReported = source->RingBufferSize;
+            reason64[4] = (ULONGLONG)(ULONG_PTR)source->BugCheckBufferPointer;
+            bytesReported = reason32[3];
+            if (source->RingBufferSize < bytesReported)
+            {
+                bytesReported = source->RingBufferSize;
+            }
+        }
+        else
+        {
+            reason64[4] = 0;
+            bytesReported = 0;
         }
         reason32[10] = bytesReported;
     }
