@@ -1647,6 +1647,12 @@ PmicGlinkDevice_InitContext(
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
     Context->Notify = FALSE;
     Context->NotificationFlag = FALSE;
+    Context->LastRxOpcode = 0;
+    Context->LastRxStatus = STATUS_SUCCESS;
+    Context->LastRxValid = FALSE;
+    Context->LastUlogRxOpcode = 0;
+    Context->LastUlogRxStatus = STATUS_SUCCESS;
+    Context->LastUlogRxValid = FALSE;
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     gPmicGlinkCachedBatteryStatus = 0;
     Context->EventID = 0;
@@ -1891,6 +1897,12 @@ PmicGlink_Init(
     Context->GlinkLinkStateUp = FALSE;
     Context->RpeInitialized = FALSE;
     Context->Hibernate = FALSE;
+    Context->LastRxOpcode = 0;
+    Context->LastRxStatus = STATUS_SUCCESS;
+    Context->LastRxValid = FALSE;
+    Context->LastUlogRxOpcode = 0;
+    Context->LastUlogRxStatus = STATUS_SUCCESS;
+    Context->LastUlogRxValid = FALSE;
     Context->UsbcPinAssignmentNotifyEn = 0;
     Context->UlogInitEn = 0;
     Context->UlogInterval = 0;
@@ -2152,6 +2164,7 @@ PmicGlink_SendData(
     NTSTATUS status;
     LARGE_INTEGER pollInterval;
     ULONG waitCount;
+    BOOLEAN matchedResponse;
 
     if ((Context == NULL) || (Buffer == NULL) || (BufferLen == 0))
     {
@@ -2198,9 +2211,11 @@ PmicGlink_SendData(
     (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 1);
     KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
 
-    UNREFERENCED_PARAMETER(OpCode);
     status = STATUS_SUCCESS;
     Context->NotificationFlag = FALSE;
+    Context->LastRxOpcode = 0;
+    Context->LastRxStatus = STATUS_SUCCESS;
+    Context->LastRxValid = FALSE;
 
     if (!WaitForRx)
     {
@@ -2208,20 +2223,28 @@ PmicGlink_SendData(
         return status;
     }
 
+    matchedResponse = FALSE;
     waitCount = 0;
     pollInterval.QuadPart = -200000ll;
     while (waitCount < 140u)
     {
-        if (Context->NotificationFlag)
+        if (Context->LastRxValid)
         {
-            break;
+            if (Context->LastRxOpcode == OpCode)
+            {
+                status = Context->LastRxStatus;
+                matchedResponse = TRUE;
+                break;
+            }
+
+            Context->LastRxValid = FALSE;
         }
 
         (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
         waitCount++;
     }
 
-    if (!Context->NotificationFlag)
+    if (!matchedResponse)
     {
         status = STATUS_TIMEOUT;
     }
@@ -6873,6 +6896,10 @@ PmicGlink_RetrieveRxData(
     }
 
     status = STATUS_SUCCESS;
+    Context->LastRxOpcode = 0;
+    Context->LastRxStatus = STATUS_SUCCESS;
+    Context->LastRxValid = FALSE;
+
     if (BufferSize < (sizeof(ULONGLONG) + sizeof(ULONG)))
     {
         if (BufferSize >= sizeof(Context->LastUsbcNotification.AsUINT8))
@@ -6894,10 +6921,14 @@ PmicGlink_RetrieveRxData(
             RtlCopyMemory(Context->OemReceivedData, Buffer, copySize);
         }
 
+        Context->LastRxOpcode = 0xFFFFFFFFu;
+        Context->LastRxStatus = STATUS_SUCCESS;
+        Context->LastRxValid = TRUE;
         return STATUS_SUCCESS;
     }
 
     RtlCopyMemory(&opCode, Buffer + sizeof(ULONGLONG), sizeof(opCode));
+    Context->LastRxOpcode = opCode;
     switch (opCode)
     {
     case 0u:
@@ -6935,7 +6966,8 @@ PmicGlink_RetrieveRxData(
 
         if (BufferSize < 16u)
         {
-            return STATUS_INVALID_PARAMETER;
+            status = STATUS_INVALID_PARAMETER;
+            break;
         }
 
         RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
@@ -7035,7 +7067,8 @@ PmicGlink_RetrieveRxData(
 
         if (BufferSize < 16u)
         {
-            return STATUS_INVALID_PARAMETER;
+            status = STATUS_INVALID_PARAMETER;
+            break;
         }
 
         RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
@@ -7050,7 +7083,8 @@ PmicGlink_RetrieveRxData(
 
         if (BufferSize < 20u)
         {
-            return STATUS_INVALID_PARAMETER;
+            status = STATUS_INVALID_PARAMETER;
+            break;
         }
 
         RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
@@ -7240,7 +7274,7 @@ PmicGlink_RetrieveRxData(
         }
         else
         {
-            return STATUS_INVALID_PARAMETER;
+            status = STATUS_INVALID_PARAMETER;
         }
         break;
 
@@ -7285,6 +7319,8 @@ PmicGlink_RetrieveRxData(
         break;
     }
 
+    Context->LastRxStatus = status;
+    Context->LastRxValid = TRUE;
     return status;
 }
 
@@ -7757,13 +7793,20 @@ PmicGlinkUlog_RetrieveRxData(
     )
 {
     ULONG opCode;
+    NTSTATUS status;
 
     if ((Context == NULL) || (Buffer == NULL) || (BufferSize < (sizeof(ULONGLONG) + sizeof(ULONG))))
     {
         return STATUS_INVALID_PARAMETER;
     }
 
+    status = STATUS_SUCCESS;
+    Context->LastUlogRxOpcode = 0;
+    Context->LastUlogRxStatus = STATUS_SUCCESS;
+    Context->LastUlogRxValid = FALSE;
+
     opCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
+    Context->LastUlogRxOpcode = opCode;
     switch (opCode)
     {
     case 24u:
@@ -7830,7 +7873,8 @@ PmicGlinkUlog_RetrieveRxData(
             RtlCopyMemory(Context->OemReceivedData, payload, oemCopySize);
         }
 
-        return STATUS_SUCCESS;
+        status = STATUS_SUCCESS;
+        break;
     }
 
     case 25u:
@@ -7839,13 +7883,22 @@ PmicGlinkUlog_RetrieveRxData(
             ULONG statusCode;
 
             statusCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG) + sizeof(ULONG));
-            return (statusCode == 0u) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+            status = (statusCode == 0u) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
         }
-        return STATUS_SUCCESS;
+        else
+        {
+            status = STATUS_SUCCESS;
+        }
+        break;
 
     default:
-        return STATUS_SUCCESS;
+        status = STATUS_SUCCESS;
+        break;
     }
+
+    Context->LastUlogRxStatus = status;
+    Context->LastUlogRxValid = TRUE;
+    return status;
 }
 
 NTSTATUS
@@ -7858,6 +7911,8 @@ PmicGlinkUlog_SendData(
     NTSTATUS status;
     LARGE_INTEGER pollInterval;
     ULONG waitCount;
+    ULONG opCode;
+    BOOLEAN matchedResponse;
 
     if ((Context == NULL) || (Buffer == NULL))
     {
@@ -7899,25 +7954,40 @@ PmicGlinkUlog_SendData(
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 1);
     KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
 
-    UNREFERENCED_PARAMETER(Buffer);
-    UNREFERENCED_PARAMETER(BufferSize);
+    opCode = 0;
+    if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
+    {
+        opCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
+    }
+
     status = STATUS_SUCCESS;
     Context->NotificationFlag = FALSE;
+    Context->LastUlogRxOpcode = 0;
+    Context->LastUlogRxStatus = STATUS_SUCCESS;
+    Context->LastUlogRxValid = FALSE;
 
+    matchedResponse = FALSE;
     waitCount = 0;
     pollInterval.QuadPart = -200000ll;
     while (waitCount < 140u)
     {
-        if (Context->NotificationFlag)
+        if (Context->LastUlogRxValid)
         {
-            break;
+            if (Context->LastUlogRxOpcode == opCode)
+            {
+                status = Context->LastUlogRxStatus;
+                matchedResponse = TRUE;
+                break;
+            }
+
+            Context->LastUlogRxValid = FALSE;
         }
 
         (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
         waitCount++;
     }
 
-    if (!Context->NotificationFlag)
+    if (!matchedResponse)
     {
         status = STATUS_TIMEOUT;
     }

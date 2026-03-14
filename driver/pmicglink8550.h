@@ -439,6 +439,15 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     BOOLEAN Notify;
     BOOLEAN NotificationFlag;
 
+    ULONG LastRxOpcode;
+    NTSTATUS LastRxStatus;
+    BOOLEAN LastRxValid;
+    UCHAR LastRxReserved[3];
+    ULONG LastUlogRxOpcode;
+    NTSTATUS LastUlogRxStatus;
+    BOOLEAN LastUlogRxValid;
+    UCHAR LastUlogRxReserved[3];
+
     ULONG EventID;
     ULONG GlinkRxIntent;
     ULONG GlinkUlogRxIntent;
