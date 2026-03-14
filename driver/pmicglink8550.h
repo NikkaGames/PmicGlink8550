@@ -330,6 +330,8 @@ typedef struct _PMICGLINK_CRASHDUMP_DATA_SOURCE
     ULONG ValidEntryCount;
     PUCHAR BugCheckBufferPointer;
     ULONG RingBufferEnumerationOffset;
+    KBUGCHECK_REASON_CALLBACK_RECORD BugCheckCallbackRecord;
+    BOOLEAN BugCheckCallbackRegistered;
 } PMICGLINK_CRASHDUMP_DATA_SOURCE;
 
 typedef struct _BATT_MNGR_GET_CAPABILITIES_OUT
@@ -506,6 +508,10 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     WDFWAITLOCK CrashDumpLock;
     USHORT DdiInterfaceRefCount;
     USHORT DdiInterfacePadding;
+    KBUGCHECK_REASON_CALLBACK_RECORD CrashDumpAdditionalCallbackRecord;
+    BOOLEAN CrashDumpAdditionalCallbackRegistered;
+    KBUGCHECK_REASON_CALLBACK_RECORD CrashDumpTriageCallbackRecord;
+    BOOLEAN CrashDumpTriageCallbackRegistered;
     ULONG CrashDumpDataSourceCount;
     PMICGLINK_CRASHDUMP_DATA_SOURCE CrashDumpDataSources[PMICGLINK_CRASHDUMP_MAX_SOURCES];
 

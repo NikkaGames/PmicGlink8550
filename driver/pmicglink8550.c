@@ -160,6 +160,7 @@ static PMICGLINK_UCSI_WRITE_DATA_BUF_TYPE gLatestUcsiCmd;
 static ULONGLONG gPmicGlinkRelTimeStartTicks;
 static BOOLEAN gPmicGlinkRelTimeInitialized;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
+static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 
 #define PMICGLINK_POOLTAG_CRASHDUMP 'DmGP'
 
@@ -196,6 +197,7 @@ static NTSTATUS PmicGlinkDevice_InitContext(_In_ PPMIC_GLINK_DEVICE_CONTEXT Cont
 static NTSTATUS RegisterDeviceInterfaces(_In_ WDFDEVICE Device, _In_ BOOLEAN Register);
 static NTSTATUS PmicGlinkDevice_RegisterForPnPNotifications(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN Register);
 static NTSTATUS PmicGlinkInterfaceNotificationCallback(_In_ PVOID NotificationStructure, _Inout_opt_ PVOID Context);
+static VOID PmicGlinkEvtFileClose(_In_ WDFFILEOBJECT FileObject);
 static VOID PmicGlinkPower_ModernStandby_Callback(_In_opt_ PVOID CallbackContext, _In_opt_ PVOID Argument1, _In_opt_ PVOID Argument2);
 static VOID PmicGlinkDDI_InterfaceReference(_In_opt_ PVOID Context);
 static VOID PmicGlinkDDI_InterfaceDereference(_In_opt_ PVOID Context);
@@ -226,6 +228,8 @@ static NTSTATUS CrashDump_DataSourceWriteInternal(_In_ PPMIC_GLINK_DEVICE_CONTEX
 static NTSTATUS CrashDump_DataSourceReadInternal(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG DataSourceIndex, _Out_writes_bytes_(BufferLength) UCHAR* Buffer, _In_ SIZE_T BufferLength);
 static NTSTATUS CrashDump_DataSourceCaptureInternal(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG DataSourceIndex, _Out_writes_bytes_(BufferLength) UCHAR* Buffer, _In_ SIZE_T BufferLength, _Out_ PULONG BytesWritten);
 static PMICGLINK_CRASHDUMP_DATA_SOURCE* CrashDump_FindActiveDataSource(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static PMICGLINK_CRASHDUMP_DATA_SOURCE* CrashDump_FindSourceFromCallbackRecord(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ PKBUGCHECK_REASON_CALLBACK_RECORD Record);
+static NTSTATUS CrashDump_RegisterGlobalCallbacks(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID CrashDump_ResetState(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS HandleCrashDumpRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ WDFREQUEST Request, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ SIZE_T InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ SIZE_T OutputBufferSize, _Out_ SIZE_T* BytesReturned);
 static NTSTATUS CrashDump_IoctlHandler(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ WDFREQUEST Request, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ SIZE_T InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ SIZE_T OutputBufferSize, _Out_ SIZE_T* BytesReturned);
@@ -518,12 +522,19 @@ PmicGlinkEvtDeviceAdd(
     WDFDEVICE device;
     WDF_IO_QUEUE_CONFIG queueConfig;
     WDF_OBJECT_ATTRIBUTES attributes;
+    WDF_FILEOBJECT_CONFIG fileObjectConfig;
     WDF_PNPPOWER_EVENT_CALLBACKS pnpCallbacks;
     PPMIC_GLINK_DEVICE_CONTEXT context;
 
     UNREFERENCED_PARAMETER(Driver);
 
     WdfDeviceInitSetIoType(DeviceInit, WdfDeviceIoBuffered);
+    WDF_FILEOBJECT_CONFIG_INIT(
+        &fileObjectConfig,
+        WDF_NO_EVENT_CALLBACK,
+        PmicGlinkEvtFileClose,
+        WDF_NO_EVENT_CALLBACK);
+    WdfDeviceInitSetFileObjectConfig(DeviceInit, &fileObjectConfig, WDF_NO_OBJECT_ATTRIBUTES);
 
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&pnpCallbacks);
     pnpCallbacks.EvtDevicePrepareHardware = PmicGlinkEvtPrepareHardware;
@@ -679,6 +690,52 @@ PmicGlinkEvtIoDeviceControl(
     WdfRequestCompleteWithInformation(Request, status, NT_SUCCESS(status) ? bytesReturned : 0);
 }
 
+static VOID
+PmicGlinkEvtFileClose(
+    _In_ WDFFILEOBJECT FileObject
+    )
+{
+    WDFDEVICE device;
+    PPMIC_GLINK_DEVICE_CONTEXT context;
+    LONG slotIndex;
+    PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+
+    if (FileObject == NULL)
+    {
+        return;
+    }
+
+    device = WdfFileObjectGetDevice(FileObject);
+    if (device == NULL)
+    {
+        return;
+    }
+
+    context = PmicGlinkGetDeviceContext(device);
+    if ((context == NULL) || (context->CrashDumpLock == NULL))
+    {
+        return;
+    }
+
+    WdfWaitLockAcquire(context->CrashDumpLock, NULL);
+
+    slotIndex = CrashDump_FileHandleSlotFindForDestroy(context, FileObject);
+    if (slotIndex >= 0)
+    {
+        source = &context->CrashDumpDataSources[(ULONG)slotIndex];
+        if (source->FileObject[2] == FileObject)
+        {
+            source->FileObject[2] = NULL;
+        }
+        else if (source->FileObject[1] == FileObject)
+        {
+            source->FileObject[1] = NULL;
+        }
+    }
+
+    WdfWaitLockRelease(context->CrashDumpLock);
+}
+
 NTSTATUS
 PmicGlinkEvtPrepareHardware(
     _In_ WDFDEVICE Device,
@@ -686,6 +743,7 @@ PmicGlinkEvtPrepareHardware(
     _In_ WDFCMRESLIST ResourcesTranslated
     )
 {
+    NTSTATUS status;
     PPMIC_GLINK_DEVICE_CONTEXT context;
 
     UNREFERENCED_PARAMETER(ResourcesRaw);
@@ -696,6 +754,12 @@ PmicGlinkEvtPrepareHardware(
     context->AllReqIntfArrived = TRUE;
     context->GlinkLinkStateUp = TRUE;
     PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelConnected);
+
+    status = CrashDump_RegisterGlobalCallbacks(context);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
 
     return STATUS_SUCCESS;
 }
@@ -1391,6 +1455,10 @@ PmicGlinkDevice_InitContext(
     Context->DdiInterfaceRefCount = 0;
     Context->DdiInterfacePadding = 0;
     RtlZeroMemory(&Context->DdiInterface, sizeof(Context->DdiInterface));
+    RtlZeroMemory(&Context->CrashDumpAdditionalCallbackRecord, sizeof(Context->CrashDumpAdditionalCallbackRecord));
+    Context->CrashDumpAdditionalCallbackRegistered = FALSE;
+    RtlZeroMemory(&Context->CrashDumpTriageCallbackRecord, sizeof(Context->CrashDumpTriageCallbackRecord));
+    Context->CrashDumpTriageCallbackRegistered = FALSE;
     Context->CrashDumpDataSourceCount = PMICGLINK_CRASHDUMP_MAX_SOURCES;
     RtlZeroMemory(Context->CrashDumpDataSources, sizeof(Context->CrashDumpDataSources));
 
@@ -2472,6 +2540,19 @@ CrashDump_DataSourceCreateInternal(
     source->RingBufferGuid = *Guid;
     source->RingBufferEncryptionKeySize = 32;
     CrashDumpGuidToHexKey(Guid, source->RingBufferEncryptionKey);
+    KeInitializeCallbackRecord(&source->BugCheckCallbackRecord);
+    source->BugCheckCallbackRegistered = FALSE;
+    if (!KeRegisterBugCheckReasonCallback(
+        &source->BugCheckCallbackRecord,
+        CrashDump_BugCheckSecondaryDumpDataCallbackRingBuffer,
+        KbCallbackSecondaryDumpData,
+        gCrashDumpBugCheckComponent))
+    {
+        CrashDump_DmfDestroy_RingBuffer(Context, DataSourceIndex);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    source->BugCheckCallbackRegistered = TRUE;
     return STATUS_SUCCESS;
 }
 
@@ -2489,7 +2570,14 @@ CrashDump_DataSourceDestroyInternal(
     }
 
     source = &Context->CrashDumpDataSources[DataSourceIndex];
+    if (source->BugCheckCallbackRegistered)
+    {
+        (VOID)KeDeregisterBugCheckReasonCallback(&source->BugCheckCallbackRecord);
+        source->BugCheckCallbackRegistered = FALSE;
+    }
+
     CrashDump_DmfDestroy_RingBuffer(Context, DataSourceIndex);
+    RtlZeroMemory(&source->BugCheckCallbackRecord, sizeof(source->BugCheckCallbackRecord));
     source->FileObject[1] = NULL;
     source->FileObject[2] = NULL;
     return STATUS_SUCCESS;
@@ -2701,6 +2789,96 @@ CrashDump_FindActiveDataSource(
     return NULL;
 }
 
+static PMICGLINK_CRASHDUMP_DATA_SOURCE*
+CrashDump_FindSourceFromCallbackRecord(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_opt_ PKBUGCHECK_REASON_CALLBACK_RECORD Record
+    )
+{
+    ULONG index;
+
+    if ((Context == NULL) || (Record == NULL))
+    {
+        return NULL;
+    }
+
+    for (index = 1; index < Context->CrashDumpDataSourceCount; index++)
+    {
+        PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
+
+        source = &Context->CrashDumpDataSources[index];
+        if (&source->BugCheckCallbackRecord == Record)
+        {
+            return source;
+        }
+    }
+
+    return NULL;
+}
+
+static NTSTATUS
+CrashDump_RegisterGlobalCallbacks(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    BOOLEAN additionalRegisteredHere;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    additionalRegisteredHere = FALSE;
+    if (!Context->CrashDumpAdditionalCallbackRegistered)
+    {
+        KeInitializeCallbackRecord(&Context->CrashDumpAdditionalCallbackRecord);
+        if (!KeRegisterBugCheckReasonCallback(
+            &Context->CrashDumpAdditionalCallbackRecord,
+            CrashDump_BugCheckSecondaryDumpDataCallbackAdditional,
+            KbCallbackSecondaryDumpData,
+            gCrashDumpBugCheckComponent))
+        {
+            RtlZeroMemory(
+                &Context->CrashDumpAdditionalCallbackRecord,
+                sizeof(Context->CrashDumpAdditionalCallbackRecord));
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        Context->CrashDumpAdditionalCallbackRegistered = TRUE;
+        additionalRegisteredHere = TRUE;
+    }
+
+    if (!Context->CrashDumpTriageCallbackRegistered)
+    {
+        KeInitializeCallbackRecord(&Context->CrashDumpTriageCallbackRecord);
+        if (!KeRegisterBugCheckReasonCallback(
+            &Context->CrashDumpTriageCallbackRecord,
+            CrashDump_BugCheckTriageDumpDataCallback,
+            KbCallbackTriageDumpData,
+            gCrashDumpBugCheckComponent))
+        {
+            RtlZeroMemory(
+                &Context->CrashDumpTriageCallbackRecord,
+                sizeof(Context->CrashDumpTriageCallbackRecord));
+
+            if (additionalRegisteredHere)
+            {
+                (VOID)KeDeregisterBugCheckReasonCallback(&Context->CrashDumpAdditionalCallbackRecord);
+                Context->CrashDumpAdditionalCallbackRegistered = FALSE;
+                RtlZeroMemory(
+                    &Context->CrashDumpAdditionalCallbackRecord,
+                    sizeof(Context->CrashDumpAdditionalCallbackRecord));
+            }
+
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        Context->CrashDumpTriageCallbackRegistered = TRUE;
+    }
+
+    return STATUS_SUCCESS;
+}
+
 static VOID
 CrashDump_ResetState(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
@@ -2730,6 +2908,12 @@ CrashDump_ResetState(
         PMICGLINK_CRASHDUMP_DATA_SOURCE* source;
 
         source = &Context->CrashDumpDataSources[index];
+        if (source->BugCheckCallbackRegistered)
+        {
+            (VOID)KeDeregisterBugCheckReasonCallback(&source->BugCheckCallbackRecord);
+            source->BugCheckCallbackRegistered = FALSE;
+        }
+
         if (source->RingBufferData != NULL)
         {
             ExFreePoolWithTag(source->RingBufferData, PMICGLINK_POOLTAG_CRASHDUMP);
@@ -2737,6 +2921,21 @@ CrashDump_ResetState(
 
         RtlZeroMemory(source, sizeof(*source));
     }
+
+    if (Context->CrashDumpAdditionalCallbackRegistered)
+    {
+        (VOID)KeDeregisterBugCheckReasonCallback(&Context->CrashDumpAdditionalCallbackRecord);
+        Context->CrashDumpAdditionalCallbackRegistered = FALSE;
+    }
+
+    if (Context->CrashDumpTriageCallbackRegistered)
+    {
+        (VOID)KeDeregisterBugCheckReasonCallback(&Context->CrashDumpTriageCallbackRecord);
+        Context->CrashDumpTriageCallbackRegistered = FALSE;
+    }
+
+    RtlZeroMemory(&Context->CrashDumpAdditionalCallbackRecord, sizeof(Context->CrashDumpAdditionalCallbackRecord));
+    RtlZeroMemory(&Context->CrashDumpTriageCallbackRecord, sizeof(Context->CrashDumpTriageCallbackRecord));
 
     if (Context->CrashDumpLock != NULL)
     {
@@ -3179,7 +3378,6 @@ CrashDump_BugCheckSecondaryDumpDataCallbackRingBuffer(
     ULONG bytesReported;
 
     UNREFERENCED_PARAMETER(Reason);
-    UNREFERENCED_PARAMETER(Record);
 
     if ((ReasonSpecificData == NULL) || (ReasonSpecificDataLength < 44))
     {
@@ -3193,7 +3391,11 @@ CrashDump_BugCheckSecondaryDumpDataCallbackRingBuffer(
     }
 
     WdfWaitLockAcquire(context->CrashDumpLock, NULL);
-    source = CrashDump_FindActiveDataSource(context);
+    source = CrashDump_FindSourceFromCallbackRecord(context, Record);
+    if (source == NULL)
+    {
+        source = CrashDump_FindActiveDataSource(context);
+    }
     if (source == NULL)
     {
         WdfWaitLockRelease(context->CrashDumpLock);
@@ -3261,7 +3463,6 @@ CrashDump_BugCheckSecondaryDumpDataCallbackAdditional(
     ULONG bytesReported;
 
     UNREFERENCED_PARAMETER(Reason);
-    UNREFERENCED_PARAMETER(Record);
 
     if ((ReasonSpecificData == NULL) || (ReasonSpecificDataLength < 44))
     {
@@ -3275,7 +3476,11 @@ CrashDump_BugCheckSecondaryDumpDataCallbackAdditional(
     }
 
     WdfWaitLockAcquire(context->CrashDumpLock, NULL);
-    source = CrashDump_FindActiveDataSource(context);
+    source = CrashDump_FindSourceFromCallbackRecord(context, Record);
+    if (source == NULL)
+    {
+        source = CrashDump_FindActiveDataSource(context);
+    }
     if (source == NULL)
     {
         WdfWaitLockRelease(context->CrashDumpLock);
@@ -3325,7 +3530,6 @@ CrashDump_BugCheckTriageDumpDataCallback(
     ULONGLONG* reason64;
 
     UNREFERENCED_PARAMETER(Reason);
-    UNREFERENCED_PARAMETER(Record);
 
     if ((ReasonSpecificData == NULL) || (ReasonSpecificDataLength < sizeof(ULONGLONG) * 2))
     {
@@ -3345,7 +3549,11 @@ CrashDump_BugCheckTriageDumpDataCallback(
     }
 
     WdfWaitLockAcquire(context->CrashDumpLock, NULL);
-    source = CrashDump_FindActiveDataSource(context);
+    source = CrashDump_FindSourceFromCallbackRecord(context, Record);
+    if (source == NULL)
+    {
+        source = CrashDump_FindActiveDataSource(context);
+    }
     if (source != NULL)
     {
         reason64[0] = source->RingBufferSize;
