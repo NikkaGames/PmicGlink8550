@@ -174,6 +174,8 @@ static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 
 #define PMICGLINK_POOLTAG_CRASHDUMP 'DmGP'
 #define PMICGLINK_CRASHDUMP_STALE_FILE_OBJECT ((WDFFILEOBJECT)(ULONG_PTR)-1)
+#define PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE 0x800A2008u
+#define PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS (-100000000ll)
 
 typedef struct _PMICGLINK_USBC_WRITE_REQ_MESSAGE
 {
@@ -220,6 +222,8 @@ static VOID PmicGlinkPlatformUsbc_Request_Write_WorkItem(_In_ WDFWORKITEM WorkIt
 static VOID PmicGlinkPlatformSetState_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkPlatformUsbc_AcpiNotificationHandler(_In_opt_ PVOID Context, _In_ ULONG NotifyValue);
 static VOID PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _Out_opt_ SIZE_T* BytesReturned);
+static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
@@ -2731,6 +2735,101 @@ PmicGlinkNotify_PingBattMiniClass(
 {
     UNREFERENCED_PARAMETER(Context);
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 1);
+}
+
+static NTSTATUS
+PmicGlinkSendDriverRequest(
+    _In_ WDFIOTARGET IoTarget,
+    _In_ ULONG IoControlCode,
+    _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer,
+    _In_ ULONG InputBufferSize,
+    _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer,
+    _In_ ULONG OutputBufferSize,
+    _Out_opt_ SIZE_T* BytesReturned
+    )
+{
+    WDF_MEMORY_DESCRIPTOR inputDescriptor;
+    WDF_MEMORY_DESCRIPTOR outputDescriptor;
+    PWDF_MEMORY_DESCRIPTOR pInputDescriptor;
+    PWDF_MEMORY_DESCRIPTOR pOutputDescriptor;
+
+    if (IoTarget == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    pInputDescriptor = NULL;
+    if ((InputBuffer != NULL) && (InputBufferSize != 0))
+    {
+        WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputDescriptor, InputBuffer, InputBufferSize);
+        pInputDescriptor = &inputDescriptor;
+    }
+
+    pOutputDescriptor = NULL;
+    if ((OutputBuffer != NULL) && (OutputBufferSize != 0))
+    {
+        WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&outputDescriptor, OutputBuffer, OutputBufferSize);
+        pOutputDescriptor = &outputDescriptor;
+    }
+
+    return WdfIoTargetSendIoctlSynchronously(
+        IoTarget,
+        NULL,
+        IoControlCode,
+        pInputDescriptor,
+        pOutputDescriptor,
+        NULL,
+        (PULONG_PTR)BytesReturned);
+}
+
+static NTSTATUS
+PmicGlinkSendDriverRequestWithTimeout(
+    _In_ WDFIOTARGET IoTarget,
+    _In_ ULONG IoControlCode,
+    _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer,
+    _In_ ULONG InputBufferSize,
+    _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer,
+    _In_ ULONG OutputBufferSize,
+    _In_ LONGLONG Timeout100ns,
+    _Out_opt_ SIZE_T* BytesReturned
+    )
+{
+    WDF_MEMORY_DESCRIPTOR inputDescriptor;
+    WDF_MEMORY_DESCRIPTOR outputDescriptor;
+    PWDF_MEMORY_DESCRIPTOR pInputDescriptor;
+    PWDF_MEMORY_DESCRIPTOR pOutputDescriptor;
+    WDF_REQUEST_SEND_OPTIONS requestOptions;
+
+    if (IoTarget == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    pInputDescriptor = NULL;
+    if ((InputBuffer != NULL) && (InputBufferSize != 0))
+    {
+        WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputDescriptor, InputBuffer, InputBufferSize);
+        pInputDescriptor = &inputDescriptor;
+    }
+
+    pOutputDescriptor = NULL;
+    if ((OutputBuffer != NULL) && (OutputBufferSize != 0))
+    {
+        WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&outputDescriptor, OutputBuffer, OutputBufferSize);
+        pOutputDescriptor = &outputDescriptor;
+    }
+
+    WDF_REQUEST_SEND_OPTIONS_INIT(&requestOptions, WDF_REQUEST_SEND_OPTION_TIMEOUT);
+    requestOptions.Timeout = Timeout100ns;
+
+    return WdfIoTargetSendIoctlSynchronously(
+        IoTarget,
+        NULL,
+        IoControlCode,
+        pInputDescriptor,
+        pOutputDescriptor,
+        &requestOptions,
+        (PULONG_PTR)BytesReturned);
 }
 
 static VOID
@@ -5385,9 +5484,39 @@ HandleLegacyBattMngrRequest(
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT:
         status = STATUS_SUCCESS;
+        PmicGlinkNotify_PingBattMiniClass(Context);
         if (InterlockedExchange(&gPmicGlinkNotifyGo, 0) != 0)
         {
-            Context->LegacyStatusNotificationPending = TRUE;
+            if (Context->BattMiniNotifyLock != NULL)
+            {
+                WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+            }
+
+            if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+            {
+                SIZE_T notifyBytesReturned;
+                NTSTATUS notifyStatus;
+
+                notifyBytesReturned = 0;
+                notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
+                    Context->BattMiniIoTarget,
+                    PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE,
+                    NULL,
+                    0,
+                    NULL,
+                    0,
+                    PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
+                    &notifyBytesReturned);
+                if (NT_SUCCESS(notifyStatus))
+                {
+                    Context->LegacyStatusNotificationPending = TRUE;
+                }
+            }
+
+            if (Context->BattMiniNotifyLock != NULL)
+            {
+                WdfWaitLockRelease(Context->BattMiniNotifyLock);
+            }
         }
 
         if (Context->LegacyStatusNotificationPending)
