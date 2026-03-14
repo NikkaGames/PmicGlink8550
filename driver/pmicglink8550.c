@@ -7169,33 +7169,36 @@ PmicGlinkUlogRegisterInterfaceWorkItem(
     {
         if (context->GlinkChannelUlogConnected)
         {
-            if (context->UlogInterval != 0u)
+            if ((context->UlogInterval != 0u) || (context->UlogInitEn != 0u))
             {
-                (VOID)PmicGlinkUlogSendSetPropertiesRequest(context);
-            }
-
-            if (context->UlogTimer == NULL)
-            {
-                WDF_TIMER_CONFIG_INIT(&timerConfig, PmicGlinkUlogTimerFunction);
-                timerConfig.AutomaticSerialization = FALSE;
-
-                WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
-                timerAttributes.ParentObject = parentObject;
-                timerAttributes.ExecutionLevel = WdfExecutionLevelPassive;
-
-                status = WdfTimerCreate(&timerConfig, &timerAttributes, &context->UlogTimer);
-                if (!NT_SUCCESS(status))
+                if (context->UlogInterval != 0u)
                 {
-                    context->UlogTimer = NULL;
+                    (VOID)PmicGlinkUlogSendSetPropertiesRequest(context);
                 }
-            }
 
-            if (context->UlogTimer != NULL)
-            {
-                dueTime100ns = (context->UlogInterval != 0u)
-                    ? (-((LONGLONG)context->UlogInterval * PMICGLINK_100NS_PER_SECOND))
-                    : PMICGLINK_ULOG_DEFAULT_TIMER_DUE_TIME_100NS;
-                (VOID)WdfTimerStart(context->UlogTimer, dueTime100ns);
+                if (context->UlogTimer == NULL)
+                {
+                    WDF_TIMER_CONFIG_INIT(&timerConfig, PmicGlinkUlogTimerFunction);
+                    timerConfig.AutomaticSerialization = FALSE;
+
+                    WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
+                    timerAttributes.ParentObject = parentObject;
+                    timerAttributes.ExecutionLevel = WdfExecutionLevelPassive;
+
+                    status = WdfTimerCreate(&timerConfig, &timerAttributes, &context->UlogTimer);
+                    if (!NT_SUCCESS(status))
+                    {
+                        context->UlogTimer = NULL;
+                    }
+                }
+
+                if (context->UlogTimer != NULL)
+                {
+                    dueTime100ns = (context->UlogInterval != 0u)
+                        ? (-((LONGLONG)context->UlogInterval * PMICGLINK_100NS_PER_SECOND))
+                        : PMICGLINK_ULOG_DEFAULT_TIMER_DUE_TIME_100NS;
+                    (VOID)WdfTimerStart(context->UlogTimer, dueTime100ns);
+                }
             }
         }
 
