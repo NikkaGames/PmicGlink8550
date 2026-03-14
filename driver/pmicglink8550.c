@@ -1300,9 +1300,6 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         Context->ModernStandbyState = 0;
     }
 
-    Context->AllReqIntfArrived = TRUE;
-    Context->GlinkChannelConnected = TRUE;
-
     return STATUS_SUCCESS;
 }
 
@@ -1320,9 +1317,9 @@ PmicGlinkDevice_InitContext(
     }
 
     Context->DeviceInterfacesRegistered = FALSE;
-    Context->AllReqIntfArrived = TRUE;
+    Context->AllReqIntfArrived = FALSE;
     Context->GlinkDeviceLoaded = FALSE;
-    Context->GlinkChannelConnected = TRUE;
+    Context->GlinkChannelConnected = FALSE;
     Context->GlinkChannelRestart = FALSE;
     Context->GlinkChannelFirstConnect = FALSE;
     Context->GlinkChannelUlogConnected = FALSE;
@@ -1343,11 +1340,8 @@ PmicGlinkDevice_InitContext(
     Context->GlinkRxIntent = 0;
     Context->GlinkUlogRxIntent = 0;
 
-    Context->NumPorts = 1;
-    Context->UsbinPower[0] = 5000000;
-    Context->UsbinPower[1] = 0;
-    Context->UsbinPower[2] = 0;
-    Context->UsbinPower[3] = 0;
+    Context->NumPorts = 0;
+    RtlZeroMemory(Context->UsbinPower, sizeof(Context->UsbinPower));
 
     Context->LastUsbBattMngrQueryTime.QuadPart = 0;
     gPmicGlinkLastUsbIoctlEvent.QuadPart = 0;
@@ -1369,11 +1363,11 @@ PmicGlinkDevice_InitContext(
     Context->tip_out.PolicySetting = 0;
     Context->tiv_out.TimerValueRemain = 0;
 
-    Context->QcmbConnected = TRUE;
-    Context->QcmbStatus = 0x5;
-    Context->QcmbCurrentChargerPowerUW = 12000000;
-    Context->QcmbGoodChargerThresholdUW = 4500000;
-    Context->QcmbChargerStatusInfo = 0x1;
+    Context->QcmbConnected = FALSE;
+    Context->QcmbStatus = 0;
+    Context->QcmbCurrentChargerPowerUW = 0;
+    Context->QcmbGoodChargerThresholdUW = 0;
+    Context->QcmbChargerStatusInfo = 0;
 
     Context->HvdcpCharger.ChargerSupported = FALSE;
     Context->HvdcpCharger.ChargerCurrent = 1500;
@@ -1820,16 +1814,6 @@ PmicGlink_SendData(
         }
         break;
 
-    case 0x80:
-        KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
-        break;
-
-    case 0x81:
-        Context->QcmbStatus = 0x5;
-        Context->QcmbConnected = TRUE;
-        KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
-        break;
-
     case 0x52:
         if (BufferLen >= sizeof(PMICGLINK_USBC_SET_STATE_MESSAGE))
         {
@@ -1837,21 +1821,6 @@ PmicGlink_SendData(
 
             setStateMessage = (const PMICGLINK_USBC_SET_STATE_MESSAGE*)Buffer;
             Context->PlatformState = (UCHAR)setStateMessage->State;
-        }
-        break;
-
-    case 0x49:
-        if (Context->NumPorts == 0)
-        {
-            Context->NumPorts = 1;
-        }
-        break;
-
-    case 0x4A:
-        if ((BufferLen >= sizeof(ULONGLONG) + sizeof(ULONG))
-            && (Context->UsbinPower[0] == 0))
-        {
-            Context->UsbinPower[0] = 5000000;
         }
         break;
 
