@@ -328,6 +328,8 @@ typedef struct _PMICGLINK_CRASHDUMP_DATA_SOURCE
     ULONG EntriesCount;
     ULONG CurrentRingBufferIndex;
     ULONG ValidEntryCount;
+    PUCHAR BugCheckBufferPointer;
+    ULONG RingBufferEnumerationOffset;
 } PMICGLINK_CRASHDUMP_DATA_SOURCE;
 
 typedef struct _BATT_MNGR_GET_CAPABILITIES_OUT
