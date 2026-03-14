@@ -493,6 +493,18 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     );
 
+NTSTATUS
+PmicGlinkUlog_RetrieveRxData(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_reads_bytes_(BufferSize) const CHAR* Buffer,
+    _In_ SIZE_T BufferSize
+    );
+
+NTSTATUS
+PmicGlinkQueueInitialize(
+    _In_ WDFDEVICE Device
+    );
+
 static FORCEINLINE LARGE_INTEGER PmicGlinkQuerySystemTime(VOID)
 {
     LARGE_INTEGER now;
@@ -532,7 +544,6 @@ PmicGlinkEvtDeviceAdd(
 {
     NTSTATUS status;
     WDFDEVICE device;
-    WDF_IO_QUEUE_CONFIG queueConfig;
     WDF_OBJECT_ATTRIBUTES attributes;
     WDF_FILEOBJECT_CONFIG fileObjectConfig;
     WDF_PNPPOWER_EVENT_CALLBACKS pnpCallbacks;
@@ -595,16 +606,7 @@ PmicGlinkEvtDeviceAdd(
         return status;
     }
 
-    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
-    queueConfig.EvtIoDeviceControl = PmicGlinkEvtIoDeviceControl;
-
-    status = WdfIoQueueCreate(
-        device,
-        &queueConfig,
-        WDF_NO_OBJECT_ATTRIBUTES,
-        WDF_NO_HANDLE);
-
-    return status;
+    return PmicGlinkQueueInitialize(device);
 }
 
 VOID
@@ -5888,7 +5890,7 @@ PmicGlinkUlogRxNotificationCb(
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if ((deviceContext != NULL) && (Buffer != NULL) && (BufferSize > 0))
     {
-        (VOID)PmicGlink_RetrieveRxData(deviceContext, (const UCHAR*)Buffer, BufferSize);
+        (VOID)PmicGlinkUlog_RetrieveRxData(deviceContext, (const CHAR*)Buffer, BufferSize);
         deviceContext->NotificationFlag = TRUE;
     }
 }
@@ -6042,12 +6044,53 @@ PmicGlinkUlog_RetrieveRxData(
     _In_ SIZE_T BufferSize
     )
 {
-    if ((Context == NULL) || (Buffer == NULL))
+    ULONG opCode;
+
+    if ((Context == NULL) || (Buffer == NULL) || (BufferSize < (sizeof(ULONGLONG) + sizeof(ULONG))))
     {
         return STATUS_INVALID_PARAMETER;
     }
 
-    return PmicGlink_RetrieveRxData(Context, (const UCHAR*)Buffer, BufferSize);
+    opCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
+    switch (opCode)
+    {
+    case 24u:
+    case 35u:
+    {
+        const UCHAR* payload;
+        SIZE_T payloadSize;
+        SIZE_T copySize;
+
+        payload = (const UCHAR*)Buffer + sizeof(ULONGLONG) + sizeof(ULONG);
+        payloadSize = BufferSize - (sizeof(ULONGLONG) + sizeof(ULONG));
+        if (payloadSize > 0)
+        {
+            copySize = payloadSize;
+            if (copySize >= sizeof(Context->OemReceivedData))
+            {
+                copySize = sizeof(Context->OemReceivedData) - 1u;
+            }
+
+            RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
+            RtlCopyMemory(Context->OemReceivedData, payload, copySize);
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    case 25u:
+        if (BufferSize >= (sizeof(ULONGLONG) + (sizeof(ULONG) * 2u)))
+        {
+            ULONG statusCode;
+
+            statusCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG) + sizeof(ULONG));
+            return (statusCode == 0u) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+        }
+        return STATUS_SUCCESS;
+
+    default:
+        return PmicGlink_RetrieveRxData(Context, (const UCHAR*)Buffer, BufferSize);
+    }
 }
 
 NTSTATUS
@@ -6136,8 +6179,24 @@ PmicGlinkQueueInitialize(
     _In_ WDFDEVICE Device
     )
 {
-    UNREFERENCED_PARAMETER(Device);
-    return STATUS_SUCCESS;
+    NTSTATUS status;
+    WDF_IO_QUEUE_CONFIG queueConfig;
+
+    if (Device == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
+    queueConfig.EvtIoDeviceControl = PmicGlinkEvtIoDeviceControl;
+
+    status = WdfIoQueueCreate(
+        Device,
+        &queueConfig,
+        WDF_NO_OBJECT_ATTRIBUTES,
+        WDF_NO_HANDLE);
+
+    return status;
 }
 
 VOID
