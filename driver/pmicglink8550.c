@@ -782,6 +782,7 @@ PmicGlinkEvtReleaseHardware(
     context->GlinkLinkStateUp = FALSE;
     PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
     context->GlinkChannelConnected = FALSE;
+    (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     CrashDump_ResetState(context);
     if (gCrashDumpContext == context)
     {
@@ -863,6 +864,7 @@ PmicGlinkEvtSelfManagedIoCleanup(
 
     context = PmicGlinkGetDeviceContext(Device);
     (VOID)PmicGlinkDevice_RegisterForPnPNotifications(context, FALSE);
+    (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     CrashDump_ResetState(context);
     if (gCrashDumpContext == context)
     {
@@ -1312,6 +1314,7 @@ PmicGlinkDevice_InitContext(
     Context->Hibernate = FALSE;
     Context->Notify = FALSE;
     Context->NotificationFlag = FALSE;
+    (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     Context->EventID = 0;
 
     Context->NumPorts = 1;
