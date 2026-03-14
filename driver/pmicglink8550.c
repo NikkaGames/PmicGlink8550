@@ -7824,7 +7824,7 @@ PmicGlinkUlog_RetrieveRxData(
         return STATUS_SUCCESS;
 
     default:
-        return PmicGlink_RetrieveRxData(Context, (const UCHAR*)Buffer, BufferSize);
+        return STATUS_SUCCESS;
     }
 }
 
