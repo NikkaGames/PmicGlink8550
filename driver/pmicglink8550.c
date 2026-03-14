@@ -2226,7 +2226,7 @@ PmicGlink_SendData(
     matchedResponse = FALSE;
     waitCount = 0;
     pollInterval.QuadPart = -200000ll;
-    while (waitCount < 140u)
+    while (waitCount < 5u)
     {
         if (Context->LastRxValid)
         {
@@ -2244,7 +2244,29 @@ PmicGlink_SendData(
         waitCount++;
     }
 
-    if (!matchedResponse)
+    if (!matchedResponse && WaitForRx)
+    {
+        waitCount = 0;
+        while (waitCount < 140u)
+        {
+            if (Context->LastRxValid)
+            {
+                if (Context->LastRxOpcode == OpCode)
+                {
+                    status = Context->LastRxStatus;
+                    matchedResponse = TRUE;
+                    break;
+                }
+
+                Context->LastRxValid = FALSE;
+            }
+
+            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
+            waitCount++;
+        }
+    }
+
+    if (!matchedResponse && WaitForRx)
     {
         status = STATUS_TIMEOUT;
     }
@@ -7969,7 +7991,7 @@ PmicGlinkUlog_SendData(
     matchedResponse = FALSE;
     waitCount = 0;
     pollInterval.QuadPart = -200000ll;
-    while (waitCount < 140u)
+    while (waitCount < 5u)
     {
         if (Context->LastUlogRxValid)
         {
@@ -7985,6 +8007,28 @@ PmicGlinkUlog_SendData(
 
         (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
         waitCount++;
+    }
+
+    if (!matchedResponse)
+    {
+        waitCount = 0;
+        while (waitCount < 140u)
+        {
+            if (Context->LastUlogRxValid)
+            {
+                if (Context->LastUlogRxOpcode == opCode)
+                {
+                    status = Context->LastUlogRxStatus;
+                    matchedResponse = TRUE;
+                    break;
+                }
+
+                Context->LastUlogRxValid = FALSE;
+            }
+
+            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
+            waitCount++;
+        }
     }
 
     if (!matchedResponse)
