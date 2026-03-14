@@ -170,6 +170,7 @@ static LARGE_INTEGER gPmicGlinkLastUsbIoctlEvent;
 static ULONGLONG gPmicGlinkLastBattIdQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
 static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
+static UCHAR gPmicGlinkPendingPlatformState;
 static CHAR gPmicGlinkUlogData[8192];
 static CHAR gPmicGlinkUlogInitData[8192];
 static ULONG gPmicGlinkUlogDataLength;
@@ -1663,6 +1664,7 @@ PmicGlinkDevice_InitContext(
     gPmicGlinkUlogInitPrinted = 0;
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     gPmicGlinkCachedBatteryStatus = 0;
+    gPmicGlinkPendingPlatformState = 0;
     Context->EventID = 0;
     Context->GlinkRxIntent = 0;
     Context->GlinkUlogRxIntent = 0;
@@ -5221,7 +5223,7 @@ PmicGlinkPlatformSetState_Request_Write_WorkItem(
         RtlZeroMemory(&message, sizeof(message));
         message.Header = 0x1000080E8ull;
         message.MessageOp = 82u;
-        message.State = context->PlatformState;
+        message.State = gPmicGlinkPendingPlatformState;
 
         (VOID)PmicGlink_SendData(context, 0x52u, &message, sizeof(message), TRUE);
     }
@@ -5268,6 +5270,7 @@ PmicGlinkPlatformUsbc_AcpiNotificationHandler(
     }
 
     deviceContext->PlatformState = (UCHAR)NotifyValue;
+    gPmicGlinkPendingPlatformState = (UCHAR)NotifyValue;
     (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkPlatformSetState_Request_Write_WorkItem);
 }
 
@@ -5280,10 +5283,14 @@ PmicGlink_OemHandleCommand(
 {
     if ((Context == NULL) || (InputBuffer == NULL) || (IsOEMCmd == NULL))
     {
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_UNSUCCESSFUL;
     }
 
-    *IsOEMCmd = (InputBuffer[0] == 0xFFu) ? TRUE : FALSE;
+    *IsOEMCmd = FALSE;
+    if (InputBuffer[0] == 0xFFu)
+    {
+        *IsOEMCmd = TRUE;
+    }
 
     return STATUS_SUCCESS;
 }
