@@ -171,6 +171,7 @@ static ULONGLONG gPmicGlinkLastBattIdQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
 static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
 static UCHAR gPmicGlinkPendingPlatformState;
+static USBPD_DPM_USBC_WRITE_BUFFER gPmicGlinkPendingUsbcWriteRequest;
 static CHAR gPmicGlinkUlogData[8192];
 static CHAR gPmicGlinkUlogInitData[8192];
 static ULONG gPmicGlinkUlogDataLength;
@@ -1665,6 +1666,7 @@ PmicGlinkDevice_InitContext(
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     gPmicGlinkCachedBatteryStatus = 0;
     gPmicGlinkPendingPlatformState = 0;
+    RtlZeroMemory(&gPmicGlinkPendingUsbcWriteRequest, sizeof(gPmicGlinkPendingUsbcWriteRequest));
     Context->EventID = 0;
     Context->GlinkRxIntent = 0;
     Context->GlinkUlogRxIntent = 0;
@@ -2068,6 +2070,7 @@ PmicGlinkRegisterInterfaceWorkItem(
         context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
         RtlZeroMemory(&context->LastUsbcNotification, sizeof(context->LastUsbcNotification));
         RtlZeroMemory(&context->LastUsbcWriteRequest, sizeof(context->LastUsbcWriteRequest));
+        RtlZeroMemory(&gPmicGlinkPendingUsbcWriteRequest, sizeof(gPmicGlinkPendingUsbcWriteRequest));
 
         if (firstConnect && (context->UsbcPinAssignmentNotifyEn != 0))
         {
@@ -5164,14 +5167,15 @@ PmicGlinkPlatformUsbc_Request_Write(
 {
     if (Context == NULL)
     {
-        return STATUS_INVALID_HANDLE;
+        return STATUS_INVALID_PARAMETER_1;
     }
 
     if (Request == NULL)
     {
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_INVALID_PARAMETER_2;
     }
 
+    gPmicGlinkPendingUsbcWriteRequest = *Request;
     Context->LastUsbcWriteRequest = *Request;
     return PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkPlatformUsbc_Request_Write_WorkItem);
 }
@@ -5193,7 +5197,7 @@ PmicGlinkPlatformUsbc_Request_Write_WorkItem(
         RtlZeroMemory(&message, sizeof(message));
         message.Header = 0x10000800Cull;
         message.MessageOp = 21u;
-        message.Request = context->LastUsbcWriteRequest;
+        message.Request = gPmicGlinkPendingUsbcWriteRequest;
 
         if ((message.Request.cmd_type == 17u) || (message.Request.cmd_type == 19u))
         {
