@@ -174,6 +174,7 @@ static CHAR gPmicGlinkUlogData[8192];
 static CHAR gPmicGlinkUlogInitData[8192];
 static ULONG gPmicGlinkUlogDataLength;
 static ULONG gPmicGlinkUlogInitDataLength;
+static UCHAR gPmicGlinkUlogInitPrinted;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 static PVOID gKeInitializeTriageDumpDataArray;
@@ -310,6 +311,8 @@ static VOID PmicGlinkUlogTimerFunction(_In_ WDFTIMER Timer);
 static NTSTATUS PmicGlinkUlogSendSetPropertiesRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUlogSendGetLogBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUlogSendGetBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static BOOLEAN PmicGlinkUlogPrintBuffer(_In_ BOOLEAN IsInitLog);
+static NTSTATUS PmicGlinkUlogGetLogBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS CrashDump_InitializeTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID CrashDump_PopulateTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkLkmdTelInitializeMaxSizes(VOID);
@@ -1653,6 +1656,7 @@ PmicGlinkDevice_InitContext(
     Context->LastUlogRxOpcode = 0;
     Context->LastUlogRxStatus = STATUS_SUCCESS;
     Context->LastUlogRxValid = FALSE;
+    gPmicGlinkUlogInitPrinted = 0;
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     gPmicGlinkCachedBatteryStatus = 0;
     Context->EventID = 0;
@@ -1903,6 +1907,7 @@ PmicGlink_Init(
     Context->LastUlogRxOpcode = 0;
     Context->LastUlogRxStatus = STATUS_SUCCESS;
     Context->LastUlogRxValid = FALSE;
+    gPmicGlinkUlogInitPrinted = 0;
     Context->UsbcPinAssignmentNotifyEn = 0;
     Context->UlogInitEn = 0;
     Context->UlogInterval = 0;
@@ -7654,6 +7659,67 @@ PmicGlinkUlogSendGetBufferRequest(
     return PmicGlinkUlog_SendData(Context, &request, sizeof(request));
 }
 
+static BOOLEAN
+PmicGlinkUlogPrintBuffer(
+    _In_ BOOLEAN IsInitLog
+    )
+{
+    if (IsInitLog)
+    {
+        if (gPmicGlinkUlogInitDataLength > 0u)
+        {
+            gPmicGlinkUlogInitPrinted = 1;
+            gPmicGlinkUlogInitDataLength = 0u;
+            return TRUE;
+        }
+
+        return FALSE;
+    }
+
+    if (gPmicGlinkUlogDataLength > 0u)
+    {
+        gPmicGlinkUlogDataLength = 0u;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static NTSTATUS
+PmicGlinkUlogGetLogBuffer(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    NTSTATUS status;
+    ULONG attempts;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    attempts = 4u;
+    status = STATUS_TIMEOUT;
+    while (attempts > 0u)
+    {
+        status = PmicGlinkUlogSendGetLogBufferRequest(Context);
+        if (!NT_SUCCESS(status))
+        {
+            break;
+        }
+
+        if (PmicGlinkUlogPrintBuffer(FALSE))
+        {
+            status = STATUS_SUCCESS;
+            break;
+        }
+
+        attempts--;
+    }
+
+    return status;
+}
+
 static VOID
 PmicGlinkUlogTimerFunction(
     _In_ WDFTIMER Timer
@@ -7671,25 +7737,37 @@ PmicGlinkUlogTimerFunction(
         return;
     }
 
-    if ((context->UlogInterval == 0u) && (context->UlogInitEn == 0u))
+    if ((gPmicGlinkUlogInitPrinted == 0u)
+        && ((context->UlogInterval != 0u) || (context->UlogInitEn != 0u)))
     {
-        return;
-    }
-
-    if (context->GlinkChannelUlogConnected)
-    {
-        attempts = (context->UlogInterval == 0u) ? 4u : 1u;
-        while (attempts > 0u)
+        if (context->GlinkChannelUlogConnected)
         {
-            if (!NT_SUCCESS(PmicGlinkUlogSendGetBufferRequest(context)))
+            attempts = 4u;
+            while (attempts > 0u)
             {
-                break;
+                if (!NT_SUCCESS(PmicGlinkUlogSendGetBufferRequest(context)))
+                {
+                    break;
+                }
+
+                if (PmicGlinkUlogPrintBuffer(TRUE) && (gPmicGlinkUlogInitPrinted != 0u))
+                {
+                    break;
+                }
+
+                attempts--;
             }
 
-            attempts--;
+            if (context->UlogInterval == 0u)
+            {
+                (VOID)PmicGlinkUlogGetLogBuffer(context);
+            }
         }
+    }
 
-        (VOID)PmicGlinkUlogSendGetLogBufferRequest(context);
+    if (context->UlogInterval != 0u)
+    {
+        (VOID)PmicGlinkUlogGetLogBuffer(context);
     }
 
     if ((context->UlogInterval != 0u) && (context->UlogTimer != NULL))
