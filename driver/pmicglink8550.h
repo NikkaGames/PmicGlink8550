@@ -509,6 +509,9 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     PVOID GlinkNotificationEntry;
     PVOID AbdNotificationEntry;
     PVOID BattMiniNotificationEntry;
+    WDFWAITLOCK BattMiniNotifyLock;
+    WDFIOTARGET BattMiniIoTarget;
+    BOOLEAN BattMiniDeviceLoaded;
 
     PMICGLINK_DEVICE_DDIINTERFACE_TYPE DdiInterface;
     WDFSPINLOCK StateLock;

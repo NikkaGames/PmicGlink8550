@@ -1095,6 +1095,7 @@ PmicGlinkInterfaceNotificationCallback(
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     PDEVICE_INTERFACE_CHANGE_NOTIFICATION notification;
     BOOLEAN arrival;
+    NTSTATUS status;
 
     if ((NotificationStructure == NULL) || (Context == NULL))
     {
@@ -1144,7 +1145,59 @@ PmicGlinkInterfaceNotificationCallback(
 
     if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_DEVINTERFACE_PMIC_BATT_MINI, sizeof(GUID)) == sizeof(GUID))
     {
-        deviceContext->NotificationFlag = arrival;
+        if (deviceContext->BattMiniNotifyLock != NULL)
+        {
+            WdfWaitLockAcquire(deviceContext->BattMiniNotifyLock, NULL);
+        }
+
+        if (arrival)
+        {
+            status = STATUS_SUCCESS;
+            if (!deviceContext->BattMiniDeviceLoaded)
+            {
+                if (deviceContext->BattMiniIoTarget == NULL)
+                {
+                    status = WdfIoTargetCreate(
+                        deviceContext->Device,
+                        WDF_NO_OBJECT_ATTRIBUTES,
+                        &deviceContext->BattMiniIoTarget);
+                }
+
+                if (NT_SUCCESS(status) && (deviceContext->BattMiniIoTarget != NULL))
+                {
+                    WDF_IO_TARGET_OPEN_PARAMS openParams;
+                    WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
+                        &openParams,
+                        (PUNICODE_STRING)&notification->SymbolicLinkName,
+                        GENERIC_READ | GENERIC_WRITE);
+                    openParams.ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE;
+                    status = WdfIoTargetOpen(deviceContext->BattMiniIoTarget, &openParams);
+                    if (NT_SUCCESS(status))
+                    {
+                        deviceContext->BattMiniDeviceLoaded = TRUE;
+                    }
+                }
+            }
+
+            deviceContext->NotificationFlag = deviceContext->BattMiniDeviceLoaded;
+        }
+        else
+        {
+            if (deviceContext->BattMiniDeviceLoaded && (deviceContext->BattMiniIoTarget != NULL))
+            {
+                WdfIoTargetClose(deviceContext->BattMiniIoTarget);
+            }
+
+            deviceContext->BattMiniDeviceLoaded = FALSE;
+            deviceContext->NotificationFlag = FALSE;
+        }
+
+        if (deviceContext->BattMiniNotifyLock != NULL)
+        {
+            WdfWaitLockRelease(deviceContext->BattMiniNotifyLock);
+        }
+
+        return STATUS_SUCCESS;
     }
 
     return STATUS_SUCCESS;
@@ -1184,6 +1237,19 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         {
             (VOID)IoUnregisterPlugPlayNotification(Context->BattMiniNotificationEntry);
             Context->BattMiniNotificationEntry = NULL;
+        }
+
+        if (Context->BattMiniNotifyLock != NULL)
+        {
+            WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+            if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+            {
+                WdfIoTargetClose(Context->BattMiniIoTarget);
+            }
+
+            Context->BattMiniDeviceLoaded = FALSE;
+            Context->NotificationFlag = FALSE;
+            WdfWaitLockRelease(Context->BattMiniNotifyLock);
         }
 
         if (Context->ModernStandbyCallbackHandle != NULL)
@@ -1480,6 +1546,9 @@ PmicGlinkDevice_InitContext(
     Context->GlinkNotificationEntry = NULL;
     Context->AbdNotificationEntry = NULL;
     Context->BattMiniNotificationEntry = NULL;
+    Context->BattMiniNotifyLock = NULL;
+    Context->BattMiniIoTarget = NULL;
+    Context->BattMiniDeviceLoaded = FALSE;
 
     Context->DdiInterfaceRefCount = 0;
     Context->DdiInterfacePadding = 0;
@@ -1510,6 +1579,12 @@ PmicGlinkDevice_InitContext(
     }
 
     status = WdfWaitLockCreate(&attributes, &Context->DdiInterfaceLock);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = WdfWaitLockCreate(&attributes, &Context->BattMiniNotifyLock);
     if (!NT_SUCCESS(status))
     {
         return status;
@@ -5056,7 +5131,24 @@ PmicGlinkNotify_Interface_Free(
         return STATUS_INVALID_PARAMETER;
     }
 
-    Context->NotificationFlag = FALSE;
+    if (Context->BattMiniNotifyLock != NULL)
+    {
+        WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+        if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+        {
+            WdfIoTargetClose(Context->BattMiniIoTarget);
+        }
+
+        Context->BattMiniDeviceLoaded = FALSE;
+        Context->NotificationFlag = FALSE;
+        WdfWaitLockRelease(Context->BattMiniNotifyLock);
+    }
+    else
+    {
+        Context->NotificationFlag = FALSE;
+        Context->BattMiniDeviceLoaded = FALSE;
+    }
+
     Context->Notify = FALSE;
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     return STATUS_SUCCESS;
