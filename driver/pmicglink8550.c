@@ -30,6 +30,20 @@ DEFINE_GUID(
     0xf2,
     0xaa);
 
+DEFINE_GUID(
+    GUID_DEVINTERFACE_PMIC_BATT_MINI,
+    0x6c8228e5,
+    0xbe42,
+    0x4ed4,
+    0xad,
+    0xf1,
+    0x2e,
+    0xcd,
+    0x06,
+    0xef,
+    0x23,
+    0xb7);
+
 static PMICGLINK_UCSI_WRITE_DATA_BUF_TYPE gLatestUcsiCmd;
 static ULONGLONG gPmicGlinkRelTimeStartTicks;
 static BOOLEAN gPmicGlinkRelTimeInitialized;
@@ -598,6 +612,12 @@ RegisterDeviceInterfaces(
     }
 
     status = WdfDeviceCreateDeviceInterface(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = WdfDeviceCreateDeviceInterface(Device, &GUID_DEVINTERFACE_PMIC_BATT_MINI, NULL);
     if (!NT_SUCCESS(status))
     {
         return status;
