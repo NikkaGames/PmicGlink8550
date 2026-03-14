@@ -198,6 +198,9 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_ULOG_DEFAULT_CATEGORIES 0x0000000E00008000ull
 #define PMICGLINK_ULOG_DEFAULT_TIMER_DUE_TIME_100NS (-20000000ll)
 #define PMICGLINK_100NS_PER_SECOND 10000000ll
+#define PMICGLINK_ULOG_BUFFER_CAPACITY 8192u
+#define PMICGLINK_ULOG_LINE_CHUNK_WITH_TERM 251u
+#define PMICGLINK_ULOG_LINE_PRINT_BUFFER 256u
 #define PMICGLINK_CRASHDUMP_RINGBUFFER_MAX_BYTES 1024u
 #define PMICGLINK_CRASHDUMP_TRIAGE_DATA_BLOCK_COUNT 1024u
 #define PMICGLINK_CRASHDUMP_TRIAGE_DATA_ARRAY_SIZE (16u * (PMICGLINK_CRASHDUMP_TRIAGE_DATA_BLOCK_COUNT + 3u))
@@ -311,7 +314,7 @@ static VOID PmicGlinkUlogTimerFunction(_In_ WDFTIMER Timer);
 static NTSTATUS PmicGlinkUlogSendSetPropertiesRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUlogSendGetLogBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUlogSendGetBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
-static BOOLEAN PmicGlinkUlogPrintBuffer(_In_ BOOLEAN IsInitLog);
+static NTSTATUS PmicGlinkUlogPrintBuffer(_In_ BOOLEAN IsInitLog);
 static NTSTATUS PmicGlinkUlogGetLogBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS CrashDump_InitializeTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID CrashDump_PopulateTriageDataArray(_Inout_ PPMIC_GLINK_DEVICE_CONTEXT Context);
@@ -7669,30 +7672,84 @@ PmicGlinkUlogSendGetBufferRequest(
     return PmicGlinkUlog_SendData(Context, &request, sizeof(request));
 }
 
-static BOOLEAN
+static NTSTATUS
 PmicGlinkUlogPrintBuffer(
     _In_ BOOLEAN IsInitLog
     )
 {
-    if (IsInitLog)
+    SIZE_T usedLength;
+    SIZE_T index;
+    SIZE_T lineStart;
+    const CHAR* sourceBuffer;
+    CHAR localBuffer[PMICGLINK_ULOG_BUFFER_CAPACITY];
+    CHAR lineBuffer[PMICGLINK_ULOG_LINE_PRINT_BUFFER];
+
+    sourceBuffer = IsInitLog ? gPmicGlinkUlogInitData : gPmicGlinkUlogData;
+    RtlZeroMemory(localBuffer, sizeof(localBuffer));
+    RtlCopyMemory(localBuffer, sourceBuffer, sizeof(localBuffer));
+
+    usedLength = 0;
+    while ((usedLength < sizeof(localBuffer)) && (localBuffer[usedLength] != '\0'))
     {
-        if (gPmicGlinkUlogInitDataLength > 0u)
+        usedLength++;
+    }
+
+    if (usedLength == 0u)
+    {
+        if (IsInitLog)
         {
-            gPmicGlinkUlogInitPrinted = 1;
-            gPmicGlinkUlogInitDataLength = 0u;
-            return TRUE;
+            gPmicGlinkUlogInitPrinted = 1u;
         }
 
-        return FALSE;
+        return STATUS_PNP_DRIVER_CONFIGURATION_NOT_FOUND;
     }
 
-    if (gPmicGlinkUlogDataLength > 0u)
+    lineStart = 0u;
+    for (index = 0u; index < usedLength; index++)
     {
-        gPmicGlinkUlogDataLength = 0u;
-        return TRUE;
+        if ((localBuffer[index] != '\n') && (localBuffer[index] != '\0'))
+        {
+            continue;
+        }
+
+        if ((index - lineStart + 1u) >= PMICGLINK_ULOG_LINE_CHUNK_WITH_TERM)
+        {
+            SIZE_T chunkStart;
+
+            chunkStart = lineStart;
+            while (chunkStart < index)
+            {
+                SIZE_T remainingWithTerm;
+                SIZE_T chunkBytes;
+
+                remainingWithTerm = (index - chunkStart) + 1u;
+                chunkBytes = (remainingWithTerm > PMICGLINK_ULOG_LINE_CHUNK_WITH_TERM)
+                    ? PMICGLINK_ULOG_LINE_CHUNK_WITH_TERM
+                    : remainingWithTerm;
+
+                RtlZeroMemory(lineBuffer, sizeof(lineBuffer));
+                RtlCopyMemory(lineBuffer, &localBuffer[chunkStart], chunkBytes);
+                lineBuffer[chunkBytes - 1u] = '\0';
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: %s\n", lineBuffer);
+
+                chunkStart += chunkBytes;
+            }
+        }
+        else
+        {
+            SIZE_T lineBytes;
+
+            lineBytes = (index - lineStart) + 1u;
+            RtlZeroMemory(lineBuffer, sizeof(lineBuffer));
+            RtlCopyMemory(lineBuffer, &localBuffer[lineStart], lineBytes);
+            lineBuffer[index - lineStart] = '\0';
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: %s\n", lineBuffer);
+        }
+
+        lineStart = index + 1u;
     }
 
-    return FALSE;
+    return STATUS_SUCCESS;
 }
 
 static NTSTATUS
@@ -7702,7 +7759,6 @@ PmicGlinkUlogGetLogBuffer(
 {
     NTSTATUS status;
     ULONG attempts;
-    BOOLEAN printed;
 
     if (Context == NULL)
     {
@@ -7715,8 +7771,7 @@ PmicGlinkUlogGetLogBuffer(
     }
 
     attempts = 4u;
-    printed = FALSE;
-    status = STATUS_TIMEOUT;
+    status = STATUS_SUCCESS;
     while (attempts > 0u)
     {
         status = PmicGlinkUlogSendGetLogBufferRequest(Context);
@@ -7725,19 +7780,13 @@ PmicGlinkUlogGetLogBuffer(
             break;
         }
 
-        if (PmicGlinkUlogPrintBuffer(FALSE))
-        {
-            printed = TRUE;
-            status = STATUS_SUCCESS;
-            break;
-        }
-
+        status = PmicGlinkUlogPrintBuffer(FALSE);
         attempts--;
-    }
 
-    if (!printed && NT_SUCCESS(status))
-    {
-        status = STATUS_TIMEOUT;
+        if ((attempts == 0u) || ((gPmicGlinkUlogInitPrinted != 0u) && (status != STATUS_SUCCESS)))
+        {
+            return status;
+        }
     }
 
     return status;
@@ -7748,6 +7797,7 @@ PmicGlinkUlogTimerFunction(
     _In_ WDFTIMER Timer
     )
 {
+    NTSTATUS status;
     ULONG attempts;
     LONGLONG dueTime100ns;
     WDFOBJECT parentObject;
@@ -7773,18 +7823,19 @@ PmicGlinkUlogTimerFunction(
                     break;
                 }
 
-                if (PmicGlinkUlogPrintBuffer(TRUE) && (gPmicGlinkUlogInitPrinted != 0u))
+                status = PmicGlinkUlogPrintBuffer(TRUE);
+                attempts--;
+
+                if ((attempts == 0u) || ((gPmicGlinkUlogInitPrinted != 0u) && (status != STATUS_SUCCESS)))
                 {
                     break;
                 }
-
-                attempts--;
             }
+        }
 
-            if (context->UlogInterval == 0u)
-            {
-                (VOID)PmicGlinkUlogGetLogBuffer(context);
-            }
+        if (context->UlogInterval == 0u)
+        {
+            (VOID)PmicGlinkUlogGetLogBuffer(context);
         }
     }
 
@@ -8092,7 +8143,9 @@ PmicGlinkUlog_SendData(
     {
         opCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
     }
-    waitForRx = (opCode == PMICGLINK_ULOG_SET_PROPERTIES_OPCODE) ? TRUE : FALSE;
+    waitForRx = ((opCode == PMICGLINK_ULOG_SET_PROPERTIES_OPCODE)
+        || (opCode == PMICGLINK_ULOG_GET_LOG_BUFFER_OPCODE)
+        || (opCode == PMICGLINK_ULOG_GET_BUFFER_OPCODE));
 
     status = STATUS_SUCCESS;
     Context->NotificationFlag = FALSE;
@@ -8103,7 +8156,7 @@ PmicGlinkUlog_SendData(
     matchedResponse = FALSE;
     waitCount = 0;
     pollInterval.QuadPart = -200000ll;
-    while (waitCount < 5u)
+    while (waitCount < 50u)
     {
         if (Context->LastUlogRxValid)
         {
@@ -8124,7 +8177,7 @@ PmicGlinkUlog_SendData(
     if (!matchedResponse && waitForRx)
     {
         waitCount = 0;
-        while (waitCount < 140u)
+        while (waitCount < 50u)
         {
             if (Context->LastUlogRxValid)
             {
