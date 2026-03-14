@@ -3700,3 +3700,392 @@ HandlePmicGlinkRequest(
         return status;
     }
 }
+
+VOID
+PmicGlink_GetStringFromBuffer(
+    _In_reads_bytes_opt_(BufferSize) const UCHAR* Buffer,
+    _In_ UCHAR BufferSize,
+    _Out_writes_bytes_(StringSize) CHAR* StringBuffer,
+    _In_ UCHAR StringSize
+    )
+{
+    static const CHAR hexDigits[] = "0123456789ABCDEF";
+    ULONG i;
+    ULONG outIndex;
+
+    if ((StringBuffer == NULL) || (StringSize == 0))
+    {
+        return;
+    }
+
+    outIndex = 0;
+    StringBuffer[0] = '\0';
+
+    if (Buffer == NULL)
+    {
+        return;
+    }
+
+    for (i = 0; i < BufferSize; i++)
+    {
+        UCHAR value;
+
+        if ((outIndex + 3u) >= StringSize)
+        {
+            break;
+        }
+
+        value = Buffer[i];
+        StringBuffer[outIndex++] = hexDigits[(value >> 4) & 0x0Fu];
+        StringBuffer[outIndex++] = hexDigits[value & 0x0Fu];
+
+        if ((i + 1u) < BufferSize)
+        {
+            StringBuffer[outIndex++] = ' ';
+        }
+    }
+
+    StringBuffer[outIndex] = '\0';
+}
+
+NTSTATUS
+PmicGlink_ANSIToUniString(
+    _In_z_ const CHAR* AnsiString,
+    _Out_writes_(UnicodeChars) WCHAR* UnicodeString,
+    _In_ SIZE_T UnicodeChars
+    )
+{
+    SIZE_T i;
+
+    if ((AnsiString == NULL) || (UnicodeString == NULL) || (UnicodeChars == 0))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    i = 0;
+    while ((i + 1u) < UnicodeChars && (AnsiString[i] != '\0'))
+    {
+        UnicodeString[i] = (WCHAR)(UCHAR)AnsiString[i];
+        i++;
+    }
+
+    UnicodeString[i] = L'\0';
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+PmicGlink_RetrieveRxData(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_reads_bytes_(BufferSize) const UCHAR* Buffer,
+    _In_ SIZE_T BufferSize
+    )
+{
+    if ((Context == NULL) || (Buffer == NULL) || (BufferSize == 0))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (BufferSize >= sizeof(Context->LastUsbcNotification.AsUINT8))
+    {
+        RtlCopyMemory(
+            Context->LastUsbcNotification.AsUINT8,
+            Buffer,
+            sizeof(Context->LastUsbcNotification.AsUINT8));
+        Context->PendingPan = (UCHAR)Context->LastUsbcNotification.detail.common.port_index;
+    }
+    else
+    {
+        SIZE_T copySize;
+
+        copySize = (BufferSize < sizeof(Context->OemReceivedData))
+            ? BufferSize
+            : sizeof(Context->OemReceivedData);
+        RtlCopyMemory(Context->OemReceivedData, Buffer, copySize);
+    }
+
+    return STATUS_SUCCESS;
+}
+
+BOOLEAN
+PmicGlinkNotifyRxIntentReqCb(
+    _In_opt_ PVOID Handle,
+    _In_opt_ PVOID Context,
+    _In_ SIZE_T RequestedSize
+    )
+{
+    UNREFERENCED_PARAMETER(Handle);
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(RequestedSize);
+    return TRUE;
+}
+
+VOID
+PmicGlinkNotifyRxIntentCb(
+    _In_opt_ PVOID Handle,
+    _In_opt_ PVOID Context,
+    _In_ SIZE_T Size
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+
+    UNREFERENCED_PARAMETER(Handle);
+    UNREFERENCED_PARAMETER(Size);
+
+    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
+    if (deviceContext != NULL)
+    {
+        deviceContext->EventID += 1;
+    }
+}
+
+VOID
+PmicGlinkTxNotificationCb(
+    _In_opt_ PVOID Handle,
+    _In_opt_ const VOID* Context,
+    _In_opt_ const VOID* PacketContext,
+    _In_opt_ const VOID* Buffer,
+    _In_ SIZE_T BufferSize
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+
+    UNREFERENCED_PARAMETER(Handle);
+    UNREFERENCED_PARAMETER(PacketContext);
+    UNREFERENCED_PARAMETER(Buffer);
+    UNREFERENCED_PARAMETER(BufferSize);
+
+    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
+    if (deviceContext != NULL)
+    {
+        deviceContext->NotificationFlag = TRUE;
+    }
+}
+
+VOID
+PmicGlinkRxNotificationWorkItem(
+    _In_ WDFWORKITEM WorkItem
+    )
+{
+    WDFOBJECT parentObject;
+    PPMIC_GLINK_DEVICE_CONTEXT context;
+
+    parentObject = WdfWorkItemGetParentObject(WorkItem);
+    context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
+    if (context != NULL)
+    {
+        (VOID)PmicGlink_RetrieveRxData(
+            context,
+            context->LastUsbcNotification.AsUINT8,
+            sizeof(context->LastUsbcNotification.AsUINT8));
+    }
+
+    WdfObjectDelete(WorkItem);
+}
+
+VOID
+PmicGlinkRpeADSPStateNotificationCallback(
+    _In_opt_ PVOID Context,
+    _In_ ULONG PreviousState,
+    _In_opt_ PULONG CurrentState
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+
+    UNREFERENCED_PARAMETER(PreviousState);
+
+    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
+    if ((deviceContext == NULL) || (CurrentState == NULL))
+    {
+        return;
+    }
+
+    if (*CurrentState != 0)
+    {
+        deviceContext->GlinkLinkStateUp = TRUE;
+        if (!deviceContext->GlinkChannelConnected)
+        {
+            (VOID)PmicGlink_OpenGlinkChannel(deviceContext);
+        }
+    }
+    else
+    {
+        deviceContext->GlinkLinkStateUp = FALSE;
+        deviceContext->GlinkChannelConnected = FALSE;
+        deviceContext->GlinkChannelRestart = TRUE;
+    }
+}
+
+VOID
+PmicGlinkAppStateNotificationCallback(
+    _In_opt_ PVOID Context,
+    _In_ ULONG PreviousState,
+    _In_opt_ PULONG CurrentState
+    )
+{
+    PmicGlinkRpeADSPStateNotificationCallback(Context, PreviousState, CurrentState);
+}
+
+VOID
+PmicGlinkUlogRxNotificationCb(
+    _In_opt_ PVOID Handle,
+    _In_opt_ PVOID Context,
+    _In_opt_ PVOID PacketContext,
+    _In_opt_ PVOID Buffer,
+    _In_ SIZE_T BufferSize
+    )
+{
+    UNREFERENCED_PARAMETER(Handle);
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(PacketContext);
+    UNREFERENCED_PARAMETER(Buffer);
+    UNREFERENCED_PARAMETER(BufferSize);
+}
+
+VOID
+PmicGlinkUlogTxNotificationCb(
+    _In_opt_ PVOID Handle,
+    _In_opt_ PVOID Context,
+    _In_opt_ PVOID PacketContext,
+    _In_opt_ PVOID Buffer,
+    _In_ SIZE_T BufferSize
+    )
+{
+    UNREFERENCED_PARAMETER(Handle);
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(PacketContext);
+    UNREFERENCED_PARAMETER(Buffer);
+    UNREFERENCED_PARAMETER(BufferSize);
+}
+
+VOID
+PmicGlinkUlogRegisterInterfaceWorkItem(
+    _In_ WDFWORKITEM WorkItem
+    )
+{
+    WdfObjectDelete(WorkItem);
+}
+
+VOID
+PmicGlinkUlogStateNotificationCb(
+    _In_opt_ PVOID Handle,
+    _In_opt_ PVOID Context,
+    _In_ PMICGLINK_CHANNEL_EVENT Event
+    )
+{
+    if (Context != NULL)
+    {
+        PmicGlinkStateNotificationCb(Handle, (PPMIC_GLINK_DEVICE_CONTEXT)Context, Event);
+    }
+}
+
+BOOLEAN
+PmicGlinkUlogNotifyRxIntentReqCb(
+    _In_opt_ PVOID Handle,
+    _In_opt_ PVOID Context,
+    _In_ SIZE_T RequestedSize
+    )
+{
+    UNREFERENCED_PARAMETER(Handle);
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(RequestedSize);
+    return TRUE;
+}
+
+VOID
+PmicGlinkUlogNotifyRxIntentCb(
+    _In_opt_ PVOID Handle,
+    _In_opt_ PVOID Context,
+    _In_ SIZE_T Size
+    )
+{
+    UNREFERENCED_PARAMETER(Handle);
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(Size);
+}
+
+NTSTATUS
+PmicGlinkUlog_OpenGlinkChannelUlog(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    Context->RpeInitialized = TRUE;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS
+PmicGlinkUlog_RetrieveRxData(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_reads_bytes_(BufferSize) const CHAR* Buffer,
+    _In_ SIZE_T BufferSize
+    )
+{
+    if ((Context == NULL) || (Buffer == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    return PmicGlink_RetrieveRxData(Context, (const UCHAR*)Buffer, BufferSize);
+}
+
+NTSTATUS
+PmicGlinkUlog_SendData(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_reads_bytes_(BufferSize) const VOID* Buffer,
+    _In_ SIZE_T BufferSize
+    )
+{
+    if ((Context == NULL) || (Buffer == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    return PmicGlink_SendData(Context, 0x15u, (PVOID)Buffer, BufferSize, TRUE);
+}
+
+NTSTATUS
+PmicGlinkDeviceCreate(
+    _In_ WDFDRIVER Driver,
+    _Inout_ PWDFDEVICE_INIT DeviceInit
+    )
+{
+    return PmicGlinkEvtDeviceAdd(Driver, DeviceInit);
+}
+
+NTSTATUS
+PmicGlinkOnDeviceAdd(
+    _In_ WDFDRIVER Driver,
+    _Inout_ PWDFDEVICE_INIT DeviceInit
+    )
+{
+    return PmicGlinkDeviceCreate(Driver, DeviceInit);
+}
+
+NTSTATUS
+PmicGlinkQueueInitialize(
+    _In_ WDFDEVICE Device
+    )
+{
+    UNREFERENCED_PARAMETER(Device);
+    return STATUS_SUCCESS;
+}
+
+VOID
+PmicGlinkOnDriverCleanup(
+    _In_ PDRIVER_OBJECT DriverObject
+    )
+{
+    UNREFERENCED_PARAMETER(DriverObject);
+}
+
+VOID
+PmicGlinkOnDriverUnload(
+    _In_ PDRIVER_OBJECT DriverObject
+    )
+{
+    UNREFERENCED_PARAMETER(DriverObject);
+}
