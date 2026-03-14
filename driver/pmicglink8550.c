@@ -2142,7 +2142,10 @@ PmicGlinkStateNotificationCb(
         Context->GlinkRxIntent += 1;
         if ((Context->UlogInitEn != 0) && !Context->GlinkChannelUlogConnected)
         {
-            (VOID)PmicGlinkUlog_OpenGlinkChannelUlog(Context);
+            if (NT_SUCCESS(PmicGlinkUlog_OpenGlinkChannelUlog(Context)))
+            {
+                Context->GlinkChannelUlogRestart = FALSE;
+            }
         }
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         break;
@@ -7513,10 +7516,6 @@ PmicGlinkRpeADSPStateNotificationCallback(
         deviceContext->GlinkChannelRestart = TRUE;
         deviceContext->GlinkChannelUlogConnected = FALSE;
         deviceContext->GlinkChannelUlogRestart = TRUE;
-        if (deviceContext->UlogTimer != NULL)
-        {
-            (VOID)WdfTimerStop(deviceContext->UlogTimer, FALSE);
-        }
     }
 }
 
