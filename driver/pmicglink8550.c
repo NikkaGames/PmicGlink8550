@@ -2345,6 +2345,7 @@ PmicGlinkNotify_PingBattMiniClass(
 {
     if (Context != NULL)
     {
+        Context->LegacyStatusNotificationPending = TRUE;
         Context->NotificationFlag = TRUE;
     }
 }
