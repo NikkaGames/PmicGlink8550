@@ -2025,7 +2025,6 @@ PmicGlink_SyncSendReceive(
     }
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT:
-        Context->LegacyStateChangePending = TRUE;
         return STATUS_SUCCESS;
 
     case IOCTL_BATTMNGR_SET_OPERATION_MODE:
