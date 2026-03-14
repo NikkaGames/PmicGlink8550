@@ -7673,14 +7673,19 @@ PmicGlinkUlogNotifyRxIntentReqCb(
     _In_ SIZE_T RequestedSize
     )
 {
-    UNREFERENCED_PARAMETER(Handle);
-    UNREFERENCED_PARAMETER(RequestedSize);
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
 
-    if (Context == NULL)
+    UNREFERENCED_PARAMETER(Handle);
+    
+    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
+    if ((deviceContext == NULL)
+        || (RequestedSize == 0)
+        || !deviceContext->GlinkChannelUlogConnected)
     {
         return FALSE;
     }
 
+    deviceContext->GlinkUlogRxIntent += 1;
     return TRUE;
 }
 
