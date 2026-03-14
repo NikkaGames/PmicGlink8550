@@ -1831,6 +1831,144 @@ PmicGlink_SendData(
         }
         break;
 
+    case 0x49:
+        if (Context->NumPorts == 0)
+        {
+            Context->NumPorts = 1;
+        }
+        break;
+
+    case 0x4A:
+        if ((BufferLen >= sizeof(ULONGLONG) + sizeof(ULONG))
+            && (Context->UsbinPower[0] == 0))
+        {
+            Context->UsbinPower[0] = 5000000;
+        }
+        break;
+
+    case 0x4F:
+        if (BufferLen >= 36u)
+        {
+            const UCHAR* request;
+            ULONG readWriteFlag;
+            ULONG transferLength;
+
+            request = (const UCHAR*)Buffer;
+            readWriteFlag = *(const ULONG*)(request + 20);
+            transferLength = *(const ULONG*)(request + 32);
+            if (transferLength > PMICGLINK_I2C_DATA_SIZE)
+            {
+                transferLength = PMICGLINK_I2C_DATA_SIZE;
+            }
+
+            if ((readWriteFlag == 0u) && (BufferLen >= 36u + transferLength))
+            {
+                Context->I2CDataLength = transferLength;
+                RtlZeroMemory(Context->I2CData, sizeof(Context->I2CData));
+                RtlCopyMemory(Context->I2CData, request + 36, transferLength);
+            }
+            else if (Context->I2CDataLength == 0u)
+            {
+                Context->I2CDataLength = 1u;
+                Context->I2CData[0] = 0u;
+            }
+        }
+        break;
+
+    case 0x60:
+        if (BufferLen >= 16u)
+        {
+            Context->gws_out.AlarmStatus = *(const ULONG*)((const UCHAR*)Buffer + 12);
+        }
+        break;
+
+    case 0x61:
+        if (BufferLen >= 16u)
+        {
+            Context->cws_out.Status = *(const ULONG*)((const UCHAR*)Buffer + 12);
+        }
+        break;
+
+    case 0x62:
+        if (BufferLen >= 20u)
+        {
+            Context->stp_out.Status = *(const ULONG*)((const UCHAR*)Buffer + 16);
+        }
+        break;
+
+    case 0x63:
+        if (BufferLen >= 20u)
+        {
+            Context->stv_out.Status = *(const ULONG*)((const UCHAR*)Buffer + 16);
+        }
+        break;
+
+    case 0x64:
+        if (BufferLen >= 16u)
+        {
+            Context->tip_out.PolicySetting = *(const ULONG*)((const UCHAR*)Buffer + 12);
+        }
+        break;
+
+    case 0x65:
+        if (BufferLen >= 16u)
+        {
+            Context->tiv_out.TimerValueRemain = *(const ULONG*)((const UCHAR*)Buffer + 12);
+        }
+        break;
+
+    case 0x101:
+        if (BufferLen >= 20u)
+        {
+            Context->OemPropData[0] = *(const ULONG*)((const UCHAR*)Buffer + 12);
+            Context->OemPropData[1] = *(const ULONG*)((const UCHAR*)Buffer + 16);
+        }
+        break;
+
+    case 0x102:
+        if (BufferLen >= 20u)
+        {
+            const UCHAR* request;
+            ULONG copyDwords;
+            ULONG dataSize;
+
+            request = (const UCHAR*)Buffer;
+            dataSize = *(const ULONG*)(request + 16);
+            copyDwords = dataSize / sizeof(ULONG);
+            if (copyDwords > PMICGLINK_OEM_PROP_WORDS)
+            {
+                copyDwords = PMICGLINK_OEM_PROP_WORDS;
+            }
+
+            if (copyDwords > 0u)
+            {
+                RtlZeroMemory(Context->OemPropData, sizeof(Context->OemPropData));
+                RtlCopyMemory(Context->OemPropData, request + 20, copyDwords * sizeof(ULONG));
+            }
+        }
+        break;
+
+    case 0x104:
+        if (BufferLen >= 16u)
+        {
+            const UCHAR* request;
+            ULONG dataSize;
+            SIZE_T copyLength;
+
+            request = (const UCHAR*)Buffer;
+            dataSize = *(const ULONG*)(request + 12);
+            copyLength = (dataSize <= PMICGLINK_OEM_BUFFER_SIZE)
+                ? (SIZE_T)dataSize
+                : PMICGLINK_OEM_BUFFER_SIZE;
+
+            RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
+            if (BufferLen >= (16u + copyLength))
+            {
+                RtlCopyMemory(Context->OemReceivedData, request + 16, copyLength);
+            }
+        }
+        break;
+
     default:
         break;
     }
@@ -1887,40 +2025,85 @@ PmicGlink_SyncSendReceive(
     {
     case IOCTL_PMICGLINK_UCSI_WRITE:
     case IOCTL_PMICGLINK_ABD_UCSI_WRITE_LEGACY:
+    {
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+            UCHAR WriteBuffer[PMICGLINK_UCSI_BUFFER_SIZE];
+        } ucsiWriteRequest;
+
         if ((InputBuffer == NULL) || (InputBufferSize < PMICGLINK_UCSI_BUFFER_SIZE))
         {
             return STATUS_INVALID_PARAMETER;
         }
 
+        ucsiWriteRequest.Header = 0x10000800Bull;
+        ucsiWriteRequest.MessageOp = 18u;
+        RtlZeroMemory(ucsiWriteRequest.WriteBuffer, sizeof(ucsiWriteRequest.WriteBuffer));
+        RtlCopyMemory(ucsiWriteRequest.WriteBuffer, InputBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
+
         RtlCopyMemory(Context->UCSIDataBuffer, InputBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
-        return STATUS_SUCCESS;
+        return PmicGlink_SendData(Context, 18u, &ucsiWriteRequest, sizeof(ucsiWriteRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_UCSI_READ:
-        return STATUS_SUCCESS;
+    {
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+        } ucsiReadRequest;
+
+        ucsiReadRequest.Header = 0x10000800Bull;
+        ucsiReadRequest.MessageOp = 17u;
+        return PmicGlink_SendData(Context, 17u, &ucsiReadRequest, sizeof(ucsiReadRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_PLATFORM_USBC_READ:
-        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(USBPD_DPM_USBC_WRITE_BUFFER)))
-        {
-            const USBPD_DPM_USBC_WRITE_BUFFER* request;
+    {
+        UCHAR usbcReadRequest[12];
+        const ULONGLONG header = 0x10000800Aull;
+        const ULONG messageOp = 34u;
 
-            request = (const USBPD_DPM_USBC_WRITE_BUFFER*)InputBuffer;
-            Context->LastUsbcWriteRequest = *request;
-
-            if (request->cmd_type == 16u)
-            {
-                Context->PendingPan = (UCHAR)Context->LastUsbcNotification.detail.common.port_index;
-            }
-        }
-
-        return STATUS_SUCCESS;
+        RtlZeroMemory(usbcReadRequest, sizeof(usbcReadRequest));
+        RtlCopyMemory(usbcReadRequest, &header, sizeof(header));
+        RtlCopyMemory(usbcReadRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        return PmicGlink_SendData(Context, 34u, usbcReadRequest, sizeof(usbcReadRequest), FALSE);
+    }
 
     case IOCTL_PMICGLINK_PLATFORM_USBC_NOTIFY:
+        // Preserve ACPI notification compatibility path used by this WDK rewrite.
         if ((InputBuffer != NULL) && (InputBufferSize == sizeof(ULONG)))
         {
             PmicGlinkPlatformUsbc_AcpiNotificationHandler(Context, *(ULONG*)InputBuffer);
             return STATUS_SUCCESS;
         }
 
+        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(PMICGLINK_OEM_SET_PROP_INPUT)))
+        {
+            const PMICGLINK_OEM_SET_PROP_INPUT* oemSetRequest;
+            UCHAR oemSetPropRequest[276];
+            const ULONGLONG header = 0x10000800Eull;
+            const ULONG messageOp = 258u;
+            SIZE_T copyLength;
+
+            oemSetRequest = (const PMICGLINK_OEM_SET_PROP_INPUT*)InputBuffer;
+            copyLength = (oemSetRequest->data_size <= sizeof(oemSetRequest->data))
+                ? (SIZE_T)oemSetRequest->data_size
+                : sizeof(oemSetRequest->data);
+
+            RtlZeroMemory(oemSetPropRequest, sizeof(oemSetPropRequest));
+            RtlCopyMemory(oemSetPropRequest, &header, sizeof(header));
+            RtlCopyMemory(oemSetPropRequest + sizeof(header), &messageOp, sizeof(messageOp));
+            RtlCopyMemory(oemSetPropRequest + 12, &oemSetRequest->property_id, sizeof(oemSetRequest->property_id));
+            RtlCopyMemory(oemSetPropRequest + 16, &oemSetRequest->data_size, sizeof(oemSetRequest->data_size));
+            RtlCopyMemory(oemSetPropRequest + 20, oemSetRequest->data, copyLength);
+
+            return PmicGlink_SendData(Context, 258u, oemSetPropRequest, sizeof(oemSetPropRequest), TRUE);
+        }
+
+        // Keep write-request work-item path for existing request producers.
         if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(USBPD_DPM_USBC_WRITE_BUFFER)))
         {
             return PmicGlinkPlatformUsbc_Request_Write(
@@ -1928,44 +2111,95 @@ PmicGlink_SyncSendReceive(
                 (const USBPD_DPM_USBC_WRITE_BUFFER*)InputBuffer);
         }
 
-        return STATUS_SUCCESS;
+        return STATUS_INVALID_PARAMETER;
 
     case IOCTL_PMICGLINK_GET_OEM_MSG:
-        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(PMICGLINK_OEM_GET_PROP_INPUT)))
-        {
-            PMICGLINK_OEM_GET_PROP_INPUT* req;
+    {
+        const PMICGLINK_OEM_GET_PROP_INPUT* request;
+        UCHAR oemGetPropRequest[20];
+        const ULONGLONG header = 0x10000800Eull;
+        const ULONG messageOp = 257u;
 
-            req = (PMICGLINK_OEM_GET_PROP_INPUT*)InputBuffer;
-            Context->OemPropData[0] = req->property_id;
-            Context->OemPropData[1] = req->data_size;
+        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_OEM_GET_PROP_INPUT)))
+        {
+            return STATUS_INVALID_PARAMETER;
         }
 
-        return STATUS_SUCCESS;
+        request = (const PMICGLINK_OEM_GET_PROP_INPUT*)InputBuffer;
+        Context->OemPropData[0] = request->property_id;
+        Context->OemPropData[1] = request->data_size;
+
+        RtlZeroMemory(oemGetPropRequest, sizeof(oemGetPropRequest));
+        RtlCopyMemory(oemGetPropRequest, &header, sizeof(header));
+        RtlCopyMemory(oemGetPropRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        RtlCopyMemory(oemGetPropRequest + 12, &request->property_id, sizeof(request->property_id));
+        RtlCopyMemory(oemGetPropRequest + 16, &request->data_size, sizeof(request->data_size));
+
+        return PmicGlink_SendData(Context, 257u, oemGetPropRequest, sizeof(oemGetPropRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_OEM_READ_BUFFER:
-        return STATUS_SUCCESS;
-
     case IOCTL_PMICGLINK_OEM_WRITE_BUFFER:
+    {
+        UCHAR oemSendReceiveRequest[84];
+        const ULONGLONG header = 0x10000800Eull;
+        const ULONG messageOp = 260u;
+        ULONG dataSize;
+        SIZE_T copyLength;
+
         if ((InputBuffer == NULL) || (InputBufferSize == 0))
         {
             return STATUS_INVALID_PARAMETER;
         }
 
-        RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
-        RtlCopyMemory(
-            Context->OemReceivedData,
-            InputBuffer,
-            (InputBufferSize < sizeof(Context->OemReceivedData)) ? InputBufferSize : sizeof(Context->OemReceivedData));
-        return STATUS_SUCCESS;
+        dataSize = (InputBufferSize <= PMICGLINK_OEM_SEND_BUFFER_SIZE)
+            ? (ULONG)InputBufferSize
+            : PMICGLINK_OEM_SEND_BUFFER_SIZE;
+        copyLength = (SIZE_T)dataSize;
+
+        RtlZeroMemory(oemSendReceiveRequest, sizeof(oemSendReceiveRequest));
+        RtlCopyMemory(oemSendReceiveRequest, &header, sizeof(header));
+        RtlCopyMemory(oemSendReceiveRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        RtlCopyMemory(oemSendReceiveRequest + 12, &dataSize, sizeof(dataSize));
+        RtlCopyMemory(oemSendReceiveRequest + 16, InputBuffer, copyLength);
+
+        if (effectiveIoctl == IOCTL_PMICGLINK_OEM_WRITE_BUFFER)
+        {
+            // Keep fallback data when running without a connected remote endpoint.
+            RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
+            RtlCopyMemory(
+                Context->OemReceivedData,
+                InputBuffer,
+                (copyLength < sizeof(Context->OemReceivedData)) ? copyLength : sizeof(Context->OemReceivedData));
+        }
+
+        return PmicGlink_SendData(Context, 260u, oemSendReceiveRequest, sizeof(oemSendReceiveRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_GET_CHARGER_PORTS:
+    {
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+        } chargerPortsRequest;
+
         if (Context->NumPorts == 0)
         {
             Context->NumPorts = 1;
         }
-        return STATUS_SUCCESS;
+
+        chargerPortsRequest.Header = 0x10000800Aull;
+        chargerPortsRequest.MessageOp = 73u;
+        return PmicGlink_SendData(Context, 73u, &chargerPortsRequest, sizeof(chargerPortsRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_GET_USB_CHG_STATUS:
+    {
+        UCHAR chargerPowerRequest[12];
+        const ULONGLONG header = 0x10000800Aull;
+        const ULONG messageOp = 74u;
+
         if ((InputBuffer == NULL) || (InputBufferSize < sizeof(ULONG)))
         {
             return STATUS_INVALID_PARAMETER;
@@ -1981,108 +2215,196 @@ PmicGlink_SyncSendReceive(
             Context->UsbinPower[*(ULONG*)InputBuffer] = 5000000;
         }
 
-        return STATUS_SUCCESS;
+        RtlZeroMemory(chargerPowerRequest, sizeof(chargerPowerRequest));
+        RtlCopyMemory(chargerPowerRequest, &header, sizeof(header));
+        RtlCopyMemory(chargerPowerRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        return PmicGlink_SendData(Context, 74u, chargerPowerRequest, sizeof(chargerPowerRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_TAD_GWS:
+    {
+        UCHAR tadRequest[16];
+        const ULONGLONG header = 0x100008010ull;
+        const ULONG messageOp = 96u;
+        ULONG timerId;
+
         if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_GWS_INBUF)))
         {
             return STATUS_INVALID_PARAMETER;
         }
 
-        Context->gws_out.AlarmStatus = ((PMICGLINK_TAD_GWS_INBUF*)InputBuffer)->TimerId;
-        return STATUS_SUCCESS;
+        timerId = ((const PMICGLINK_TAD_GWS_INBUF*)InputBuffer)->TimerId;
+        RtlZeroMemory(tadRequest, sizeof(tadRequest));
+        RtlCopyMemory(tadRequest, &header, sizeof(header));
+        RtlCopyMemory(tadRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        RtlCopyMemory(tadRequest + 12, &timerId, sizeof(timerId));
+        return PmicGlink_SendData(Context, 96u, tadRequest, sizeof(tadRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_TAD_CWS:
+    {
+        UCHAR tadRequest[16];
+        const ULONGLONG header = 0x100008010ull;
+        const ULONG messageOp = 97u;
+        ULONG timerId;
+
         if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_CWS_INBUF)))
         {
             return STATUS_INVALID_PARAMETER;
         }
 
-        Context->cws_out.Status = ((PMICGLINK_TAD_CWS_INBUF*)InputBuffer)->TimerId;
-        return STATUS_SUCCESS;
+        timerId = ((const PMICGLINK_TAD_CWS_INBUF*)InputBuffer)->TimerId;
+        RtlZeroMemory(tadRequest, sizeof(tadRequest));
+        RtlCopyMemory(tadRequest, &header, sizeof(header));
+        RtlCopyMemory(tadRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        RtlCopyMemory(tadRequest + 12, &timerId, sizeof(timerId));
+        return PmicGlink_SendData(Context, 97u, tadRequest, sizeof(tadRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_TAD_STP:
+    {
+        UCHAR tadRequest[20];
+        const ULONGLONG header = 0x100008010ull;
+        const ULONG messageOp = 98u;
+        const PMICGLINK_TAD_STP_INBUF* request;
+
         if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_STP_INBUF)))
         {
             return STATUS_INVALID_PARAMETER;
         }
 
-        Context->stp_out.Status = ((PMICGLINK_TAD_STP_INBUF*)InputBuffer)->PolicyValue;
-        return STATUS_SUCCESS;
+        request = (const PMICGLINK_TAD_STP_INBUF*)InputBuffer;
+        RtlZeroMemory(tadRequest, sizeof(tadRequest));
+        RtlCopyMemory(tadRequest, &header, sizeof(header));
+        RtlCopyMemory(tadRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        RtlCopyMemory(tadRequest + 12, &request->TimerId, sizeof(request->TimerId));
+        RtlCopyMemory(tadRequest + 16, &request->PolicyValue, sizeof(request->PolicyValue));
+        return PmicGlink_SendData(Context, 98u, tadRequest, sizeof(tadRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_TAD_STV:
+    {
+        UCHAR tadRequest[20];
+        const ULONGLONG header = 0x100008010ull;
+        const ULONG messageOp = 99u;
+        const PMICGLINK_TAD_STV_INBUF* request;
+
         if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_STV_INBUF)))
         {
             return STATUS_INVALID_PARAMETER;
         }
 
-        Context->stv_out.Status = ((PMICGLINK_TAD_STV_INBUF*)InputBuffer)->TimerValue;
-        return STATUS_SUCCESS;
+        request = (const PMICGLINK_TAD_STV_INBUF*)InputBuffer;
+        RtlZeroMemory(tadRequest, sizeof(tadRequest));
+        RtlCopyMemory(tadRequest, &header, sizeof(header));
+        RtlCopyMemory(tadRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        RtlCopyMemory(tadRequest + 12, &request->TimerId, sizeof(request->TimerId));
+        RtlCopyMemory(tadRequest + 16, &request->TimerValue, sizeof(request->TimerValue));
+        return PmicGlink_SendData(Context, 99u, tadRequest, sizeof(tadRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_TAD_TIP:
+    {
+        UCHAR tadRequest[16];
+        const ULONGLONG header = 0x100008010ull;
+        const ULONG messageOp = 100u;
+        ULONG timerId;
+
         if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_TIP_INBUF)))
         {
             return STATUS_INVALID_PARAMETER;
         }
 
-        Context->tip_out.PolicySetting = ((PMICGLINK_TAD_TIP_INBUF*)InputBuffer)->TimerId;
-        return STATUS_SUCCESS;
+        timerId = ((const PMICGLINK_TAD_TIP_INBUF*)InputBuffer)->TimerId;
+        RtlZeroMemory(tadRequest, sizeof(tadRequest));
+        RtlCopyMemory(tadRequest, &header, sizeof(header));
+        RtlCopyMemory(tadRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        RtlCopyMemory(tadRequest + 12, &timerId, sizeof(timerId));
+        return PmicGlink_SendData(Context, 100u, tadRequest, sizeof(tadRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_TAD_TIV:
+    {
+        UCHAR tadRequest[16];
+        const ULONGLONG header = 0x100008010ull;
+        const ULONG messageOp = 101u;
+        ULONG timerId;
+
         if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_TAD_TIV_INBUF)))
         {
             return STATUS_INVALID_PARAMETER;
         }
 
-        Context->tiv_out.TimerValueRemain = ((PMICGLINK_TAD_TIV_INBUF*)InputBuffer)->TimerId;
-        return STATUS_SUCCESS;
+        timerId = ((const PMICGLINK_TAD_TIV_INBUF*)InputBuffer)->TimerId;
+        RtlZeroMemory(tadRequest, sizeof(tadRequest));
+        RtlCopyMemory(tadRequest, &header, sizeof(header));
+        RtlCopyMemory(tadRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        RtlCopyMemory(tadRequest + 12, &timerId, sizeof(timerId));
+        return PmicGlink_SendData(Context, 101u, tadRequest, sizeof(tadRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_I2C_WRITE:
-        if ((InputBuffer == NULL) || (InputBufferSize < PMICGLINK_I2C_HEADER_SIZE))
+    case IOCTL_PMICGLINK_I2C_READ:
+    {
+        UCHAR i2cRequest[100];
+        const ULONGLONG header = 0x10000800Eull;
+        const ULONG messageOp = 79u;
+        ULONG busId;
+        ULONG transferType;
+        ULONG readWriteFlag;
+        ULONG deviceAddress;
+        ULONG registerOffset;
+        ULONG transferLength;
+
+        if (InputBuffer == NULL)
         {
             return STATUS_INVALID_PARAMETER;
         }
 
-        if ((InputBuffer[1] & 0x1u) == 0x1u)
+        busId = (ULONG)InputBuffer[0];
+        transferType = (ULONG)((InputBuffer[1] >> 1) & 0x7Bu);
+        readWriteFlag = (ULONG)(InputBuffer[1] & 0x1u);
+        deviceAddress = (ULONG)InputBuffer[2] | ((ULONG)InputBuffer[3] << 8);
+        registerOffset = (ULONG)InputBuffer[4];
+        transferLength = (ULONG)InputBuffer[5];
+
+        if ((deviceAddress == 0u) || (registerOffset == 0u) || (transferLength == 0u))
         {
-            RtlCopyMemory(Context->I2CHeader, InputBuffer, PMICGLINK_I2C_HEADER_SIZE);
-            Context->I2CDataLength = 0;
+            return STATUS_INVALID_PARAMETER;
         }
-        else
+
+        if ((readWriteFlag == 0u) && (InputBufferSize < (PMICGLINK_I2C_HEADER_SIZE + transferLength)))
         {
-            ULONG payloadLength;
+            return STATUS_INVALID_PARAMETER;
+        }
 
-            payloadLength = (ULONG)(InputBuffer[1] >> 1);
-            if (payloadLength > PMICGLINK_I2C_DATA_SIZE)
-            {
-                payloadLength = PMICGLINK_I2C_DATA_SIZE;
-            }
+        RtlZeroMemory(i2cRequest, sizeof(i2cRequest));
+        RtlCopyMemory(i2cRequest, &header, sizeof(header));
+        RtlCopyMemory(i2cRequest + sizeof(header), &messageOp, sizeof(messageOp));
+        RtlCopyMemory(i2cRequest + 12, &busId, sizeof(busId));
+        RtlCopyMemory(i2cRequest + 16, &transferType, sizeof(transferType));
+        RtlCopyMemory(i2cRequest + 20, &readWriteFlag, sizeof(readWriteFlag));
+        RtlCopyMemory(i2cRequest + 24, &deviceAddress, sizeof(deviceAddress));
+        RtlCopyMemory(i2cRequest + 28, &registerOffset, sizeof(registerOffset));
+        RtlCopyMemory(i2cRequest + 32, &transferLength, sizeof(transferLength));
 
-            if (InputBufferSize < PMICGLINK_I2C_HEADER_SIZE + payloadLength)
-            {
-                return STATUS_INVALID_PARAMETER;
-            }
+        if (readWriteFlag == 0u)
+        {
+            SIZE_T safeCopyLength;
 
-            Context->I2CDataLength = payloadLength;
+            safeCopyLength = (transferLength <= PMICGLINK_I2C_DATA_SIZE)
+                ? (SIZE_T)transferLength
+                : PMICGLINK_I2C_DATA_SIZE;
+            RtlCopyMemory(i2cRequest + 36, InputBuffer + PMICGLINK_I2C_HEADER_SIZE, safeCopyLength);
+
+            // Keep local fallback payload for compatibility when no RX frame is delivered.
+            Context->I2CDataLength = (ULONG)safeCopyLength;
             RtlZeroMemory(Context->I2CData, sizeof(Context->I2CData));
-            RtlCopyMemory(Context->I2CData, InputBuffer + PMICGLINK_I2C_HEADER_SIZE, payloadLength);
+            RtlCopyMemory(Context->I2CData, InputBuffer + PMICGLINK_I2C_HEADER_SIZE, safeCopyLength);
         }
 
-        return STATUS_SUCCESS;
-
-    case IOCTL_PMICGLINK_I2C_READ:
-        if (Context->I2CHeader[0] == 0)
-        {
-            return STATUS_UNSUCCESSFUL;
-        }
-
-        if (Context->I2CDataLength == 0)
-        {
-            Context->I2CDataLength = 1;
-            Context->I2CData[0] = 0;
-        }
-
-        return STATUS_SUCCESS;
+        return PmicGlink_SendData(Context, 79u, i2cRequest, sizeof(i2cRequest), TRUE);
+    }
 
     case IOCTL_PMICGLINK_PRESHUTDOWN_CMD:
         if ((InputBuffer == NULL) || (InputBufferSize < sizeof(PMICGLINK_PRESHUTDOWN_CMD_INBUF)))
@@ -2095,13 +2417,56 @@ PmicGlink_SyncSendReceive(
             ((PMICGLINK_PRESHUTDOWN_CMD_INBUF*)InputBuffer)->CmdBitMask);
 
     case IOCTL_BATTMNGR_GET_BATT_ID:
-        return STATUS_SUCCESS;
+    {
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+        } battIdRequest;
+
+        battIdRequest.Header = 0x10000800Aull;
+        battIdRequest.MessageOp = 0u;
+        return PmicGlink_SendData(Context, 0u, &battIdRequest, sizeof(battIdRequest), TRUE);
+    }
 
     case IOCTL_BATTMNGR_GET_CHARGER_STATUS:
-        return STATUS_SUCCESS;
+    {
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+            ULONG BatteryId;
+        } chgStatusRequest;
+
+        chgStatusRequest.Header = 0x10000800Aull;
+        chgStatusRequest.MessageOp = 1u;
+        chgStatusRequest.BatteryId = 0u;
+        return PmicGlink_SendData(Context, 1u, &chgStatusRequest, sizeof(chgStatusRequest), TRUE);
+    }
 
     case IOCTL_BATTMNGR_GET_BATT_INFO:
-        return STATUS_SUCCESS;
+    {
+        const BATT_MNGR_GET_BATT_INFO* battInfoIn;
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+            ULONG BatteryId;
+            ULONG RateOfDrain;
+        } battInfoRequest;
+
+        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(BATT_MNGR_GET_BATT_INFO)))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        battInfoIn = (const BATT_MNGR_GET_BATT_INFO*)InputBuffer;
+        battInfoRequest.Header = 0x10000800Aull;
+        battInfoRequest.MessageOp = 9u;
+        battInfoRequest.BatteryId = battInfoIn->batt_id;
+        battInfoRequest.RateOfDrain = battInfoIn->rate_of_drain;
+        return PmicGlink_SendData(Context, 9u, &battInfoRequest, sizeof(battInfoRequest), TRUE);
+    }
 
     case IOCTL_BATTMNGR_CONTROL_CHARGING:
         if ((InputBuffer == NULL) || (InputBufferSize < sizeof(BATT_MNGR_CONTROL_CHARGING)))
@@ -2118,6 +2483,14 @@ PmicGlink_SyncSendReceive(
     case IOCTL_BATTMNGR_SET_STATUS_CRITERIA:
     {
         const BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA* request;
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+            ULONG HighCapacity;
+            ULONG LowCapacity;
+            ULONG PowerState;
+        } statusCriteriaRequest;
 
         if ((InputBuffer == NULL)
             || (InputBufferSize < sizeof(BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA)))
@@ -2140,37 +2513,98 @@ PmicGlink_SyncSendReceive(
             // In this WDK-only rewrite, mark one pending status poll after criteria update.
             Context->LegacyStatusNotificationPending = TRUE;
             PmicGlinkNotify_PingBattMiniClass(Context);
+
+            statusCriteriaRequest.Header = 0x10000800Aull;
+            statusCriteriaRequest.MessageOp = 4u;
+            statusCriteriaRequest.HighCapacity = request->batt_notify_criteria.high_capacity;
+            statusCriteriaRequest.LowCapacity = request->batt_notify_criteria.low_capacity;
+            statusCriteriaRequest.PowerState = request->batt_notify_criteria.power_state;
+            return PmicGlink_SendData(Context, 4u, &statusCriteriaRequest, sizeof(statusCriteriaRequest), TRUE);
         }
 
         return STATUS_SUCCESS;
     }
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT:
-        return STATUS_SUCCESS;
+    {
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+        } battPresentRequest;
+
+        battPresentRequest.Header = 0x10000800Aull;
+        battPresentRequest.MessageOp = 5u;
+        return PmicGlink_SendData(Context, 5u, &battPresentRequest, sizeof(battPresentRequest), TRUE);
+    }
 
     case IOCTL_BATTMNGR_SET_OPERATION_MODE:
-        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(BATT_MNGR_SET_OPERATIONAL_MODE)))
+    {
+        const BATT_MNGR_SET_OPERATIONAL_MODE* modeRequest;
+        struct
         {
-            RtlCopyMemory(
-                &Context->LegacyOperationalMode,
-                InputBuffer,
-                sizeof(BATT_MNGR_SET_OPERATIONAL_MODE));
+            ULONGLONG Header;
+            ULONG MessageOp;
+            ULONG OperationalMode;
+        } setModeRequest;
+
+        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(BATT_MNGR_SET_OPERATIONAL_MODE)))
+        {
+            return STATUS_INVALID_PARAMETER;
         }
-        return STATUS_SUCCESS;
+
+        modeRequest = (const BATT_MNGR_SET_OPERATIONAL_MODE*)InputBuffer;
+        RtlCopyMemory(
+            &Context->LegacyOperationalMode,
+            InputBuffer,
+            sizeof(BATT_MNGR_SET_OPERATIONAL_MODE));
+
+        setModeRequest.Header = 0x10000800Aull;
+        setModeRequest.MessageOp = 3u;
+        setModeRequest.OperationalMode = modeRequest->mode_type;
+        return PmicGlink_SendData(Context, 3u, &setModeRequest, sizeof(setModeRequest), TRUE);
+    }
 
     case IOCTL_BATTMNGR_SET_CHARGE_RATE:
+    {
+        const BATT_MNGR_SET_CHARGE_RATE* chargeRateRequest;
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+            ULONG BatteryId;
+            ULONG ChargeRate;
+            ULONG ChargingPath;
+        } setChargeRateRequest;
+
         if ((InputBuffer == NULL) || (InputBufferSize < sizeof(BATT_MNGR_SET_CHARGE_RATE)))
         {
             return STATUS_INVALID_PARAMETER;
         }
 
+        chargeRateRequest = (const BATT_MNGR_SET_CHARGE_RATE*)InputBuffer;
         RtlCopyMemory(
             &Context->LegacyChargeRate,
             InputBuffer,
             sizeof(BATT_MNGR_SET_CHARGE_RATE));
-        return STATUS_SUCCESS;
+
+        setChargeRateRequest.Header = 0x10000800Aull;
+        setChargeRateRequest.MessageOp = 6u;
+        setChargeRateRequest.BatteryId = 0u;
+        setChargeRateRequest.ChargeRate = chargeRateRequest->charge_perc;
+        setChargeRateRequest.ChargingPath = chargeRateRequest->device_name;
+        return PmicGlink_SendData(Context, 6u, &setChargeRateRequest, sizeof(setChargeRateRequest), TRUE);
+    }
 
     case IOCTL_BATTMNGR_GET_TEST_INFO:
+    {
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+            ULONG RequestType;
+        } genericTestInfoRequest;
+
         RtlZeroMemory(&Context->LegacyTestInfo, sizeof(Context->LegacyTestInfo));
         if (InputBuffer != NULL)
         {
@@ -2185,14 +2619,41 @@ PmicGlink_SyncSendReceive(
                 InputBuffer,
                 copySize);
         }
-        return STATUS_SUCCESS;
+
+        genericTestInfoRequest.Header = 0x10000800Aull;
+        genericTestInfoRequest.MessageOp = 32u;
+        genericTestInfoRequest.RequestType = (InputBufferSize >= sizeof(ULONG)) ? *(ULONG*)InputBuffer : 0u;
+        return PmicGlink_SendData(Context, 32u, &genericTestInfoRequest, sizeof(genericTestInfoRequest), TRUE);
+    }
 
     case IOCTL_BATTMNGR_ENABLE_CHARGE_LIMIT:
+    {
+        struct
+        {
+            ULONGLONG Header;
+            ULONG MessageOp;
+            ULONG Enable;
+            ULONG TargetSoc;
+            ULONG DeltaSoc;
+        } chargeLimitRequest;
+
         if (!Context->GlinkChannelConnected)
         {
             return STATUS_UNSUCCESSFUL;
         }
-        return STATUS_SUCCESS;
+
+        if ((InputBuffer == NULL) || (InputBufferSize < (sizeof(ULONG) * 3u)))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        chargeLimitRequest.Header = 0x10000800Aull;
+        chargeLimitRequest.MessageOp = 72u;
+        chargeLimitRequest.Enable = ((ULONG*)InputBuffer)[0];
+        chargeLimitRequest.TargetSoc = ((ULONG*)InputBuffer)[1];
+        chargeLimitRequest.DeltaSoc = ((ULONG*)InputBuffer)[2];
+        return PmicGlink_SendData(Context, 72u, &chargeLimitRequest, sizeof(chargeLimitRequest), TRUE);
+    }
 
     default:
         return STATUS_NOT_SUPPORTED;
@@ -5714,30 +6175,319 @@ PmicGlink_RetrieveRxData(
     _In_ SIZE_T BufferSize
     )
 {
+    ULONG opCode;
+    NTSTATUS status;
+
     if ((Context == NULL) || (Buffer == NULL) || (BufferSize == 0))
     {
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (BufferSize >= sizeof(Context->LastUsbcNotification.AsUINT8))
+    status = STATUS_SUCCESS;
+    if (BufferSize < (sizeof(ULONGLONG) + sizeof(ULONG)))
     {
-        RtlCopyMemory(
-            Context->LastUsbcNotification.AsUINT8,
-            Buffer,
-            sizeof(Context->LastUsbcNotification.AsUINT8));
-        Context->PendingPan = (UCHAR)Context->LastUsbcNotification.detail.common.port_index;
+        if (BufferSize >= sizeof(Context->LastUsbcNotification.AsUINT8))
+        {
+            RtlCopyMemory(
+                Context->LastUsbcNotification.AsUINT8,
+                Buffer,
+                sizeof(Context->LastUsbcNotification.AsUINT8));
+            Context->PendingPan = (UCHAR)Context->LastUsbcNotification.detail.common.port_index;
+        }
+        else
+        {
+            SIZE_T copySize;
+
+            copySize = (BufferSize < sizeof(Context->OemReceivedData))
+                ? BufferSize
+                : sizeof(Context->OemReceivedData);
+            RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
+            RtlCopyMemory(Context->OemReceivedData, Buffer, copySize);
+        }
+
+        return STATUS_SUCCESS;
     }
-    else
+
+    RtlCopyMemory(&opCode, Buffer + sizeof(ULONGLONG), sizeof(opCode));
+    switch (opCode)
     {
-        SIZE_T copySize;
+    case 0u:
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&Context->LegacyBattId.batt_id, Buffer + 12, sizeof(Context->LegacyBattId.batt_id));
+        }
+        break;
 
-        copySize = (BufferSize < sizeof(Context->OemReceivedData))
-            ? BufferSize
-            : sizeof(Context->OemReceivedData);
-        RtlCopyMemory(Context->OemReceivedData, Buffer, copySize);
+    case 1u:
+        if (BufferSize >= 40u)
+        {
+            RtlCopyMemory(&Context->LegacyChargeStatus.capacity, Buffer + 16, sizeof(Context->LegacyChargeStatus.capacity));
+            RtlCopyMemory(&Context->LegacyChargeStatus.rate, Buffer + 20, sizeof(Context->LegacyChargeStatus.rate));
+            RtlCopyMemory(&Context->LegacyChargeStatus.voltage, Buffer + 24, sizeof(Context->LegacyChargeStatus.voltage));
+            RtlCopyMemory(&Context->LegacyChargeStatus.power_state, Buffer + 28, sizeof(Context->LegacyChargeStatus.power_state));
+            RtlCopyMemory(&Context->LegacyBattTemperature, Buffer + 36, sizeof(Context->LegacyBattTemperature));
+        }
+        break;
+
+    case 3u:
+    case 4u:
+    case 5u:
+    case 6u:
+    case 72u:
+    {
+        ULONG fwStatus;
+
+        if (BufferSize < 16u)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
+        status = (fwStatus == 0u) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+        break;
     }
 
-    return STATUS_SUCCESS;
+    case 9u:
+        if (BufferSize >= 740u)
+        {
+            RtlCopyMemory(&Context->LegacyBattInfo.designed_capacity, Buffer + 16, sizeof(Context->LegacyBattInfo.designed_capacity));
+            RtlCopyMemory(&Context->LegacyBattInfo.full_charged_capacity, Buffer + 20, sizeof(Context->LegacyBattInfo.full_charged_capacity));
+            RtlCopyMemory(&Context->LegacyBattInfo.default_alert2, Buffer + 32, sizeof(Context->LegacyBattInfo.default_alert2));
+            RtlCopyMemory(&Context->LegacyBattInfo.default_alert1, Buffer + 36, sizeof(Context->LegacyBattInfo.default_alert1));
+            RtlCopyMemory(&Context->LegacyBattInfo.cycle_count, Buffer + 40, sizeof(Context->LegacyBattInfo.cycle_count));
+            RtlCopyMemory(&Context->LegacyBattInfo.capabilities, Buffer + 76, sizeof(Context->LegacyBattInfo.capabilities));
+            RtlCopyMemory(&Context->LegacyBattInfo.chemistry, Buffer + 592, sizeof(Context->LegacyBattInfo.chemistry));
+            RtlCopyMemory(&Context->LegacyBattInfo.critical_bias, Buffer + 724, sizeof(Context->LegacyBattInfo.critical_bias));
+            RtlCopyMemory(&Context->LegacyBattEstimatedTime, Buffer + 736, sizeof(Context->LegacyBattEstimatedTime));
+            Context->LegacyBattInfo.technology = *(Buffer + 24);
+
+            Context->LegacyBattManufactureDate.day = *(Buffer + 728);
+            Context->LegacyBattManufactureDate.month = *(Buffer + 729);
+            RtlCopyMemory(&Context->LegacyBattManufactureDate.year, Buffer + 730, sizeof(Context->LegacyBattManufactureDate.year));
+
+            Context->LegacyReportingScale[0].capacity = Context->LegacyBattInfo.designed_capacity;
+            RtlCopyMemory(
+                &Context->LegacyReportingScale[0].granularity,
+                Buffer + 64,
+                sizeof(Context->LegacyReportingScale[0].granularity));
+        }
+        break;
+
+    case 17u:
+        if (BufferSize >= (12u + PMICGLINK_UCSI_BUFFER_SIZE))
+        {
+            RtlCopyMemory(Context->UCSIDataBuffer, Buffer + 12, PMICGLINK_UCSI_BUFFER_SIZE);
+        }
+        break;
+
+    case 32u:
+    {
+        ULONG fwStatus;
+
+        if (BufferSize < 20u)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
+        if (fwStatus == 0u)
+        {
+            SIZE_T copySize;
+
+            copySize = BufferSize - 20u;
+            if (copySize > sizeof(Context->LegacyTestInfo.data))
+            {
+                copySize = sizeof(Context->LegacyTestInfo.data);
+            }
+
+            RtlZeroMemory(&Context->LegacyTestInfo, sizeof(Context->LegacyTestInfo));
+            RtlCopyMemory(Context->LegacyTestInfo.data, Buffer + 20, copySize);
+            status = STATUS_SUCCESS;
+        }
+        else if (fwStatus == 1u)
+        {
+            status = STATUS_UNSUCCESSFUL;
+        }
+        else
+        {
+            status = STATUS_NOT_SUPPORTED;
+        }
+        break;
+    }
+
+    case 73u:
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&Context->NumPorts, Buffer + 12, sizeof(Context->NumPorts));
+        }
+        break;
+
+    case 74u:
+        if (BufferSize >= 44u)
+        {
+            ULONG voltage[PMICGLINK_MAX_PORTS];
+            ULONG current[PMICGLINK_MAX_PORTS];
+            ULONG index;
+
+            RtlCopyMemory(voltage, Buffer + 12, sizeof(voltage));
+            RtlCopyMemory(current, Buffer + 28, sizeof(current));
+            for (index = 0; index < PMICGLINK_MAX_PORTS; index++)
+            {
+                Context->UsbinPower[index] = (LONG)((current[index] * voltage[index]) / 1000u);
+            }
+        }
+        break;
+
+    case 79u:
+        if (BufferSize >= 16u)
+        {
+            ULONG dataLength;
+            SIZE_T copySize;
+
+            RtlCopyMemory(&dataLength, Buffer + 12, sizeof(dataLength));
+            copySize = (dataLength <= PMICGLINK_I2C_DATA_SIZE)
+                ? (SIZE_T)dataLength
+                : PMICGLINK_I2C_DATA_SIZE;
+            if (BufferSize >= (16u + copySize))
+            {
+                Context->I2CDataLength = (ULONG)copySize;
+                RtlZeroMemory(Context->I2CData, sizeof(Context->I2CData));
+                RtlCopyMemory(Context->I2CData, Buffer + 16, copySize);
+            }
+        }
+        break;
+
+    case 82u:
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&Context->PlatformState, Buffer + 12, sizeof(UCHAR));
+        }
+        break;
+
+    case 96u:
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&Context->gws_out.AlarmStatus, Buffer + 12, sizeof(Context->gws_out.AlarmStatus));
+        }
+        break;
+
+    case 97u:
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&Context->cws_out.Status, Buffer + 12, sizeof(Context->cws_out.Status));
+        }
+        break;
+
+    case 98u:
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&Context->stp_out.Status, Buffer + 12, sizeof(Context->stp_out.Status));
+        }
+        break;
+
+    case 99u:
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&Context->stv_out.Status, Buffer + 12, sizeof(Context->stv_out.Status));
+        }
+        break;
+
+    case 100u:
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&Context->tip_out.PolicySetting, Buffer + 12, sizeof(Context->tip_out.PolicySetting));
+        }
+        break;
+
+    case 101u:
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&Context->tiv_out.TimerValueRemain, Buffer + 12, sizeof(Context->tiv_out.TimerValueRemain));
+        }
+        break;
+
+    case 128u:
+        if (BufferSize >= 44u)
+        {
+            RtlCopyMemory(&Context->QcmbStatus, Buffer + 16, sizeof(Context->QcmbStatus));
+            RtlCopyMemory(&Context->QcmbCurrentChargerPowerUW, Buffer + 28, sizeof(Context->QcmbCurrentChargerPowerUW));
+            RtlCopyMemory(&Context->QcmbGoodChargerThresholdUW, Buffer + 32, sizeof(Context->QcmbGoodChargerThresholdUW));
+            RtlCopyMemory(&Context->QcmbChargerStatusInfo, Buffer + 36, sizeof(Context->QcmbChargerStatusInfo));
+            KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
+        }
+        break;
+
+    case 129u:
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&Context->QcmbStatus, Buffer + 12, sizeof(Context->QcmbStatus));
+            Context->QcmbConnected = ((Context->QcmbStatus & 1u) != 0u) ? TRUE : FALSE;
+            KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
+        }
+        break;
+
+    case 257u:
+        if (BufferSize >= 16u + sizeof(Context->OemPropData))
+        {
+            RtlCopyMemory(Context->OemPropData, Buffer + 16, sizeof(Context->OemPropData));
+        }
+        break;
+
+    case 258u:
+    {
+        ULONG fwStatus;
+
+        if (BufferSize < 16u)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
+        status = (fwStatus == 0u) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+        break;
+    }
+
+    case 260u:
+        if (BufferSize >= 16u)
+        {
+            ULONG dataLength;
+            SIZE_T copySize;
+
+            RtlCopyMemory(&dataLength, Buffer + 12, sizeof(dataLength));
+            copySize = (dataLength <= PMICGLINK_OEM_BUFFER_SIZE)
+                ? (SIZE_T)dataLength
+                : PMICGLINK_OEM_BUFFER_SIZE;
+            if (BufferSize >= (16u + copySize))
+            {
+                RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
+                RtlCopyMemory(Context->OemReceivedData, Buffer + 16, copySize);
+            }
+        }
+        break;
+
+    default:
+        if (BufferSize >= sizeof(Context->LastUsbcNotification.AsUINT8))
+        {
+            RtlCopyMemory(
+                Context->LastUsbcNotification.AsUINT8,
+                Buffer,
+                sizeof(Context->LastUsbcNotification.AsUINT8));
+            Context->PendingPan = (UCHAR)Context->LastUsbcNotification.detail.common.port_index;
+        }
+        else
+        {
+            SIZE_T copySize;
+
+            copySize = (BufferSize < sizeof(Context->OemReceivedData))
+                ? BufferSize
+                : sizeof(Context->OemReceivedData);
+            RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
+            RtlCopyMemory(Context->OemReceivedData, Buffer, copySize);
+        }
+        break;
+    }
+
+    return status;
 }
 
 BOOLEAN
