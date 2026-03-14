@@ -1855,7 +1855,7 @@ PmicGlinkRegisterInterfaceWorkItem(
         RtlZeroMemory(&context->LastUsbcNotification, sizeof(context->LastUsbcNotification));
         RtlZeroMemory(&context->LastUsbcWriteRequest, sizeof(context->LastUsbcWriteRequest));
 
-        if (firstConnect)
+        if (firstConnect && (context->UsbcPinAssignmentNotifyEn != 0))
         {
             RtlZeroMemory(&request, sizeof(request));
             request.cmd_type = 16u;
