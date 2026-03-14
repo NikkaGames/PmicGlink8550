@@ -175,7 +175,24 @@ static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 #define PMICGLINK_POOLTAG_CRASHDUMP 'DmGP'
 #define PMICGLINK_CRASHDUMP_STALE_FILE_OBJECT ((WDFFILEOBJECT)(ULONG_PTR)-1)
 #define PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE 0x800A2008u
+#define PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS 0x800A0FB0u
 #define PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS (-100000000ll)
+#define PMICGLINK_ABD_IOCTL_REGISTER_CONNECTION 0xC3502FA4u
+#define PMICGLINK_ABD_IOCTL_UNREGISTER_CONNECTION 0xC3502FA8u
+
+typedef struct _PMICGLINK_ABD_CONNECTION_ENTRY
+{
+    GUID InterfaceClassGuid;
+    USHORT ConnectionType;
+    USHORT Reserved;
+    ULONG PrimaryIoctl;
+    ULONG SecondaryIoctl;
+    ULONG MessageOpcode;
+} PMICGLINK_ABD_CONNECTION_ENTRY;
+
+C_ASSERT(sizeof(PMICGLINK_ABD_CONNECTION_ENTRY) == 32);
+
+static PMICGLINK_ABD_CONNECTION_ENTRY gPmicGlinkAbdConnections[4];
 
 typedef struct _PMICGLINK_USBC_WRITE_REQ_MESSAGE
 {
@@ -224,6 +241,8 @@ static VOID PmicGlinkPlatformUsbc_AcpiNotificationHandler(_In_opt_ PVOID Context
 static VOID PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
+static NTSTATUS PmicGlinkAbdUpdateConnections(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN Register);
+static VOID PmicGlinkInitAbdConnections(VOID);
 static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
@@ -926,6 +945,11 @@ RegisterDeviceInterfaces(
 
     if (!Register)
     {
+        if (context->ABDAttached && (context->AbdIoTarget != NULL))
+        {
+            (VOID)PmicGlinkAbdUpdateConnections(context, FALSE);
+        }
+
         context->DdiInterface.PmicGlinkUCSIAlertCallback = NULL;
         context->DeviceInterfacesRegistered = FALSE;
         return STATUS_SUCCESS;
@@ -972,6 +996,15 @@ RegisterDeviceInterfaces(
     if (!NT_SUCCESS(status))
     {
         return status;
+    }
+
+    if (context->ABDAttached && (context->AbdIoTarget != NULL))
+    {
+        status = PmicGlinkAbdUpdateConnections(context, TRUE);
+        if (!NT_SUCCESS(status))
+        {
+            return status;
+        }
     }
 
     context->DeviceInterfacesRegistered = TRUE;
@@ -1144,7 +1177,53 @@ PmicGlinkInterfaceNotificationCallback(
 
     if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_ABD_DEVINTERFACE, sizeof(GUID)) == sizeof(GUID))
     {
-        deviceContext->ABDAttached = arrival;
+        if (arrival)
+        {
+            status = STATUS_SUCCESS;
+            if (!deviceContext->ABDAttached)
+            {
+                if (deviceContext->AbdIoTarget == NULL)
+                {
+                    status = WdfIoTargetCreate(
+                        deviceContext->Device,
+                        WDF_NO_OBJECT_ATTRIBUTES,
+                        &deviceContext->AbdIoTarget);
+                }
+
+                if (NT_SUCCESS(status) && (deviceContext->AbdIoTarget != NULL))
+                {
+                    WDF_IO_TARGET_OPEN_PARAMS openParams;
+
+                    WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
+                        &openParams,
+                        (PUNICODE_STRING)&notification->SymbolicLinkName,
+                        GENERIC_READ | GENERIC_WRITE);
+                    openParams.ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE;
+                    status = WdfIoTargetOpen(deviceContext->AbdIoTarget, &openParams);
+                    if (NT_SUCCESS(status))
+                    {
+                        deviceContext->ABDAttached = TRUE;
+                        status = PmicGlinkAbdUpdateConnections(deviceContext, TRUE);
+                        if (!NT_SUCCESS(status))
+                        {
+                            WdfIoTargetClose(deviceContext->AbdIoTarget);
+                            deviceContext->ABDAttached = FALSE;
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            if (deviceContext->ABDAttached && (deviceContext->AbdIoTarget != NULL))
+            {
+                (VOID)PmicGlinkAbdUpdateConnections(deviceContext, FALSE);
+                WdfIoTargetClose(deviceContext->AbdIoTarget);
+            }
+
+            deviceContext->ABDAttached = FALSE;
+        }
+
         deviceContext->AllReqIntfArrived = (deviceContext->GlinkDeviceLoaded && deviceContext->ABDAttached) ? TRUE : FALSE;
         return STATUS_SUCCESS;
     }
@@ -1238,6 +1317,13 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             (VOID)IoUnregisterPlugPlayNotification(Context->AbdNotificationEntry);
             Context->AbdNotificationEntry = NULL;
         }
+
+        if (Context->ABDAttached && (Context->AbdIoTarget != NULL))
+        {
+            (VOID)PmicGlinkAbdUpdateConnections(Context, FALSE);
+            WdfIoTargetClose(Context->AbdIoTarget);
+        }
+        Context->ABDAttached = FALSE;
 
         if (Context->BattMiniNotificationEntry != NULL)
         {
@@ -1555,10 +1641,13 @@ PmicGlinkDevice_InitContext(
     Context->ModernStandbyCallbackHandle = NULL;
     Context->GlinkNotificationEntry = NULL;
     Context->AbdNotificationEntry = NULL;
+    Context->AbdIoTarget = NULL;
     Context->BattMiniNotificationEntry = NULL;
     Context->BattMiniNotifyLock = NULL;
     Context->BattMiniIoTarget = NULL;
     Context->BattMiniDeviceLoaded = FALSE;
+
+    PmicGlinkInitAbdConnections();
 
     Context->DdiInterfaceRefCount = 0;
     Context->DdiInterfacePadding = 0;
@@ -2737,6 +2826,38 @@ PmicGlinkNotify_PingBattMiniClass(
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 1);
 }
 
+static VOID
+PmicGlinkInitAbdConnections(
+    VOID
+    )
+{
+    RtlZeroMemory(gPmicGlinkAbdConnections, sizeof(gPmicGlinkAbdConnections));
+
+    gPmicGlinkAbdConnections[0].InterfaceClassGuid = GUID_DEVINTERFACE_PMICGLINK;
+    gPmicGlinkAbdConnections[0].ConnectionType = 3;
+    gPmicGlinkAbdConnections[0].PrimaryIoctl = IOCTL_PMICGLINK_ABD_UCSI_READ_LEGACY;
+    gPmicGlinkAbdConnections[0].SecondaryIoctl = IOCTL_PMICGLINK_ABD_UCSI_WRITE_LEGACY;
+    gPmicGlinkAbdConnections[0].MessageOpcode = 56;
+
+    gPmicGlinkAbdConnections[1].InterfaceClassGuid = GUID_DEVINTERFACE_BATT_MNGR;
+    gPmicGlinkAbdConnections[1].ConnectionType = 4;
+    gPmicGlinkAbdConnections[1].PrimaryIoctl = IOCTL_PMICGLINK_OEM_READ_BUFFER;
+    gPmicGlinkAbdConnections[1].SecondaryIoctl = IOCTL_PMICGLINK_OEM_WRITE_BUFFER;
+    gPmicGlinkAbdConnections[1].MessageOpcode = 74;
+
+    gPmicGlinkAbdConnections[2].InterfaceClassGuid = GUID_DEVINTERFACE_PMICGLINK;
+    gPmicGlinkAbdConnections[2].ConnectionType = 6;
+    gPmicGlinkAbdConnections[2].PrimaryIoctl = IOCTL_PMICGLINK_I2C_READ;
+    gPmicGlinkAbdConnections[2].SecondaryIoctl = IOCTL_PMICGLINK_I2C_WRITE;
+    gPmicGlinkAbdConnections[2].MessageOpcode = 78;
+
+    gPmicGlinkAbdConnections[3].InterfaceClassGuid = GUID_DEVINTERFACE_PMICGLINK;
+    gPmicGlinkAbdConnections[3].ConnectionType = 7;
+    gPmicGlinkAbdConnections[3].PrimaryIoctl = IOCTL_PMICGLINK_QCMB_GET_CHARGER_INFO;
+    gPmicGlinkAbdConnections[3].SecondaryIoctl = IOCTL_PMICGLINK_QCMB_GET_CHARGER_INFO;
+    gPmicGlinkAbdConnections[3].MessageOpcode = 20;
+}
+
 static NTSTATUS
 PmicGlinkSendDriverRequest(
     _In_ WDFIOTARGET IoTarget,
@@ -2830,6 +2951,53 @@ PmicGlinkSendDriverRequestWithTimeout(
         pOutputDescriptor,
         &requestOptions,
         (PULONG_PTR)BytesReturned);
+}
+
+static NTSTATUS
+PmicGlinkAbdUpdateConnections(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ BOOLEAN Register
+    )
+{
+    NTSTATUS status;
+    ULONG ioControlCode;
+    ULONG inputBufferSize;
+    ULONG index;
+
+    if ((Context == NULL) || (Context->AbdIoTarget == NULL) || !Context->ABDAttached)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    ioControlCode = Register
+        ? PMICGLINK_ABD_IOCTL_REGISTER_CONNECTION
+        : PMICGLINK_ABD_IOCTL_UNREGISTER_CONNECTION;
+    inputBufferSize = Register
+        ? (ULONG)sizeof(PMICGLINK_ABD_CONNECTION_ENTRY)
+        : (ULONG)sizeof(GUID);
+
+    status = STATUS_SUCCESS;
+    for (index = 0; index < RTL_NUMBER_OF(gPmicGlinkAbdConnections); index++)
+    {
+        NTSTATUS requestStatus;
+        SIZE_T bytesReturned;
+
+        bytesReturned = 0;
+        requestStatus = PmicGlinkSendDriverRequest(
+            Context->AbdIoTarget,
+            ioControlCode,
+            &gPmicGlinkAbdConnections[index],
+            inputBufferSize,
+            NULL,
+            0,
+            &bytesReturned);
+        if (!NT_SUCCESS(requestStatus) && NT_SUCCESS(status))
+        {
+            status = requestStatus;
+        }
+    }
+
+    return status;
 }
 
 static VOID
@@ -5516,6 +5684,47 @@ HandleLegacyBattMngrRequest(
             if (Context->BattMiniNotifyLock != NULL)
             {
                 WdfWaitLockRelease(Context->BattMiniNotifyLock);
+            }
+        }
+
+        if ((Context->LegacyStatusCriteria.batt_notify_criteria.high_capacity & 0xFFu) == 0x83u)
+        {
+            ULONG battMiniNotifyArgument;
+
+            battMiniNotifyArgument = Context->LegacyStatusCriteria.batt_notify_criteria.high_capacity >> 8;
+            PmicGlinkNotify_PingBattMiniClass(Context);
+            if (InterlockedExchange(&gPmicGlinkNotifyGo, 0) != 0)
+            {
+                if (Context->BattMiniNotifyLock != NULL)
+                {
+                    WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+                }
+
+                if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+                {
+                    SIZE_T notifyBytesReturned;
+                    NTSTATUS notifyStatus;
+
+                    notifyBytesReturned = 0;
+                    notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
+                        Context->BattMiniIoTarget,
+                        PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
+                        &battMiniNotifyArgument,
+                        sizeof(battMiniNotifyArgument),
+                        NULL,
+                        0,
+                        PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
+                        &notifyBytesReturned);
+                    if (NT_SUCCESS(notifyStatus))
+                    {
+                        Context->LegacyStatusNotificationPending = TRUE;
+                    }
+                }
+
+                if (Context->BattMiniNotifyLock != NULL)
+                {
+                    WdfWaitLockRelease(Context->BattMiniNotifyLock);
+                }
             }
         }
 

@@ -509,6 +509,7 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     PVOID ModernStandbyCallbackHandle;
     PVOID GlinkNotificationEntry;
     PVOID AbdNotificationEntry;
+    WDFIOTARGET AbdIoTarget;
     PVOID BattMiniNotificationEntry;
     WDFWAITLOCK BattMiniNotifyLock;
     WDFIOTARGET BattMiniIoTarget;
