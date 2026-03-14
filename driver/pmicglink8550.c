@@ -2064,6 +2064,11 @@ PmicGlink_SyncSendReceive(
             ULONG MessageOp;
         } ucsiReadRequest;
 
+        if (InputBuffer == NULL)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
         ucsiReadRequest.Header = 0x10000800Bull;
         ucsiReadRequest.MessageOp = 17u;
         return PmicGlink_SendData(Context, 17u, &ucsiReadRequest, sizeof(ucsiReadRequest), TRUE);
