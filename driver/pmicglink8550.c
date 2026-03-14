@@ -4474,6 +4474,7 @@ PmicGlinkUCSIReadBuffer(
     ULONG requestedLength;
     SIZE_T copyLength;
     USHORT* words;
+    UNREFERENCED_PARAMETER(OutputBufferSize);
 
     status = STATUS_SUCCESS;
     requestedLength = PMICGLINK_UCSI_BUFFER_SIZE;
@@ -4501,9 +4502,7 @@ PmicGlinkUCSIReadBuffer(
 
         if (requestedLength < PMICGLINK_UCSI_BUFFER_SIZE)
         {
-            copyLength = (requestedLength <= OutputBufferSize)
-                ? (SIZE_T)requestedLength
-                : OutputBufferSize;
+            copyLength = (SIZE_T)requestedLength;
             if (copyLength > 0)
             {
                 RtlZeroMemory(OutputBuffer, copyLength);
@@ -4511,16 +4510,7 @@ PmicGlinkUCSIReadBuffer(
         }
         else
         {
-            copyLength = PMICGLINK_UCSI_BUFFER_SIZE;
-            if (OutputBufferSize < copyLength)
-            {
-                copyLength = OutputBufferSize;
-            }
-
-            if (copyLength > 0)
-            {
-                RtlCopyMemory(OutputBuffer, Context->UCSIDataBuffer, copyLength);
-            }
+            RtlCopyMemory(OutputBuffer, Context->UCSIDataBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
         }
 
         *BytesReturned = requestedLength;
