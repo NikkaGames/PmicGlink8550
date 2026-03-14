@@ -2200,11 +2200,30 @@ PmicGlink_SendData(
 
     UNREFERENCED_PARAMETER(OpCode);
     status = STATUS_SUCCESS;
+    Context->NotificationFlag = FALSE;
 
     if (!WaitForRx)
     {
         (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
         return status;
+    }
+
+    waitCount = 0;
+    pollInterval.QuadPart = -200000ll;
+    while (waitCount < 5u)
+    {
+        if (Context->NotificationFlag)
+        {
+            break;
+        }
+
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
+        waitCount++;
+    }
+
+    if (!Context->NotificationFlag)
+    {
+        status = STATUS_TIMEOUT;
     }
 
     (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
@@ -7883,6 +7902,26 @@ PmicGlinkUlog_SendData(
     UNREFERENCED_PARAMETER(Buffer);
     UNREFERENCED_PARAMETER(BufferSize);
     status = STATUS_SUCCESS;
+    Context->NotificationFlag = FALSE;
+
+    waitCount = 0;
+    pollInterval.QuadPart = -200000ll;
+    while (waitCount < 5u)
+    {
+        if (Context->NotificationFlag)
+        {
+            break;
+        }
+
+        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
+        waitCount++;
+    }
+
+    if (!Context->NotificationFlag)
+    {
+        status = STATUS_TIMEOUT;
+    }
+
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
     return status;
 }
