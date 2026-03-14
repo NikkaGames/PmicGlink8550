@@ -4606,15 +4606,6 @@ PmicGlinkUCSIReadBuffer(
         *(ULONGLONG*)&gLatestUcsiCmd.data[8] = 0;
     }
 
-    if (*BytesReturned >= (sizeof(USHORT) * 4u))
-    {
-        words = (USHORT*)OutputBuffer;
-        PmicGlinkDDI_NotifyUcsiAlert(
-            Context,
-            (ULONG)words[3],
-            (ULONG)words[0]);
-    }
-
     return status;
 }
 
