@@ -4828,7 +4828,6 @@ PmicGlinkI2CReadBuffer(
         return STATUS_UNSUCCESSFUL;
     }
 
-    RtlCopyMemory(OutputBuffer, Context->I2CHeader, PMICGLINK_I2C_HEADER_SIZE);
     RtlCopyMemory(OutputBuffer + PMICGLINK_I2C_HEADER_SIZE, Context->I2CData, Context->I2CDataLength);
 
     *BytesReturned = PMICGLINK_I2C_HEADER_SIZE + Context->I2CDataLength;
