@@ -7725,7 +7725,6 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     Context->GlinkChannelUlogFirstConnect = TRUE;
     Context->GlinkChannelUlogConnected = TRUE;
     Context->GlinkChannelUlogRestart = FALSE;
-    Context->RpeInitialized = TRUE;
     return PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkUlogRegisterInterfaceWorkItem);
 }
 
