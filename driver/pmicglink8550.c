@@ -2086,19 +2086,15 @@ PmicGlink_SyncSendReceive(
             UCHAR oemSetPropRequest[276];
             const ULONGLONG header = 0x10000800Eull;
             const ULONG messageOp = 258u;
-            SIZE_T copyLength;
 
             oemSetRequest = (const PMICGLINK_OEM_SET_PROP_INPUT*)InputBuffer;
-            copyLength = (oemSetRequest->data_size <= sizeof(oemSetRequest->data))
-                ? (SIZE_T)oemSetRequest->data_size
-                : sizeof(oemSetRequest->data);
 
             RtlZeroMemory(oemSetPropRequest, sizeof(oemSetPropRequest));
             RtlCopyMemory(oemSetPropRequest, &header, sizeof(header));
             RtlCopyMemory(oemSetPropRequest + sizeof(header), &messageOp, sizeof(messageOp));
             RtlCopyMemory(oemSetPropRequest + 12, &oemSetRequest->property_id, sizeof(oemSetRequest->property_id));
             RtlCopyMemory(oemSetPropRequest + 16, &oemSetRequest->data_size, sizeof(oemSetRequest->data_size));
-            RtlCopyMemory(oemSetPropRequest + 20, oemSetRequest->data, copyLength);
+            RtlCopyMemory(oemSetPropRequest + 20, oemSetRequest->data, sizeof(oemSetRequest->data));
 
             return PmicGlink_SendData(Context, 258u, oemSetPropRequest, sizeof(oemSetPropRequest), TRUE);
         }
@@ -2152,9 +2148,12 @@ PmicGlink_SyncSendReceive(
             return STATUS_INVALID_PARAMETER;
         }
 
-        dataSize = (InputBufferSize <= PMICGLINK_OEM_SEND_BUFFER_SIZE)
-            ? (ULONG)InputBufferSize
-            : PMICGLINK_OEM_SEND_BUFFER_SIZE;
+        if (InputBufferSize > PMICGLINK_OEM_SEND_BUFFER_SIZE)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        dataSize = (ULONG)InputBufferSize;
         copyLength = (SIZE_T)dataSize;
 
         RtlZeroMemory(oemSendReceiveRequest, sizeof(oemSendReceiveRequest));
