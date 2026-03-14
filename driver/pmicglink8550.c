@@ -1676,8 +1676,11 @@ PmicGlinkDevice_InitContext(
     RtlZeroMemory(&Context->LastUsbcNotification, sizeof(Context->LastUsbcNotification));
     Context->PendingPan = (UCHAR)PMICGLINK_MAX_PORTS;
     Context->PlatformState = 0;
+    Context->UsbcPinAssignmentNotifyEn = 0;
+    Context->UlogInitEn = 0;
     Context->Reserved2[0] = 0;
     Context->Reserved2[1] = 0;
+    Context->UlogInterval = 0;
 
     KeInitializeEvent(&Context->QcmbNotifyEvent, NotificationEvent, FALSE);
 
@@ -1720,7 +1723,9 @@ PmicGlink_Init(
     )
 {
     NTSTATUS status;
+    NTSTATUS queryStatus;
     WDFKEY regKey;
+    WDFKEY configRegKey;
     UNICODE_STRING regValueName;
     ULONG regValueData;
 
@@ -1737,8 +1742,12 @@ PmicGlink_Init(
     Context->GlinkLinkStateUp = FALSE;
     Context->RpeInitialized = FALSE;
     Context->Hibernate = FALSE;
+    Context->UsbcPinAssignmentNotifyEn = 0;
+    Context->UlogInitEn = 0;
+    Context->UlogInterval = 0;
 
     regValueData = 0;
+    configRegKey = NULL;
     status = WdfDeviceOpenRegistryKey(
         Context->Device,
         PLUGPLAY_REGKEY_DEVICE,
@@ -1748,10 +1757,47 @@ PmicGlink_Init(
     if (NT_SUCCESS(status))
     {
         RtlInitUnicodeString(&regValueName, L"PmicGlinkPlatformState");
-        status = PmicGlinkRegistryQuery(regKey, &regValueName, &regValueData);
-        if (NT_SUCCESS(status))
+        queryStatus = PmicGlinkRegistryQuery(regKey, &regValueName, &regValueData);
+        if (NT_SUCCESS(queryStatus))
         {
             Context->PlatformState = (UCHAR)regValueData;
+        }
+
+        RtlInitUnicodeString(&regValueName, L"PlatformConfig");
+        status = WdfRegistryOpenKey(
+            regKey,
+            &regValueName,
+            KEY_READ,
+            WDF_NO_OBJECT_ATTRIBUTES,
+            &configRegKey);
+        if (NT_SUCCESS(status))
+        {
+            regValueData = 0;
+            RtlInitUnicodeString(&regValueName, L"UsbcPinAssignmentNotifyEn");
+            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
+            if (NT_SUCCESS(queryStatus))
+            {
+                Context->UsbcPinAssignmentNotifyEn = (UCHAR)regValueData;
+            }
+
+            regValueData = 0;
+            RtlInitUnicodeString(&regValueName, L"UlogInitEn");
+            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
+            if (NT_SUCCESS(queryStatus))
+            {
+                Context->UlogInitEn = (UCHAR)regValueData;
+            }
+
+            regValueData = 0;
+            RtlInitUnicodeString(&regValueName, L"UlogInterval");
+            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
+            if (NT_SUCCESS(queryStatus))
+            {
+                Context->UlogInterval = regValueData;
+            }
+
+            WdfRegistryClose(configRegKey);
+            configRegKey = NULL;
         }
 
         WdfRegistryClose(regKey);
@@ -1878,7 +1924,7 @@ PmicGlinkStateNotificationCb(
         Context->GlinkChannelRestart = FALSE;
         Context->GlinkLinkStateUp = TRUE;
         Context->GlinkRxIntent += 1;
-        if (!Context->GlinkChannelUlogConnected)
+        if ((Context->UlogInitEn != 0) && !Context->GlinkChannelUlogConnected)
         {
             (VOID)PmicGlinkUlog_OpenGlinkChannelUlog(Context);
         }
@@ -6874,7 +6920,7 @@ PmicGlinkRpeADSPStateNotificationCallback(
             (VOID)PmicGlink_OpenGlinkChannel(deviceContext);
         }
 
-        if (!deviceContext->GlinkChannelUlogConnected)
+        if ((deviceContext->UlogInitEn != 0) && !deviceContext->GlinkChannelUlogConnected)
         {
             (VOID)PmicGlinkUlog_OpenGlinkChannelUlog(deviceContext);
         }
@@ -6992,7 +7038,9 @@ PmicGlinkUlogStateNotificationCb(
 
     case PmicGlinkChannelLocalDisconnected:
         deviceContext->GlinkChannelUlogConnected = FALSE;
-        if (deviceContext->GlinkChannelUlogRestart && deviceContext->GlinkLinkStateUp)
+        if (deviceContext->GlinkChannelUlogRestart
+            && deviceContext->GlinkLinkStateUp
+            && (deviceContext->UlogInitEn != 0))
         {
             (VOID)PmicGlinkUlog_OpenGlinkChannelUlog(deviceContext);
         }
@@ -7001,7 +7049,7 @@ PmicGlinkUlogStateNotificationCb(
     case PmicGlinkChannelRemoteDisconnected:
         deviceContext->GlinkChannelUlogConnected = FALSE;
         deviceContext->GlinkChannelUlogRestart = TRUE;
-        if (deviceContext->GlinkLinkStateUp)
+        if (deviceContext->GlinkLinkStateUp && (deviceContext->UlogInitEn != 0))
         {
             (VOID)PmicGlinkUlog_OpenGlinkChannelUlog(deviceContext);
         }
@@ -7054,6 +7102,11 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     if (Context == NULL)
     {
         return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Context->UlogInitEn == 0)
+    {
+        return STATUS_UNSUCCESSFUL;
     }
 
     Context->GlinkChannelUlogFirstConnect = TRUE;

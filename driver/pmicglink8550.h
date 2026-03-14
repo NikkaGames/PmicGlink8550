@@ -532,7 +532,10 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA LastUsbcNotification;
     UCHAR PendingPan;
     UCHAR PlatformState;
+    UCHAR UsbcPinAssignmentNotifyEn;
+    UCHAR UlogInitEn;
     UCHAR Reserved2[2];
+    ULONG UlogInterval;
 } PMIC_GLINK_DEVICE_CONTEXT, *PPMIC_GLINK_DEVICE_CONTEXT;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(PMIC_GLINK_DEVICE_CONTEXT, PmicGlinkGetDeviceContext)
