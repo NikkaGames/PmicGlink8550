@@ -6226,6 +6226,9 @@ PmicGlink_RetrieveRxData(
             RtlCopyMemory(&Context->LegacyChargeStatus.voltage, Buffer + 24, sizeof(Context->LegacyChargeStatus.voltage));
             RtlCopyMemory(&Context->LegacyChargeStatus.power_state, Buffer + 28, sizeof(Context->LegacyChargeStatus.power_state));
             RtlCopyMemory(&Context->LegacyBattTemperature, Buffer + 36, sizeof(Context->LegacyBattTemperature));
+            Context->LegacyBattPercentage = (Context->LegacyChargeStatus.capacity > 100u)
+                ? 100u
+                : (UCHAR)Context->LegacyChargeStatus.capacity;
         }
         break;
 
@@ -6250,6 +6253,13 @@ PmicGlink_RetrieveRxData(
     case 9u:
         if (BufferSize >= 740u)
         {
+            CHAR battDeviceNameA[129];
+            CHAR battManufacturerNameA[129];
+            CHAR battSerialA[129];
+            CHAR battUniqueA[129];
+            SIZE_T mfgNameLen;
+            SIZE_T uniqueTailBytes;
+
             RtlCopyMemory(&Context->LegacyBattInfo.designed_capacity, Buffer + 16, sizeof(Context->LegacyBattInfo.designed_capacity));
             RtlCopyMemory(&Context->LegacyBattInfo.full_charged_capacity, Buffer + 20, sizeof(Context->LegacyBattInfo.full_charged_capacity));
             RtlCopyMemory(&Context->LegacyBattInfo.default_alert2, Buffer + 32, sizeof(Context->LegacyBattInfo.default_alert2));
@@ -6270,6 +6280,43 @@ PmicGlink_RetrieveRxData(
                 &Context->LegacyReportingScale[0].granularity,
                 Buffer + 64,
                 sizeof(Context->LegacyReportingScale[0].granularity));
+
+            RtlZeroMemory(battDeviceNameA, sizeof(battDeviceNameA));
+            RtlZeroMemory(battManufacturerNameA, sizeof(battManufacturerNameA));
+            RtlZeroMemory(battSerialA, sizeof(battSerialA));
+            RtlZeroMemory(battUniqueA, sizeof(battUniqueA));
+
+            RtlCopyMemory(battDeviceNameA, Buffer + 80, 128);
+            RtlCopyMemory(battManufacturerNameA, Buffer + 464, 128);
+            RtlCopyMemory(battSerialA, Buffer + 208, 128);
+
+            mfgNameLen = 0;
+            while ((mfgNameLen < 128u) && (battManufacturerNameA[mfgNameLen] != '\0'))
+            {
+                mfgNameLen++;
+            }
+
+            RtlCopyMemory(battUniqueA, battManufacturerNameA, mfgNameLen);
+            uniqueTailBytes = 128u - mfgNameLen;
+            RtlCopyMemory(battUniqueA + mfgNameLen, battSerialA, uniqueTailBytes);
+            battUniqueA[128] = '\0';
+
+            (VOID)PmicGlink_ANSIToUniString(
+                battDeviceNameA,
+                Context->LegacyBattDeviceName,
+                ARRAYSIZE(Context->LegacyBattDeviceName));
+            (VOID)PmicGlink_ANSIToUniString(
+                battManufacturerNameA,
+                Context->LegacyBattManufactureName,
+                ARRAYSIZE(Context->LegacyBattManufactureName));
+            (VOID)PmicGlink_ANSIToUniString(
+                battSerialA,
+                Context->LegacyBattSerialNumber,
+                ARRAYSIZE(Context->LegacyBattSerialNumber));
+            (VOID)PmicGlink_ANSIToUniString(
+                battUniqueA,
+                Context->LegacyBattUniqueId,
+                ARRAYSIZE(Context->LegacyBattUniqueId));
         }
         break;
 
