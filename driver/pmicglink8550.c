@@ -2133,10 +2133,6 @@ PmicGlinkStateNotificationCb(
     case PmicGlinkChannelRemoteDisconnected:
         Context->GlinkChannelConnected = FALSE;
         Context->GlinkChannelRestart = TRUE;
-        if (Context->GlinkLinkStateUp)
-        {
-            (VOID)PmicGlink_OpenGlinkChannel(Context);
-        }
         break;
 
     default:
