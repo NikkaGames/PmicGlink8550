@@ -4521,15 +4521,28 @@ PmicGlinkUCSIReadBuffer(
             requestedLength = *(ULONG*)InputBuffer;
         }
 
-        copyLength = PMICGLINK_UCSI_BUFFER_SIZE;
-        if (OutputBufferSize < copyLength)
+        if (requestedLength < PMICGLINK_UCSI_BUFFER_SIZE)
         {
-            copyLength = OutputBufferSize;
+            copyLength = (requestedLength <= OutputBufferSize)
+                ? (SIZE_T)requestedLength
+                : OutputBufferSize;
+            if (copyLength > 0)
+            {
+                RtlZeroMemory(OutputBuffer, copyLength);
+            }
         }
-
-        if (copyLength > 0)
+        else
         {
-            RtlCopyMemory(OutputBuffer, Context->UCSIDataBuffer, copyLength);
+            copyLength = PMICGLINK_UCSI_BUFFER_SIZE;
+            if (OutputBufferSize < copyLength)
+            {
+                copyLength = OutputBufferSize;
+            }
+
+            if (copyLength > 0)
+            {
+                RtlCopyMemory(OutputBuffer, Context->UCSIDataBuffer, copyLength);
+            }
         }
 
         *BytesReturned = requestedLength;
