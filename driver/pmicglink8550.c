@@ -2348,7 +2348,6 @@ PmicGlinkNotify_PingBattMiniClass(
     if (Context != NULL)
     {
         (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 1);
-        Context->LegacyStatusNotificationPending = TRUE;
         Context->NotificationFlag = TRUE;
     }
 }
