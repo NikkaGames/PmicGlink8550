@@ -6540,18 +6540,11 @@ PmicGlink_RetrieveRxData(
         break;
 
     case 258u:
-    {
-        ULONG fwStatus;
-
         if (BufferSize < 16u)
         {
             return STATUS_INVALID_PARAMETER;
         }
-
-        RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
-        status = (fwStatus == 0u) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
         break;
-    }
 
     case 260u:
         if (BufferSize >= 16u)
