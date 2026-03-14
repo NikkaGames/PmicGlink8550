@@ -2150,6 +2150,7 @@ PmicGlinkStateNotificationCb(
     case PmicGlinkChannelRemoteDisconnected:
         Context->GlinkChannelConnected = FALSE;
         Context->GlinkChannelRestart = TRUE;
+        (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         break;
 
     default:
