@@ -500,6 +500,8 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONGLONG LegacyLastBattIdQueryMsec;
     ULONGLONG LegacyLastChargeStatusQueryMsec;
     ULONGLONG LegacyLastBattInfoQueryMsec;
+    ULONG LegacyLastTestInfoRequestType;
+    ULONG LegacyReserved;
 
     ULONG ModernStandbyState;
     PCALLBACK_OBJECT ModernStandbyCallbackObject;

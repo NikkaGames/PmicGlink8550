@@ -160,6 +160,7 @@ static PMICGLINK_UCSI_WRITE_DATA_BUF_TYPE gLatestUcsiCmd;
 static ULONGLONG gPmicGlinkRelTimeStartTicks;
 static BOOLEAN gPmicGlinkRelTimeInitialized;
 static LONG gPmicGlinkNotifyGo;
+static UCHAR gPmicGlinkCachedBatteryStatus;
 static KMUTEX gPmicGlinkTxSync;
 static LONG gPmicGlinkRxInProgress;
 static KMUTEX gPmicGlinkUlogTxSync;
@@ -1333,6 +1334,7 @@ PmicGlinkDevice_InitContext(
     Context->Notify = FALSE;
     Context->NotificationFlag = FALSE;
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
+    gPmicGlinkCachedBatteryStatus = 0;
     Context->EventID = 0;
     Context->GlinkRxIntent = 0;
     Context->GlinkUlogRxIntent = 0;
@@ -1470,6 +1472,8 @@ PmicGlinkDevice_InitContext(
     Context->LegacyLastBattIdQueryMsec = 0;
     Context->LegacyLastChargeStatusQueryMsec = 0;
     Context->LegacyLastBattInfoQueryMsec = 0;
+    Context->LegacyLastTestInfoRequestType = 0;
+    Context->LegacyReserved = 0;
 
     Context->ModernStandbyState = 0;
     Context->ModernStandbyCallbackObject = NULL;
@@ -2601,27 +2605,24 @@ PmicGlink_SyncSendReceive(
         {
             ULONGLONG Header;
             ULONG MessageOp;
+            ULONG BatteryId;
             ULONG RequestType;
+            ULONG RequestBufferLength;
+            ULONG RequestBuffer[64];
         } genericTestInfoRequest;
 
-        RtlZeroMemory(&Context->LegacyTestInfo, sizeof(Context->LegacyTestInfo));
-        if (InputBuffer != NULL)
+        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(ULONG)))
         {
-            SIZE_T copySize;
-
-            copySize = (InputBufferSize < sizeof(Context->LegacyTestInfo.data))
-                ? InputBufferSize
-                : sizeof(Context->LegacyTestInfo.data);
-
-            RtlCopyMemory(
-                Context->LegacyTestInfo.data,
-                InputBuffer,
-                copySize);
+            return STATUS_INVALID_PARAMETER;
         }
 
+        RtlZeroMemory(&genericTestInfoRequest, sizeof(genericTestInfoRequest));
         genericTestInfoRequest.Header = 0x10000800Aull;
         genericTestInfoRequest.MessageOp = 32u;
-        genericTestInfoRequest.RequestType = (InputBufferSize >= sizeof(ULONG)) ? *(ULONG*)InputBuffer : 0u;
+        genericTestInfoRequest.BatteryId = 0u;
+        genericTestInfoRequest.RequestType = *(ULONG*)InputBuffer;
+        genericTestInfoRequest.RequestBufferLength = 0u;
+        Context->LegacyLastTestInfoRequestType = genericTestInfoRequest.RequestType;
         return PmicGlink_SendData(Context, 32u, &genericTestInfoRequest, sizeof(genericTestInfoRequest), TRUE);
     }
 
@@ -6214,6 +6215,10 @@ PmicGlink_RetrieveRxData(
         if (BufferSize >= 16u)
         {
             RtlCopyMemory(&Context->LegacyBattId.batt_id, Buffer + 12, sizeof(Context->LegacyBattId.batt_id));
+            if ((Context->LegacyBattId.batt_id != 0u) && (gPmicGlinkCachedBatteryStatus == 0u))
+            {
+                gPmicGlinkCachedBatteryStatus = 1u;
+            }
         }
         break;
 
@@ -6324,6 +6329,14 @@ PmicGlink_RetrieveRxData(
         {
             RtlCopyMemory(Context->UCSIDataBuffer, Buffer + 12, PMICGLINK_UCSI_BUFFER_SIZE);
         }
+
+        if (BufferSize >= 64u)
+        {
+            ULONG fwStatus;
+
+            RtlCopyMemory(&fwStatus, Buffer + 60, sizeof(fwStatus));
+            status = (NTSTATUS)(LONG)fwStatus;
+        }
         break;
 
     case 18u:
@@ -6337,13 +6350,14 @@ PmicGlink_RetrieveRxData(
         }
 
         RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
-        status = (fwStatus == 0u) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+        status = (NTSTATUS)(LONG)fwStatus;
         break;
     }
 
     case 32u:
     {
         ULONG fwStatus;
+        ULONG responseType;
 
         if (BufferSize < 20u)
         {
@@ -6355,14 +6369,30 @@ PmicGlink_RetrieveRxData(
         {
             SIZE_T copySize;
 
-            copySize = BufferSize - 20u;
-            if (copySize > sizeof(Context->LegacyTestInfo.data))
+            responseType = 0xFFFFFFFFu;
+            if (BufferSize >= 24u)
             {
-                copySize = sizeof(Context->LegacyTestInfo.data);
+                RtlCopyMemory(&responseType, Buffer + 20, sizeof(responseType));
             }
 
-            RtlZeroMemory(&Context->LegacyTestInfo, sizeof(Context->LegacyTestInfo));
-            RtlCopyMemory(Context->LegacyTestInfo.data, Buffer + 20, copySize);
+            if ((Context->LegacyLastTestInfoRequestType < 0x10u)
+                || (Context->LegacyLastTestInfoRequestType == responseType))
+            {
+                copySize = BufferSize - 20u;
+                if (copySize > 0x100u)
+                {
+                    copySize = 0x100u;
+                }
+
+                if (copySize > sizeof(Context->LegacyTestInfo.data))
+                {
+                    copySize = sizeof(Context->LegacyTestInfo.data);
+                }
+
+                RtlZeroMemory(&Context->LegacyTestInfo, sizeof(Context->LegacyTestInfo));
+                RtlCopyMemory(Context->LegacyTestInfo.data, Buffer + 20, copySize);
+            }
+
             status = STATUS_SUCCESS;
         }
         else if (fwStatus == 1u)
@@ -6421,7 +6451,10 @@ PmicGlink_RetrieveRxData(
     case 82u:
         if (BufferSize >= 16u)
         {
-            RtlCopyMemory(&Context->PlatformState, Buffer + 12, sizeof(UCHAR));
+            ULONG fwStatus;
+
+            RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
+            status = (NTSTATUS)(LONG)fwStatus;
         }
         break;
 
@@ -6476,11 +6509,23 @@ PmicGlink_RetrieveRxData(
             RtlCopyMemory(&Context->QcmbChargerStatusInfo, Buffer + 36, sizeof(Context->QcmbChargerStatusInfo));
             KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
         }
+
+        if (BufferSize >= 64u)
+        {
+            ULONG fwStatus;
+
+            RtlCopyMemory(&fwStatus, Buffer + 60, sizeof(fwStatus));
+            status = (NTSTATUS)(LONG)fwStatus;
+        }
         break;
 
     case 129u:
         if (BufferSize >= 16u)
         {
+            ULONG fwStatus;
+
+            RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
+            status = (NTSTATUS)(LONG)fwStatus;
             RtlCopyMemory(&Context->QcmbStatus, Buffer + 12, sizeof(Context->QcmbStatus));
             Context->QcmbConnected = ((Context->QcmbStatus & 1u) != 0u) ? TRUE : FALSE;
             KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
