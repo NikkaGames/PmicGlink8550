@@ -4566,14 +4566,7 @@ PmicGlinkGetOemMsg(
 
     if (!NT_SUCCESS(status))
     {
-        if (status >= 0)
-        {
-            status = STATUS_SUCCESS;
-        }
-        else
-        {
-            status = STATUS_SUCCESS;
-        }
+        status = STATUS_SUCCESS;
     }
 
     RtlCopyMemory(OutputBuffer->data, Context->OemPropData, sizeof(Context->OemPropData));
