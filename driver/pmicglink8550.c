@@ -2210,7 +2210,7 @@ PmicGlink_SendData(
 
     waitCount = 0;
     pollInterval.QuadPart = -200000ll;
-    while (waitCount < 5u)
+    while (waitCount < 140u)
     {
         if (Context->NotificationFlag)
         {
@@ -7906,7 +7906,7 @@ PmicGlinkUlog_SendData(
 
     waitCount = 0;
     pollInterval.QuadPart = -200000ll;
-    while (waitCount < 5u)
+    while (waitCount < 140u)
     {
         if (Context->NotificationFlag)
         {
