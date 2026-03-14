@@ -2184,19 +2184,19 @@ PmicGlink_SendData(
     ULONG waitCount;
     BOOLEAN matchedResponse;
 
-    if ((Context == NULL) || (Buffer == NULL) || (BufferLen == 0))
+    if ((Buffer == NULL) || (BufferLen == 0))
     {
-        if ((Buffer == NULL) || (BufferLen == 0))
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
+        return STATUS_UNSUCCESSFUL;
+    }
 
-        return PMICGLINK_STATUS_DEVICE_NOT_READY;
+    if (Context == NULL)
+    {
+        return STATUS_RETRY;
     }
 
     if (Context->GlinkChannelRestart || !Context->GlinkChannelConnected)
     {
-        return PMICGLINK_STATUS_DEVICE_NOT_READY;
+        return STATUS_RETRY;
     }
 
     status = KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
@@ -2212,7 +2212,7 @@ PmicGlink_SendData(
         if (waitCount >= 0x5DCu)
         {
             KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
-            return PMICGLINK_STATUS_DEVICE_NOT_READY;
+            return STATUS_RETRY;
         }
 
         KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
@@ -7374,12 +7374,7 @@ PmicGlinkNotifyRxIntentReqCb(
     UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(RequestedSize);
 
-    if (Context == NULL)
-    {
-        return FALSE;
-    }
-
-    return ((PPMIC_GLINK_DEVICE_CONTEXT)Context)->GlinkChannelConnected ? TRUE : FALSE;
+    return (Context != NULL) ? TRUE : FALSE;
 }
 
 VOID
@@ -7421,7 +7416,6 @@ PmicGlinkTxNotificationCb(
     if (deviceContext != NULL)
     {
         deviceContext->NotificationFlag = TRUE;
-        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
     }
 }
 
@@ -7547,7 +7541,6 @@ PmicGlinkUlogTxNotificationCb(
     if (deviceContext != NULL)
     {
         deviceContext->NotificationFlag = TRUE;
-        (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
     }
 }
 
@@ -7933,7 +7926,7 @@ PmicGlinkUlogNotifyRxIntentReqCb(
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     UNREFERENCED_PARAMETER(RequestedSize);
 
-    if ((deviceContext == NULL) || !deviceContext->GlinkChannelUlogConnected)
+    if (deviceContext == NULL)
     {
         return FALSE;
     }
@@ -8103,14 +8096,19 @@ PmicGlinkUlog_SendData(
     BOOLEAN matchedResponse;
     BOOLEAN waitForRx;
 
-    if ((Context == NULL) || (Buffer == NULL))
+    if (Buffer == NULL)
     {
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    if (Context == NULL)
+    {
+        return STATUS_UNSUCCESSFUL;
     }
 
     if (Context->GlinkChannelUlogRestart || !Context->GlinkChannelUlogConnected)
     {
-        return PMICGLINK_STATUS_DEVICE_NOT_READY;
+        return STATUS_RETRY;
     }
 
     status = KeWaitForSingleObject(&gPmicGlinkUlogTxSync, Executive, KernelMode, FALSE, NULL);
@@ -8126,7 +8124,7 @@ PmicGlinkUlog_SendData(
         if (waitCount >= 0x3E8u)
         {
             KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
-            return PMICGLINK_STATUS_DEVICE_NOT_READY;
+            return STATUS_RETRY;
         }
 
         KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
