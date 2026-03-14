@@ -187,6 +187,7 @@ static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 #define PMICGLINK_ULOG_DEFAULT_CATEGORIES 0x0000000E00008000ull
 #define PMICGLINK_ULOG_DEFAULT_TIMER_DUE_TIME_100NS (-20000000ll)
 #define PMICGLINK_100NS_PER_SECOND 10000000ll
+#define PMICGLINK_CRASHDUMP_RINGBUFFER_MAX_BYTES 1024u
 
 typedef struct _PMICGLINK_ABD_CONNECTION_ENTRY
 {
@@ -3490,7 +3491,9 @@ CrashDump_DataSourceCreateInternal(
     }
 
     totalBytes = (ULONGLONG)ItemCount * (ULONGLONG)SizeOfEachEntry;
-    if ((totalBytes == 0) || (totalBytes > MAXULONG))
+    if ((totalBytes == 0)
+        || (totalBytes > PMICGLINK_CRASHDUMP_RINGBUFFER_MAX_BYTES)
+        || (totalBytes > MAXULONG))
     {
         return STATUS_INVALID_PARAMETER;
     }
