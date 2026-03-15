@@ -258,7 +258,9 @@ static KEVENT gPmicGlinkConnectedEvent;
 static KEVENT gPmicGlinkLocalDisconnectedEvent;
 static KEVENT gPmicGlinkRemoteDisconnectedEvent;
 static KEVENT gPmicGlinkTxNotificationEvent;
+static KEVENT gPmicGlinkRxIntentReqEvent;
 static KEVENT gPmicGlinkRxNotificationEvent;
+static KEVENT gPmicGlinkRxIntentNotificationEvent;
 static KMUTEX gPmicGlinkUlogTxSync;
 static LONG gPmicGlinkUlogRxInProgress;
 static KEVENT gPmicGlinkUlogTxNotificationEvent;
@@ -1905,7 +1907,9 @@ PmicGlinkDevice_InitContext(
     KeInitializeEvent(&gPmicGlinkLocalDisconnectedEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkRemoteDisconnectedEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkTxNotificationEvent, NotificationEvent, FALSE);
+    KeInitializeEvent(&gPmicGlinkRxIntentReqEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkRxNotificationEvent, NotificationEvent, FALSE);
+    KeInitializeEvent(&gPmicGlinkRxIntentNotificationEvent, NotificationEvent, FALSE);
     KeInitializeMutex(&gPmicGlinkUlogTxSync, 1);
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
     KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
@@ -2552,8 +2556,8 @@ PmicGlink_SendData(
     ULONG waitStatus;
     ULONG waitIndex;
     ULONG waitObjectCount;
-    PVOID waitObjects[5];
-    KWAIT_BLOCK waitBlocks[5];
+    PVOID waitObjects[7];
+    KWAIT_BLOCK waitBlocks[7];
     BOOLEAN matchedResponse;
 
     if ((Buffer == NULL) || (BufferLen == 0))
@@ -2615,7 +2619,9 @@ PmicGlink_SendData(
     Context->LastRxStatus = STATUS_SUCCESS;
     Context->LastRxValid = FALSE;
     (VOID)KeClearEvent(&gPmicGlinkTxNotificationEvent);
+    (VOID)KeClearEvent(&gPmicGlinkRxIntentReqEvent);
     (VOID)KeClearEvent(&gPmicGlinkRxNotificationEvent);
+    (VOID)KeClearEvent(&gPmicGlinkRxIntentNotificationEvent);
     if (!gPmicGlinkApiInterfaceValid
         || (gPmicGlinkMainChannelHandle == NULL)
         || (gPmicGlinkApiInterface.GLinkTx == NULL))
@@ -2647,7 +2653,9 @@ PmicGlink_SendData(
     waitObjects[1] = &gPmicGlinkLocalDisconnectedEvent;
     waitObjects[2] = &gPmicGlinkRemoteDisconnectedEvent;
     waitObjects[3] = &gPmicGlinkTxNotificationEvent;
-    waitObjects[4] = &gPmicGlinkRxNotificationEvent;
+    waitObjects[4] = &gPmicGlinkRxIntentReqEvent;
+    waitObjects[5] = &gPmicGlinkRxNotificationEvent;
+    waitObjects[6] = &gPmicGlinkRxIntentNotificationEvent;
     waitObjectCount = RTL_NUMBER_OF(waitObjects);
 
     matchedResponse = FALSE;
@@ -2674,7 +2682,7 @@ PmicGlink_SendData(
                 break;
             }
 
-            if (waitIndex != 4u)
+            if (waitIndex != 5u)
             {
                 waitCount++;
                 continue;
@@ -2720,7 +2728,7 @@ PmicGlink_SendData(
                     break;
                 }
 
-                if (waitIndex != 4u)
+                if (waitIndex != 5u)
                 {
                     waitCount++;
                     continue;
@@ -7946,6 +7954,8 @@ PmicGlinkNotifyRxIntentReqCb(
         return FALSE;
     }
 
+    (VOID)KeSetEvent(&gPmicGlinkRxIntentReqEvent, IO_NO_INCREMENT, FALSE);
+
     if (!gPmicGlinkApiInterfaceValid
         || (gPmicGlinkMainChannelHandle == NULL)
         || (gPmicGlinkApiInterface.GLinkQueueRxIntent == NULL))
@@ -7976,6 +7986,7 @@ PmicGlinkNotifyRxIntentCb(
     if (deviceContext != NULL)
     {
         deviceContext->GlinkRxIntent += 1;
+        (VOID)KeSetEvent(&gPmicGlinkRxIntentNotificationEvent, IO_NO_INCREMENT, FALSE);
     }
 }
 
