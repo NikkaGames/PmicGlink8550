@@ -2821,6 +2821,7 @@ PmicGlink_SendData(
             {
                 status = Context->LastRxStatus;
                 matchedResponse = TRUE;
+                (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
                 break;
             }
 
@@ -2881,6 +2882,7 @@ PmicGlink_SendData(
                 {
                     status = Context->LastRxStatus;
                     matchedResponse = TRUE;
+                    (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
                     break;
                 }
 
@@ -9562,6 +9564,7 @@ PmicGlinkUlog_SendData(
             {
                 status = Context->LastUlogRxStatus;
                 matchedResponse = TRUE;
+                (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
                 break;
             }
 
@@ -9607,6 +9610,7 @@ PmicGlinkUlog_SendData(
                 {
                     status = Context->LastUlogRxStatus;
                     matchedResponse = TRUE;
+                    (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
                     break;
                 }
 
