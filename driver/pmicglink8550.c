@@ -8526,7 +8526,7 @@ PmicGLinkRegisterLinkStateCb(
     BOOLEAN linkMatches;
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
-    if ((deviceContext == NULL) || (LinkInfo == NULL))
+    if (deviceContext == NULL)
     {
         return;
     }
