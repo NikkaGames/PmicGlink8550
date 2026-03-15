@@ -453,6 +453,7 @@ static NTSTATUS PmicGlinkEvaluateAcpiMethodBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEX
 static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
+static VOID PmicGlinkResetApiInterface(VOID);
 static NTSTATUS PmicGlinkEnsureApiInterface(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkEnsureCommDataBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode, _In_ SIZE_T RequiredSize);
 static BOOLEAN PmicGlinkConsumeCommDataPacket(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode);
@@ -1120,7 +1121,7 @@ PmicGlinkEvtReleaseHardware(
         gPmicGlinkUlogChannelHandle = NULL;
     }
 
-    RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+    PmicGlinkResetApiInterface();
 
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     if (context->UlogTimer != NULL)
@@ -1214,7 +1215,7 @@ PmicGlinkEvtD0Exit(
             context->RpeInitialized = FALSE;
             if (!context->Hibernate)
             {
-                RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+                PmicGlinkResetApiInterface();
             }
         }
     }
@@ -1577,7 +1578,7 @@ PmicGlinkInterfaceNotificationCallback(
 
     if ((NotificationStructure == NULL) || (Context == NULL))
     {
-        return STATUS_SUCCESS;
+        return STATUS_INVALID_PARAMETER;
     }
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
@@ -1599,6 +1600,7 @@ PmicGlinkInterfaceNotificationCallback(
 
     if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_GLINK_DEVICE_INTERFACE, sizeof(GUID)) == sizeof(GUID))
     {
+        status = STATUS_SUCCESS;
         if (arrival)
         {
             if (deviceContext->GlinkDeviceLoaded)
@@ -1608,9 +1610,16 @@ PmicGlinkInterfaceNotificationCallback(
 
             deviceContext->GlinkDeviceLoaded = TRUE;
             deviceContext->AllReqIntfArrived = deviceContext->ABDAttached ? TRUE : FALSE;
+            KeInitializeEvent(&gPmicGlinkConnectedEvent, NotificationEvent, FALSE);
+            KeInitializeEvent(&gPmicGlinkLocalDisconnectedEvent, NotificationEvent, FALSE);
+            KeInitializeEvent(&gPmicGlinkRemoteDisconnectedEvent, NotificationEvent, FALSE);
+            KeInitializeEvent(&gPmicGlinkTxNotificationEvent, NotificationEvent, FALSE);
+            KeInitializeEvent(&gPmicGlinkRxIntentReqEvent, NotificationEvent, FALSE);
+            KeInitializeEvent(&gPmicGlinkRxNotificationEvent, NotificationEvent, FALSE);
+            KeInitializeEvent(&gPmicGlinkRxIntentNotificationEvent, NotificationEvent, FALSE);
             currentState = PMICGLINK_RPE_STATE_ID_PDR_READY_FOR_COMMANDS;
             PmicGlinkRpeADSPStateNotificationCallback(deviceContext->Device, 0u, &currentState);
-            (VOID)PmicGlinkEnsureBclCriticalCallback(deviceContext);
+            status = PmicGlinkEnsureBclCriticalCallback(deviceContext);
         }
         else
         {
@@ -1624,14 +1633,14 @@ PmicGlinkInterfaceNotificationCallback(
             deviceContext->GlinkLinkStateUp = FALSE;
         }
 
-        return STATUS_SUCCESS;
+        return status;
     }
 
     if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_ABD_DEVINTERFACE, sizeof(GUID)) == sizeof(GUID))
     {
+        status = STATUS_SUCCESS;
         if (arrival)
         {
-            status = STATUS_SUCCESS;
             if (!deviceContext->ABDAttached)
             {
                 if (deviceContext->AbdIoTarget == NULL)
@@ -1663,7 +1672,7 @@ PmicGlinkInterfaceNotificationCallback(
                         }
                         else
                         {
-                            (VOID)PmicGlinkEnsureBclCriticalCallback(deviceContext);
+                            status = PmicGlinkEnsureBclCriticalCallback(deviceContext);
                         }
                     }
                 }
@@ -1682,11 +1691,12 @@ PmicGlinkInterfaceNotificationCallback(
         }
 
         deviceContext->AllReqIntfArrived = (deviceContext->GlinkDeviceLoaded && deviceContext->ABDAttached) ? TRUE : FALSE;
-        return STATUS_SUCCESS;
+        return status;
     }
 
     if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_DEVINTERFACE_PMIC_BATT_MINI, sizeof(GUID)) == sizeof(GUID))
     {
+        status = STATUS_SUCCESS;
         if (deviceContext->BattMiniNotifyLock != NULL)
         {
             WdfWaitLockAcquire(deviceContext->BattMiniNotifyLock, NULL);
@@ -1694,7 +1704,6 @@ PmicGlinkInterfaceNotificationCallback(
 
         if (arrival)
         {
-            status = STATUS_SUCCESS;
             if (!deviceContext->BattMiniDeviceLoaded)
             {
                 if (deviceContext->BattMiniIoTarget == NULL)
@@ -1717,7 +1726,7 @@ PmicGlinkInterfaceNotificationCallback(
                     if (NT_SUCCESS(status))
                     {
                         deviceContext->BattMiniDeviceLoaded = TRUE;
-                        (VOID)PmicGlinkEnsureBclCriticalCallback(deviceContext);
+                        status = PmicGlinkEnsureBclCriticalCallback(deviceContext);
                     }
                 }
             }
@@ -1741,7 +1750,7 @@ PmicGlinkInterfaceNotificationCallback(
             WdfWaitLockRelease(deviceContext->BattMiniNotifyLock);
         }
 
-        return STATUS_SUCCESS;
+        return status;
     }
 
     return STATUS_SUCCESS;
@@ -1858,7 +1867,7 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             gPmicGlinkUlogChannelHandle = NULL;
         }
 
-        RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+        PmicGlinkResetApiInterface();
         Context->RpeInitialized = FALSE;
         Context->GlinkLinkStateUp = FALSE;
 
@@ -2012,7 +2021,7 @@ PmicGlinkDevice_InitContext(
     gPmicGlinkUlogRxInProgress = 0;
     KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkUlogRxNotificationEvent, NotificationEvent, FALSE);
-    RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+    PmicGlinkResetApiInterface();
     gPmicGlinkMainChannelHandle = NULL;
     gPmicGlinkUlogChannelHandle = NULL;
     gPmicGlinkLinkStateHandle = NULL;
@@ -2375,6 +2384,21 @@ PmicGlink_Init(
     return STATUS_SUCCESS;
 }
 
+static VOID
+PmicGlinkResetApiInterface(
+    VOID
+    )
+{
+    if ((gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceDereference != NULL))
+    {
+        gPmicGlinkApiInterface.InterfaceHeader.InterfaceDereference(
+            gPmicGlinkApiInterface.InterfaceHeader.Context);
+    }
+
+    RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+}
+
 static NTSTATUS
 PmicGlinkEnsureApiInterface(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
@@ -2392,7 +2416,7 @@ PmicGlinkEnsureApiInterface(
         return STATUS_SUCCESS;
     }
 
-    RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+    PmicGlinkResetApiInterface();
     status = WdfFdoQueryForInterface(
         Context->Device,
         &GUID_GLINK_API_INTERFACE,
