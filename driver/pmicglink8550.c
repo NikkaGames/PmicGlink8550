@@ -2700,6 +2700,7 @@ PmicGlink_SendData(
     LONG txCount;
     BOOLEAN matchedResponse;
     BOOLEAN sawTxNotification;
+    BOOLEAN expectedReceived;
 
     if ((Buffer == NULL) || (BufferLen == 0))
     {
@@ -2809,20 +2810,14 @@ PmicGlink_SendData(
                 continue;
             }
 
-            (VOID)PmicGlinkConsumeCommDataPacket(Context, OpCode);
-        }
-
-        if (Context->LastRxValid)
-        {
-            if (Context->LastRxOpcode == OpCode)
+            expectedReceived = FALSE;
+            status = PmicGlink_RetrieveRxData(Context, OpCode, &expectedReceived);
+            if (expectedReceived)
             {
-                status = Context->LastRxStatus;
                 matchedResponse = TRUE;
                 gPmicGlinkRxInProgress = 0;
                 break;
             }
-
-            Context->LastRxValid = FALSE;
         }
 
         waitCount++;
@@ -2870,20 +2865,14 @@ PmicGlink_SendData(
                     continue;
                 }
 
-                (VOID)PmicGlinkConsumeCommDataPacket(Context, OpCode);
-            }
-
-            if (Context->LastRxValid)
-            {
-                if (Context->LastRxOpcode == OpCode)
+                expectedReceived = FALSE;
+                status = PmicGlink_RetrieveRxData(Context, OpCode, &expectedReceived);
+                if (expectedReceived)
                 {
-                    status = Context->LastRxStatus;
                     matchedResponse = TRUE;
                     gPmicGlinkRxInProgress = 0;
                     break;
                 }
-
-                Context->LastRxValid = FALSE;
             }
 
             waitCount++;
