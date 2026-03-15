@@ -2134,7 +2134,6 @@ PmicGlinkRegisterInterfaceWorkItem(
             }
         }
 
-        context->GlinkChannelFirstConnect = FALSE;
     }
 
     if (context != NULL)
