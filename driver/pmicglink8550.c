@@ -1622,20 +1622,6 @@ PmicGlinkInterfaceNotificationCallback(
             deviceContext->GlinkDeviceLoaded = FALSE;
             deviceContext->AllReqIntfArrived = FALSE;
             deviceContext->GlinkLinkStateUp = FALSE;
-
-            if ((gPmicGlinkMainChannelHandle != NULL)
-                && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
-            {
-                (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
-                gPmicGlinkMainChannelHandle = NULL;
-            }
-
-            if ((gPmicGlinkUlogChannelHandle != NULL)
-                && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
-            {
-                (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
-                gPmicGlinkUlogChannelHandle = NULL;
-            }
         }
 
         return STATUS_SUCCESS;
