@@ -2736,7 +2736,8 @@ PmicGlinkStateNotificationCb(
         (VOID)KeClearEvent(&gPmicGlinkRemoteDisconnectedEvent);
         (VOID)KeSetEvent(&gPmicGlinkConnectedEvent, IO_NO_INCREMENT, FALSE);
         if ((channelHandle != NULL)
-            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+            && (gPmicGlinkApiInterface.GLinkQueueRxIntent != NULL))
         {
             (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(channelHandle, Context, 4096u);
         }
@@ -2756,7 +2757,8 @@ PmicGlinkStateNotificationCb(
 
     case PmicGlinkChannelRemoteDisconnected:
         if ((channelHandle != NULL)
-            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+            && (gPmicGlinkApiInterface.GLinkClose != NULL))
         {
             (VOID)gPmicGlinkApiInterface.GLinkClose(channelHandle);
 
@@ -8478,7 +8480,8 @@ PmicGlinkRxNotificationCb(
     }
 
     if ((channelHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+        && (gPmicGlinkApiInterface.GLinkRxDone != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkRxDone(channelHandle, Buffer, TRUE);
     }
@@ -8511,7 +8514,8 @@ PmicGlinkNotifyRxIntentReqCb(
     }
 
     if ((channelHandle == NULL)
-        || (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL))
+        || (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL)
+        || (gPmicGlinkApiInterface.GLinkQueueRxIntent == NULL))
     {
         return FALSE;
     }
@@ -8784,7 +8788,8 @@ PmicGlinkUlogRxNotificationCb(
     }
 
     if ((channelHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+        && (gPmicGlinkApiInterface.GLinkRxDone != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkRxDone(channelHandle, Buffer, TRUE);
     }
@@ -9154,7 +9159,8 @@ PmicGlinkUlogStateNotificationCb(
             gPmicGlinkUlogChannelHandle = channelHandle;
         }
         if ((channelHandle != NULL)
-            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+            && (gPmicGlinkApiInterface.GLinkQueueRxIntent != NULL))
         {
             (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(channelHandle, deviceContext, 12288u);
         }
@@ -9173,7 +9179,8 @@ PmicGlinkUlogStateNotificationCb(
 
     case PmicGlinkChannelRemoteDisconnected:
         if ((channelHandle != NULL)
-            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+            && (gPmicGlinkApiInterface.GLinkClose != NULL))
         {
             (VOID)gPmicGlinkApiInterface.GLinkClose(channelHandle);
 
@@ -9210,7 +9217,8 @@ PmicGlinkUlogNotifyRxIntentReqCb(
     }
 
     if ((channelHandle == NULL)
-        || (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL))
+        || (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL)
+        || (gPmicGlinkApiInterface.GLinkQueueRxIntent == NULL))
     {
         return FALSE;
     }
