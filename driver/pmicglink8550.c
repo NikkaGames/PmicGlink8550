@@ -1194,10 +1194,7 @@ PmicGlinkEvtReleaseHardware(
     context = PmicGlinkGetDeviceContext(Device);
     driver = WdfDeviceGetDriver(Device);
     driverContext = PmicGlinkGetDriverContext(driver);
-    if (driverContext != NULL)
-    {
-        driverContext->BattMngrDevice = NULL;
-    }
+    driverContext->BattMngrDevice = NULL;
 
     for (opCode = 0; opCode < PMICGLINK_COMM_DATA_SLOTS; opCode++)
     {
