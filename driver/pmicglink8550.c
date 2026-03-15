@@ -42,7 +42,15 @@ typedef struct _PMIC_GLINK_OPEN_CONFIG
         _In_opt_ const VOID* PacketContext,
         _In_opt_ const VOID* Buffer,
         _In_ SIZE_T BufferSize);
-    PVOID NotifyRxVector;
+    VOID(*NotifyRxVector)(
+        _In_opt_ GLINK_CHANNEL_CTX* Channel,
+        _In_opt_ const VOID* Context,
+        _In_opt_ const VOID* PacketContext,
+        _In_opt_ PVOID BufferVector,
+        _In_ SIZE_T BufferSize,
+        _In_ SIZE_T IntentUsed,
+        _In_opt_ PVOID(*VProvider)(_In_opt_ PVOID ProviderContext, _In_ SIZE_T RequestedSize, _Out_opt_ SIZE_T* AvailableSize),
+        _In_opt_ PVOID(*PProvider)(_In_opt_ PVOID ProviderContext, _In_ SIZE_T RequestedSize, _Out_opt_ SIZE_T* AvailableSize));
     VOID(*NotifyTxDone)(
         _In_opt_ GLINK_CHANNEL_CTX* Channel,
         _In_opt_ const VOID* Context,
@@ -52,12 +60,22 @@ typedef struct _PMIC_GLINK_OPEN_CONFIG
     VOID(*NotifyState)(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ ULONG Event);
     BOOLEAN(*NotifyRxIntentReq)(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ SIZE_T RequestedSize);
     VOID(*NotifyRxIntent)(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ SIZE_T Size);
-    PVOID NotifyRxSigs;
-    PVOID NotifyRxAbort;
-    PVOID NotifyTxAbort;
+    VOID(*NotifyRxSigs)(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ ULONG OldSigs, _In_ ULONG NewSigs);
+    VOID(*NotifyRxAbort)(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_opt_ const VOID* PacketContext);
+    VOID(*NotifyTxAbort)(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_opt_ const VOID* PacketContext);
     ULONG RemoteIntentTimeout;
-    PVOID NotifyAllocate;
-    PVOID NotifyDeallocate;
+    NTSTATUS(*NotifyAllocate)(
+        _In_opt_ GLINK_CHANNEL_CTX* Channel,
+        _In_opt_ const VOID* Context,
+        _In_opt_ const VOID* PacketContext,
+        _In_ SIZE_T RequestedSize,
+        _Outptr_result_bytebuffer_(*AllocatedSize) PVOID* AllocatedBuffer);
+    VOID(*NotifyDeallocate)(
+        _In_opt_ GLINK_CHANNEL_CTX* Channel,
+        _In_opt_ const VOID* Context,
+        _In_opt_ const VOID* PacketContext,
+        _In_ SIZE_T BufferSize,
+        _In_opt_ PVOID Buffer);
 } PMIC_GLINK_OPEN_CONFIG;
 
 typedef struct _PMIC_GLINK_API_INTERFACE
@@ -73,9 +91,23 @@ typedef struct _PMIC_GLINK_API_INTERFACE
         _In_reads_bytes_(BufferSize) const VOID* Buffer,
         _In_ SIZE_T BufferSize,
         _In_ ULONG Options);
-    PVOID GLinkTxVector;
+    NTSTATUS(*GLinkTxVector)(
+        _In_ GLINK_CHANNEL_CTX* ChannelHandle,
+        _In_opt_ const VOID* PacketContext,
+        _In_opt_ PVOID Vector,
+        _In_ SIZE_T VectorLength,
+        _In_opt_ PVOID(*VProvider)(_In_opt_ PVOID ProviderContext, _In_ SIZE_T RequestedSize, _Out_opt_ SIZE_T* AvailableSize),
+        _In_opt_ PVOID(*PProvider)(_In_opt_ PVOID ProviderContext, _In_ SIZE_T RequestedSize, _Out_opt_ SIZE_T* AvailableSize),
+        _In_ ULONG Options);
     NTSTATUS(*GLinkQueueRxIntent)(_In_ GLINK_CHANNEL_CTX* ChannelHandle, _In_opt_ const VOID* Context, _In_ SIZE_T RequestedSize);
     NTSTATUS(*GLinkRxDone)(_In_ GLINK_CHANNEL_CTX* ChannelHandle, _In_reads_bytes_(BufferSize) const VOID* Buffer, _In_ BOOLEAN ReuseIntent);
+    NTSTATUS(*GLinkSigsSet)(_In_ GLINK_CHANNEL_CTX* ChannelHandle, _In_ ULONG Signals);
+    NTSTATUS(*GLinkSigsLocalGet)(_In_ GLINK_CHANNEL_CTX* ChannelHandle, _Out_ PULONG Signals);
+    NTSTATUS(*GLinkSigsRemoteGet)(_In_ GLINK_CHANNEL_CTX* ChannelHandle, _Out_ PULONG Signals);
+    NTSTATUS(*GLinkQoSLatency)(_In_ GLINK_CHANNEL_CTX* ChannelHandle, _In_ ULONG LatencyType, _In_ ULONGLONG LatencyValue);
+    NTSTATUS(*GLinkQoSCancel)(_In_ GLINK_CHANNEL_CTX* ChannelHandle);
+    NTSTATUS(*GLinkQoSStart)(_In_ GLINK_CHANNEL_CTX* ChannelHandle);
+    ULONG(*GLinkQoSGetRampTime)(_In_ GLINK_CHANNEL_CTX* ChannelHandle, _In_ ULONG LatencyType, _In_ ULONGLONG LatencyValue);
 } PMIC_GLINK_API_INTERFACE;
 
 DEFINE_GUID(
