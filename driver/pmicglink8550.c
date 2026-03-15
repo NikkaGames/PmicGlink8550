@@ -9446,6 +9446,7 @@ PmicGlinkUlog_SendData(
     LONG txCount;
     ULONG opCode;
     BOOLEAN matchedResponse;
+    BOOLEAN expectedReceived;
 
     if ((Buffer == NULL) || (BufferSize == 0))
     {
@@ -9541,20 +9542,14 @@ PmicGlinkUlog_SendData(
 
         if ((waitStatus < (STATUS_WAIT_0 + waitObjectCount)) && (waitIndex == 1u))
         {
-            (VOID)PmicGlinkUlog_RetrieveRxData(Context, opCode, NULL);
-        }
-
-        if (Context->LastUlogRxValid)
-        {
-            if (Context->LastUlogRxOpcode == opCode)
+            expectedReceived = FALSE;
+            status = PmicGlinkUlog_RetrieveRxData(Context, opCode, &expectedReceived);
+            if (expectedReceived)
             {
-                status = Context->LastUlogRxStatus;
                 matchedResponse = TRUE;
                 gPmicGlinkUlogRxInProgress = 0;
                 break;
             }
-
-            Context->LastUlogRxValid = FALSE;
         }
 
         waitCount++;
@@ -9592,20 +9587,14 @@ PmicGlinkUlog_SendData(
 
             if ((waitStatus < (STATUS_WAIT_0 + waitObjectCount)) && (waitIndex == 1u))
             {
-                (VOID)PmicGlinkUlog_RetrieveRxData(Context, opCode, NULL);
-            }
-
-            if (Context->LastUlogRxValid)
-            {
-                if (Context->LastUlogRxOpcode == opCode)
+                expectedReceived = FALSE;
+                status = PmicGlinkUlog_RetrieveRxData(Context, opCode, &expectedReceived);
+                if (expectedReceived)
                 {
-                    status = Context->LastUlogRxStatus;
                     matchedResponse = TRUE;
                     gPmicGlinkUlogRxInProgress = 0;
                     break;
                 }
-
-                Context->LastUlogRxValid = FALSE;
             }
 
             waitCount++;
