@@ -8548,7 +8548,6 @@ PmicGlinkRxNotificationWorkItem(
             if (PmicGlinkConsumeCommDataPacket(context, priorityOps[i]))
             {
                 (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
-                break;
             }
         }
     }
