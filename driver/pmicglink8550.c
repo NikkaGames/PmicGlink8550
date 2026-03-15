@@ -1914,6 +1914,8 @@ PmicGlinkDevice_RegisterForPnPNotifications(
     {
         status = STATUS_SUCCESS;
 
+        PmicGlinkResetApiInterface();
+
         if (Context->GlinkNotificationEntry != NULL)
         {
             unregisterStatus = IoUnregisterPlugPlayNotification(Context->GlinkNotificationEntry);
