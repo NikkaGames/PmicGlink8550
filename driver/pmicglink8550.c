@@ -6382,12 +6382,12 @@ PmicGlinkGetUSBBattMngrChgStatus(
     }
 
     portIndex = *(ULONG*)InputBuffer;
+    *BytesReturned = 0;
+
     if (portIndex >= PMICGLINK_MAX_PORTS)
     {
         return STATUS_INVALID_PARAMETER;
     }
-
-    *BytesReturned = 0;
 
     now = PmicGlinkQuerySystemTime();
     status = STATUS_SUCCESS;
