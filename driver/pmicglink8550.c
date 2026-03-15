@@ -487,6 +487,9 @@ static VOID PmicGlinkStateNotificationShim(
     _In_ ULONG Event);
 static BOOLEAN PmicGlinkNotifyRxIntentReqShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ SIZE_T RequestedSize);
 static VOID PmicGlinkNotifyRxIntentShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ SIZE_T Size);
+static VOID PmicGlinkNotifyRxSigsShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ ULONG OldSigs, _In_ ULONG NewSigs);
+static VOID PmicGlinkNotifyRxAbortShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_opt_ const VOID* PacketContext);
+static VOID PmicGlinkNotifyTxAbortShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_opt_ const VOID* PacketContext);
 static BOOLEAN PmicGlinkNotifyRxIntentReqCb(_In_opt_ PVOID Handle, _In_opt_ PVOID Context, _In_ SIZE_T RequestedSize);
 static VOID PmicGlinkNotifyRxIntentCb(_In_opt_ PVOID Handle, _In_opt_ PVOID Context, _In_ SIZE_T Size);
 static VOID PmicGlinkTxNotificationCb(_In_opt_ PVOID Handle, _In_opt_ const VOID* Context, _In_opt_ const VOID* PacketContext, _In_opt_ const VOID* Buffer, _In_ SIZE_T BufferSize);
@@ -2578,6 +2581,9 @@ PmicGlink_OpenGlinkChannel(
     openConfig.NotifyState = PmicGlinkStateNotificationShim;
     openConfig.NotifyRxIntentReq = PmicGlinkNotifyRxIntentReqShim;
     openConfig.NotifyRxIntent = PmicGlinkNotifyRxIntentShim;
+    openConfig.NotifyRxSigs = PmicGlinkNotifyRxSigsShim;
+    openConfig.NotifyRxAbort = PmicGlinkNotifyRxAbortShim;
+    openConfig.NotifyTxAbort = PmicGlinkNotifyTxAbortShim;
 
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
     if (status != STATUS_SUCCESS)
@@ -2700,6 +2706,44 @@ PmicGlinkNotifyRxIntentShim(
     )
 {
     PmicGlinkNotifyRxIntentCb(Channel, (PVOID)Context, Size);
+}
+
+static VOID
+PmicGlinkNotifyRxSigsShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_ ULONG OldSigs,
+    _In_ ULONG NewSigs
+    )
+{
+    UNREFERENCED_PARAMETER(Channel);
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(OldSigs);
+    UNREFERENCED_PARAMETER(NewSigs);
+}
+
+static VOID
+PmicGlinkNotifyRxAbortShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_opt_ const VOID* PacketContext
+    )
+{
+    UNREFERENCED_PARAMETER(Channel);
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(PacketContext);
+}
+
+static VOID
+PmicGlinkNotifyTxAbortShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_opt_ const VOID* PacketContext
+    )
+{
+    UNREFERENCED_PARAMETER(Channel);
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(PacketContext);
 }
 
 static VOID
@@ -9285,6 +9329,9 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     openConfig.NotifyState = PmicGlinkUlogStateNotificationShim;
     openConfig.NotifyRxIntentReq = PmicGlinkUlogNotifyRxIntentReqShim;
     openConfig.NotifyRxIntent = PmicGlinkUlogNotifyRxIntentShim;
+    openConfig.NotifyRxSigs = PmicGlinkNotifyRxSigsShim;
+    openConfig.NotifyRxAbort = PmicGlinkNotifyRxAbortShim;
+    openConfig.NotifyTxAbort = PmicGlinkNotifyTxAbortShim;
 
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
     if (status != STATUS_SUCCESS)
