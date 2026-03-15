@@ -449,6 +449,8 @@ static NTSTATUS PmicGlinkAbdUpdateConnections(_In_ PPMIC_GLINK_DEVICE_CONTEXT Co
 static VOID PmicGlinkInitAbdConnections(VOID);
 static NTSTATUS PmicGlinkEvaluateAbdConnectionCount(_In_ WDFDEVICE Device);
 static NTSTATUS PmicGlinkNotifyLinkStateAcpi(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG LinkState);
+static NTSTATUS PmicGlinkEvaluateAcpiMethodInteger(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_reads_(4) const CHAR MethodName[4], _In_ ULONG Value);
+static NTSTATUS PmicGlinkEvaluateAcpiMethodBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_reads_(4) const CHAR MethodName[4], _In_reads_bytes_(DataSize) const VOID* Data, _In_ ULONG DataSize);
 static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
@@ -3972,6 +3974,118 @@ PmicGlinkNotifyLinkStateAcpi(
 
     bytesReturned = 0;
     WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputDescriptor, &inputBuffer, sizeof(inputBuffer));
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&outputDescriptor, outputStorage, sizeof(outputStorage));
+
+    status = WdfIoTargetSendInternalIoctlSynchronously(
+        ioTarget,
+        NULL,
+        IOCTL_ACPI_EVAL_METHOD,
+        &inputDescriptor,
+        &outputDescriptor,
+        NULL,
+        &bytesReturned);
+
+    return status;
+}
+
+static NTSTATUS
+PmicGlinkEvaluateAcpiMethodInteger(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_reads_(4) const CHAR MethodName[4],
+    _In_ ULONG Value
+    )
+{
+    NTSTATUS status;
+    WDFIOTARGET ioTarget;
+    ACPI_EVAL_INPUT_BUFFER_SIMPLE_INTEGER inputBuffer;
+    UCHAR outputStorage[sizeof(ACPI_EVAL_OUTPUT_BUFFER) + ACPI_METHOD_ARGUMENT_LENGTH(sizeof(ULONG))];
+    WDF_MEMORY_DESCRIPTOR inputDescriptor;
+    WDF_MEMORY_DESCRIPTOR outputDescriptor;
+    ULONG_PTR bytesReturned;
+
+    if ((Context == NULL) || (Context->Device == NULL) || (MethodName == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ioTarget = WdfDeviceGetIoTarget(Context->Device);
+    if (ioTarget == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    RtlZeroMemory(&inputBuffer, sizeof(inputBuffer));
+    inputBuffer.Signature = ACPI_EVAL_INPUT_BUFFER_SIMPLE_INTEGER_SIGNATURE;
+    RtlCopyMemory(inputBuffer.MethodName, MethodName, 4u);
+    inputBuffer.IntegerArgument = Value;
+
+    RtlZeroMemory(outputStorage, sizeof(outputStorage));
+    bytesReturned = 0;
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputDescriptor, &inputBuffer, sizeof(inputBuffer));
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&outputDescriptor, outputStorage, sizeof(outputStorage));
+
+    status = WdfIoTargetSendInternalIoctlSynchronously(
+        ioTarget,
+        NULL,
+        IOCTL_ACPI_EVAL_METHOD,
+        &inputDescriptor,
+        &outputDescriptor,
+        NULL,
+        &bytesReturned);
+
+    return status;
+}
+
+static NTSTATUS
+PmicGlinkEvaluateAcpiMethodBuffer(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_reads_(4) const CHAR MethodName[4],
+    _In_reads_bytes_(DataSize) const VOID* Data,
+    _In_ ULONG DataSize
+    )
+{
+    NTSTATUS status;
+    WDFIOTARGET ioTarget;
+    SIZE_T inputSize;
+    USHORT dataSize16;
+    ACPI_EVAL_INPUT_BUFFER_COMPLEX* inputBuffer;
+    PACPI_METHOD_ARGUMENT methodArg;
+    UCHAR inputStorage[sizeof(ACPI_EVAL_INPUT_BUFFER_COMPLEX) + ACPI_METHOD_ARGUMENT_LENGTH(PMICGLINK_OEM_BUFFER_SIZE)];
+    UCHAR outputStorage[sizeof(ACPI_EVAL_OUTPUT_BUFFER) + ACPI_METHOD_ARGUMENT_LENGTH(sizeof(ULONG))];
+    WDF_MEMORY_DESCRIPTOR inputDescriptor;
+    WDF_MEMORY_DESCRIPTOR outputDescriptor;
+    ULONG_PTR bytesReturned;
+
+    if ((Context == NULL)
+        || (Context->Device == NULL)
+        || (MethodName == NULL)
+        || (Data == NULL)
+        || (DataSize == 0u)
+        || (DataSize > PMICGLINK_OEM_BUFFER_SIZE))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ioTarget = WdfDeviceGetIoTarget(Context->Device);
+    if (ioTarget == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    inputSize = sizeof(ACPI_EVAL_INPUT_BUFFER_COMPLEX) + ACPI_METHOD_ARGUMENT_LENGTH(DataSize);
+    dataSize16 = (USHORT)DataSize;
+    RtlZeroMemory(inputStorage, sizeof(inputStorage));
+    inputBuffer = (ACPI_EVAL_INPUT_BUFFER_COMPLEX*)inputStorage;
+    inputBuffer->Signature = ACPI_EVAL_INPUT_BUFFER_COMPLEX_SIGNATURE;
+    RtlCopyMemory(inputBuffer->MethodName, MethodName, 4u);
+    inputBuffer->Size = (ULONG)inputSize;
+
+    methodArg = &inputBuffer->Argument[0];
+    ACPI_METHOD_SET_ARGUMENT_BUFFER(methodArg, Data, dataSize16);
+
+    RtlZeroMemory(outputStorage, sizeof(outputStorage));
+    bytesReturned = 0;
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputDescriptor, inputBuffer, (ULONG)inputSize);
     WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&outputDescriptor, outputStorage, sizeof(outputStorage));
 
     status = WdfIoTargetSendInternalIoctlSynchronously(
@@ -8117,6 +8231,7 @@ PmicGlink_RetrieveRxData(
             case 0x800Bu:
                 if (notificationAux == 0u)
                 {
+                    (VOID)PmicGlinkEvaluateAcpiMethodInteger(Context, "USBN", notificationData);
                     PmicGlinkDDI_NotifyUcsiAlert(Context, notificationId, notificationData);
                 }
                 break;
@@ -8129,19 +8244,30 @@ PmicGlink_RetrieveRxData(
                         Buffer + 12,
                         sizeof(gPmicGlinkUsbcNotification.AsUINT8));
                     gPmicGlinkPendingPan = (UCHAR)gPmicGlinkUsbcNotification.detail.common.port_index;
+                    (VOID)PmicGlinkEvaluateAcpiMethodBuffer(
+                        Context,
+                        "UPAN",
+                        gPmicGlinkUsbcNotification.AsUINT8,
+                        (ULONG)sizeof(gPmicGlinkUsbcNotification.AsUINT8));
                 }
                 break;
 
             case 0x800Eu:
                 Context->EventID = notificationData;
-                if (((notificationData >> 16) == 1u)
-                    && Context->BclCriticalCallbackEnabled
-                    && (Context->BclCriticalCallbackObject != NULL))
+                if ((notificationData >> 16) == 1u)
                 {
-                    ULONG bclArgument;
+                    if (Context->BclCriticalCallbackEnabled
+                        && (Context->BclCriticalCallbackObject != NULL))
+                    {
+                        ULONG bclArgument;
 
-                    bclArgument = notificationData & 0xFFFFu;
-                    ExNotifyCallback(Context->BclCriticalCallbackObject, &bclArgument, NULL);
+                        bclArgument = notificationData & 0xFFFFu;
+                        ExNotifyCallback(Context->BclCriticalCallbackObject, &bclArgument, NULL);
+                    }
+                }
+                else
+                {
+                    (VOID)PmicGlinkEvaluateAcpiMethodInteger(Context, "OEMN", notificationData);
                 }
                 break;
 
