@@ -6844,8 +6844,6 @@ PmicGlinkNotify_Interface_Free(
         Context->BattMiniDeviceLoaded = FALSE;
     }
 
-    Context->Notify = FALSE;
-    (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     return STATUS_SUCCESS;
 }
 
