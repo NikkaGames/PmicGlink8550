@@ -2777,6 +2777,7 @@ PmicGlink_SendData(
     _In_ BOOLEAN WaitForRx
     )
 {
+    GLINK_CHANNEL_CTX* channelHandle;
     NTSTATUS status;
     LARGE_INTEGER pollInterval;
     ULONG waitCount;
@@ -2809,6 +2810,12 @@ PmicGlink_SendData(
     }
 
     if (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL)
+    {
+        return STATUS_RETRY;
+    }
+
+    channelHandle = gPmicGlinkMainChannelHandle;
+    if (channelHandle == NULL)
     {
         return STATUS_RETRY;
     }
@@ -2846,7 +2853,7 @@ PmicGlink_SendData(
         Context->CommData[OpCode].Size = 0u;
     }
     status = gPmicGlinkApiInterface.GLinkTx(
-        gPmicGlinkMainChannelHandle,
+        channelHandle,
         (PVOID)(ULONG_PTR)(ULONG)txCount,
         Buffer,
         BufferLen,
