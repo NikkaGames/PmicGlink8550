@@ -1529,16 +1529,7 @@ PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(
     UNREFERENCED_PARAMETER(InterfaceType);
     UNREFERENCED_PARAMETER(ExposedInterfaceSpecificData);
 
-    if ((Device == NULL) || (ExposedInterface == NULL))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     context = PmicGlinkGetDeviceContext(Device);
-    if (context == NULL)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
 
     exposedDdi = (PPMICGLINK_DEVICE_DDIINTERFACE_TYPE)ExposedInterface;
     ucsiAlertCallback = exposedDdi->PmicGlinkUCSIAlertCallback;
