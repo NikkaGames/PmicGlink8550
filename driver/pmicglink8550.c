@@ -1164,12 +1164,13 @@ PmicGlinkEvtD0Entry(
     PPMIC_GLINK_DEVICE_CONTEXT context;
     WDFIOTARGET ioTarget;
 
+    context = PmicGlinkGetDeviceContext(Device);
+    UNREFERENCED_PARAMETER(context);
+
     if (PreviousState != WdfPowerDeviceD3)
     {
         return STATUS_SUCCESS;
     }
-
-    context = PmicGlinkGetDeviceContext(Device);
 
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget == NULL)
@@ -1178,7 +1179,6 @@ PmicGlinkEvtD0Entry(
     }
 
     (VOID)WdfIoTargetStart(ioTarget);
-    (VOID)PmicGlinkGetDeviceContext(Device);
     return STATUS_SUCCESS;
 }
 
@@ -1247,6 +1247,7 @@ PmicGlinkEvtD0Exit(
 
     if (TargetState == WdfPowerDeviceD3Final)
     {
+        (VOID)PmicGlinkGetDeviceContext(Device);
         (VOID)PmicGlinkNotify_Interface_Free(context);
         (VOID)RegisterDeviceInterfaces(Device, FALSE);
     }
