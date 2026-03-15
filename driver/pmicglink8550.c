@@ -293,7 +293,6 @@ static KEVENT gPmicGlinkRxIntentReqEvent;
 static KEVENT gPmicGlinkRxNotificationEvent;
 static KEVENT gPmicGlinkRxIntentNotificationEvent;
 static LONG gPmicGlinkTxCount;
-static KMUTEX gPmicGlinkUlogTxSync;
 static LONG gPmicGlinkUlogRxInProgress;
 static KEVENT gPmicGlinkUlogTxNotificationEvent;
 static KEVENT gPmicGlinkUlogRxNotificationEvent;
@@ -1968,7 +1967,6 @@ PmicGlinkDevice_InitContext(
     KeInitializeEvent(&gPmicGlinkRxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkRxIntentNotificationEvent, NotificationEvent, FALSE);
     RtlZeroMemory(Context->CommData, sizeof(Context->CommData));
-    KeInitializeMutex(&gPmicGlinkUlogTxSync, 1);
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
     KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkUlogRxNotificationEvent, NotificationEvent, FALSE);
