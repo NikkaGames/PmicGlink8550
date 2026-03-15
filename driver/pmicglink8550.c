@@ -8682,14 +8682,18 @@ PmicGlinkUlogRxNotificationCb(
     _In_ SIZE_T BufferSize
     )
 {
+    GLINK_CHANNEL_CTX* channelHandle;
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     PMICGLINK_COMM_DATA* commSlot;
     NTSTATUS status;
     ULONG messageOp;
     SIZE_T copySize;
 
-    UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(PacketContext);
+
+    channelHandle = (Handle != NULL)
+        ? (GLINK_CHANNEL_CTX*)Handle
+        : gPmicGlinkUlogChannelHandle;
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if ((deviceContext != NULL) && (Buffer != NULL) && (BufferSize > 0))
@@ -8737,10 +8741,10 @@ PmicGlinkUlogRxNotificationCb(
         }
     }
 
-    if ((gPmicGlinkUlogChannelHandle != NULL)
+    if ((channelHandle != NULL)
         && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
-        (VOID)gPmicGlinkApiInterface.GLinkRxDone(gPmicGlinkUlogChannelHandle, Buffer, TRUE);
+        (VOID)gPmicGlinkApiInterface.GLinkRxDone(channelHandle, Buffer, TRUE);
     }
 }
 
@@ -9084,9 +9088,12 @@ PmicGlinkUlogStateNotificationCb(
     _In_ PMICGLINK_CHANNEL_EVENT Event
     )
 {
+    GLINK_CHANNEL_CTX* channelHandle;
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
 
-    UNREFERENCED_PARAMETER(Handle);
+    channelHandle = (Handle != NULL)
+        ? (GLINK_CHANNEL_CTX*)Handle
+        : gPmicGlinkUlogChannelHandle;
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext == NULL)
@@ -9100,10 +9107,14 @@ PmicGlinkUlogStateNotificationCb(
         deviceContext->GlinkChannelUlogFirstConnect = TRUE;
         deviceContext->GlinkChannelUlogConnected = TRUE;
         deviceContext->GlinkChannelUlogRestart = FALSE;
-        if ((gPmicGlinkUlogChannelHandle != NULL)
+        if (channelHandle != NULL)
+        {
+            gPmicGlinkUlogChannelHandle = channelHandle;
+        }
+        if ((channelHandle != NULL)
             && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
         {
-            (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(gPmicGlinkUlogChannelHandle, deviceContext, 12288u);
+            (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(channelHandle, deviceContext, 12288u);
         }
         deviceContext->GlinkUlogRxIntent += 1;
         (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkUlogRegisterInterfaceWorkItem);
@@ -9119,10 +9130,10 @@ PmicGlinkUlogStateNotificationCb(
         break;
 
     case PmicGlinkChannelRemoteDisconnected:
-        if ((gPmicGlinkUlogChannelHandle != NULL)
+        if ((channelHandle != NULL)
             && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
         {
-            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
+            (VOID)gPmicGlinkApiInterface.GLinkClose(channelHandle);
 
             gPmicGlinkUlogChannelHandle = NULL;
             deviceContext->GlinkChannelUlogConnected = FALSE;
@@ -9142,24 +9153,30 @@ PmicGlinkUlogNotifyRxIntentReqCb(
     _In_ SIZE_T RequestedSize
     )
 {
+    GLINK_CHANNEL_CTX* channelHandle;
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     NTSTATUS status;
-    SIZE_T intentSize;
 
-    UNREFERENCED_PARAMETER(Handle);
-    
+    channelHandle = (Handle != NULL)
+        ? (GLINK_CHANNEL_CTX*)Handle
+        : gPmicGlinkUlogChannelHandle;
+
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext == NULL)
     {
         return FALSE;
     }
 
-    intentSize = RequestedSize;
+    if ((channelHandle == NULL)
+        || (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL))
+    {
+        return FALSE;
+    }
 
     status = gPmicGlinkApiInterface.GLinkQueueRxIntent(
-        gPmicGlinkUlogChannelHandle,
+        channelHandle,
         deviceContext,
-        intentSize);
+        RequestedSize);
     return (status == STATUS_SUCCESS) ? TRUE : FALSE;
 }
 
