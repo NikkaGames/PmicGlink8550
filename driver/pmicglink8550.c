@@ -1071,16 +1071,13 @@ PmicGlinkEvtPrepareHardware(
         return status;
     }
 
-    if (gPmicGlinkAcpiInterface.RegisterForDeviceNotifications != NULL)
+    status = gPmicGlinkAcpiInterface.RegisterForDeviceNotifications(
+        gPmicGlinkAcpiInterface.Context,
+        PmicGlinkPlatformUsbc_AcpiNotificationHandler,
+        Device);
+    if (!NT_SUCCESS(status))
     {
-        status = gPmicGlinkAcpiInterface.RegisterForDeviceNotifications(
-            gPmicGlinkAcpiInterface.Context,
-            PmicGlinkPlatformUsbc_AcpiNotificationHandler,
-            Device);
-        if (!NT_SUCCESS(status))
-        {
-            return status;
-        }
+        return status;
     }
 
     status = CrashDump_RegisterGlobalCallbacks(context);
