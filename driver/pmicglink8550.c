@@ -1169,6 +1169,7 @@ PmicGlinkEvtReleaseHardware(
     if (context->DriverContext != NULL)
     {
         context->DriverContext->BattMngrDevice = NULL;
+        context->DriverContext = NULL;
     }
     context->GlinkDeviceLoaded = FALSE;
     if ((gPmicGlinkLinkStateHandle != NULL)
@@ -1982,6 +1983,7 @@ PmicGlinkDevice_InitContext(
     Context->AllReqIntfArrived = FALSE;
     Context->GlinkDeviceLoaded = FALSE;
     Context->ABDAttached = FALSE;
+    Context->DriverContext = NULL;
     Context->InterruptResourceCount = 0;
     Context->IOResourceCount = 0;
     RtlZeroMemory(Context->GpioConnectionId, sizeof(Context->GpioConnectionId));
