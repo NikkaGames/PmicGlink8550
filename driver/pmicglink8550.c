@@ -3804,11 +3804,6 @@ PmicGlinkPower_ModernStandby_Callback(
 
     UNREFERENCED_PARAMETER(Argument2);
 
-    if ((CallbackContext == NULL) || (Argument1 == NULL))
-    {
-        return;
-    }
-
     context = (PPMIC_GLINK_DEVICE_CONTEXT)CallbackContext;
     standbyNotification = (PEP_Modern_Standby_Notif_Struct*)Argument1;
 
