@@ -254,6 +254,9 @@ static LONG gPmicGlinkNotifyGo;
 static UCHAR gPmicGlinkCachedBatteryStatus;
 static KMUTEX gPmicGlinkTxSync;
 static LONG gPmicGlinkRxInProgress;
+static KEVENT gPmicGlinkConnectedEvent;
+static KEVENT gPmicGlinkLocalDisconnectedEvent;
+static KEVENT gPmicGlinkRemoteDisconnectedEvent;
 static KEVENT gPmicGlinkTxNotificationEvent;
 static KEVENT gPmicGlinkRxNotificationEvent;
 static KMUTEX gPmicGlinkUlogTxSync;
@@ -1898,6 +1901,9 @@ PmicGlinkDevice_InitContext(
     Context->Hibernate = FALSE;
     KeInitializeMutex(&gPmicGlinkTxSync, 1);
     (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+    KeInitializeEvent(&gPmicGlinkConnectedEvent, NotificationEvent, FALSE);
+    KeInitializeEvent(&gPmicGlinkLocalDisconnectedEvent, NotificationEvent, FALSE);
+    KeInitializeEvent(&gPmicGlinkRemoteDisconnectedEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkTxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkRxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeMutex(&gPmicGlinkUlogTxSync, 1);
@@ -2310,20 +2316,14 @@ PmicGlink_OpenGlinkChannel(
     NTSTATUS status;
     PMIC_GLINK_OPEN_CONFIG openConfig;
     GLINK_CHANNEL_CTX* channelHandle;
-    BOOLEAN oldFirstConnect;
-    BOOLEAN oldConnected;
-    BOOLEAN oldRestart;
-    BOOLEAN oldLinkStateUp;
 
     if (Context == NULL)
     {
         return STATUS_INVALID_PARAMETER;
     }
 
-    oldFirstConnect = Context->GlinkChannelFirstConnect;
-    oldConnected = Context->GlinkChannelConnected;
-    oldRestart = Context->GlinkChannelRestart;
-    oldLinkStateUp = Context->GlinkLinkStateUp;
+    KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
+    KeInitializeEvent(&gPmicGlinkUlogRxNotificationEvent, NotificationEvent, FALSE);
 
     status = PmicGlinkEnsureApiInterface(Context);
     if (!NT_SUCCESS(status))
@@ -2340,7 +2340,7 @@ PmicGlink_OpenGlinkChannel(
     RtlZeroMemory(&openConfig, sizeof(openConfig));
     openConfig.Transport = "SMEM";
     openConfig.RemoteSs = "lpass";
-    openConfig.Name = "PMIC_BATTMGR_ADSP_APPS";
+    openConfig.Name = "PMIC_RTR_ADSP_APPS";
     openConfig.Options = 0;
     openConfig.Context = Context;
     openConfig.NotifyTxDone = PmicGlinkTxNotificationCb;
@@ -2351,39 +2351,10 @@ PmicGlink_OpenGlinkChannel(
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
     if (!NT_SUCCESS(status) || (channelHandle == NULL))
     {
-        Context->GlinkChannelFirstConnect = oldFirstConnect;
-        Context->GlinkChannelConnected = oldConnected;
-        Context->GlinkChannelRestart = oldRestart;
-        Context->GlinkLinkStateUp = oldLinkStateUp;
         return STATUS_UNSUCCESSFUL;
     }
 
     gPmicGlinkMainChannelHandle = channelHandle;
-    Context->GlinkChannelFirstConnect = TRUE;
-    Context->GlinkChannelConnected = TRUE;
-    Context->GlinkChannelRestart = FALSE;
-    Context->GlinkLinkStateUp = TRUE;
-    if (gPmicGlinkApiInterface.GLinkQueueRxIntent != NULL)
-    {
-        (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(channelHandle, Context, 4096u);
-    }
-    Context->GlinkRxIntent += 1;
-
-    status = PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
-    if (!NT_SUCCESS(status))
-    {
-        if (gPmicGlinkApiInterface.GLinkClose != NULL)
-        {
-            (VOID)gPmicGlinkApiInterface.GLinkClose(channelHandle);
-        }
-        gPmicGlinkMainChannelHandle = NULL;
-        Context->GlinkChannelFirstConnect = oldFirstConnect;
-        Context->GlinkChannelConnected = oldConnected;
-        Context->GlinkChannelRestart = oldRestart;
-        Context->GlinkLinkStateUp = oldLinkStateUp;
-        return STATUS_UNSUCCESSFUL;
-    }
-
     return STATUS_SUCCESS;
 }
 
@@ -2521,12 +2492,23 @@ PmicGlinkStateNotificationCb(
         Context->GlinkChannelConnected = TRUE;
         Context->GlinkChannelRestart = FALSE;
         Context->GlinkLinkStateUp = TRUE;
+        (VOID)KeClearEvent(&gPmicGlinkLocalDisconnectedEvent);
+        (VOID)KeClearEvent(&gPmicGlinkRemoteDisconnectedEvent);
+        (VOID)KeSetEvent(&gPmicGlinkConnectedEvent, IO_NO_INCREMENT, FALSE);
+        if (gPmicGlinkApiInterfaceValid
+            && (gPmicGlinkMainChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.GLinkQueueRxIntent != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(gPmicGlinkMainChannelHandle, Context, 4096u);
+        }
         Context->GlinkRxIntent += 1;
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         break;
 
     case PmicGlinkChannelLocalDisconnected:
         Context->GlinkChannelConnected = FALSE;
+        (VOID)KeClearEvent(&gPmicGlinkConnectedEvent);
+        (VOID)KeSetEvent(&gPmicGlinkLocalDisconnectedEvent, IO_NO_INCREMENT, FALSE);
         if (Context->GlinkChannelRestart && Context->GlinkLinkStateUp)
         {
             (VOID)PmicGlink_OpenGlinkChannel(Context);
@@ -2544,6 +2526,8 @@ PmicGlinkStateNotificationCb(
             gPmicGlinkMainChannelHandle = NULL;
             Context->GlinkChannelConnected = FALSE;
             Context->GlinkChannelRestart = TRUE;
+            (VOID)KeClearEvent(&gPmicGlinkConnectedEvent);
+            (VOID)KeSetEvent(&gPmicGlinkRemoteDisconnectedEvent, IO_NO_INCREMENT, FALSE);
             (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         }
         break;
@@ -2565,6 +2549,11 @@ PmicGlink_SendData(
     NTSTATUS status;
     LARGE_INTEGER pollInterval;
     ULONG waitCount;
+    ULONG waitStatus;
+    ULONG waitIndex;
+    ULONG waitObjectCount;
+    PVOID waitObjects[5];
+    KWAIT_BLOCK waitBlocks[5];
     BOOLEAN matchedResponse;
 
     if ((Buffer == NULL) || (BufferLen == 0))
@@ -2580,6 +2569,12 @@ PmicGlink_SendData(
     if (Context->GlinkChannelRestart
         || !Context->GlinkChannelConnected
         || !Context->GlinkDeviceLoaded)
+    {
+        return STATUS_RETRY;
+    }
+
+    if ((KeReadStateEvent(&gPmicGlinkLocalDisconnectedEvent) != 0)
+        || (KeReadStateEvent(&gPmicGlinkRemoteDisconnectedEvent) != 0))
     {
         return STATUS_RETRY;
     }
@@ -2648,18 +2643,42 @@ PmicGlink_SendData(
         return status;
     }
 
+    waitObjects[0] = &gPmicGlinkConnectedEvent;
+    waitObjects[1] = &gPmicGlinkLocalDisconnectedEvent;
+    waitObjects[2] = &gPmicGlinkRemoteDisconnectedEvent;
+    waitObjects[3] = &gPmicGlinkTxNotificationEvent;
+    waitObjects[4] = &gPmicGlinkRxNotificationEvent;
+    waitObjectCount = RTL_NUMBER_OF(waitObjects);
+
     matchedResponse = FALSE;
     waitCount = 0;
     pollInterval.QuadPart = -200000ll;
     while (waitCount < 5u)
     {
-        if (KeReadStateEvent(&gPmicGlinkRxNotificationEvent) != 0)
+        waitStatus = KeWaitForMultipleObjects(
+            waitObjectCount,
+            waitObjects,
+            WaitAny,
+            Executive,
+            KernelMode,
+            FALSE,
+            &pollInterval,
+            waitBlocks);
+        if (waitStatus < (STATUS_WAIT_0 + waitObjectCount))
         {
-            (VOID)KeClearEvent(&gPmicGlinkRxNotificationEvent);
-        }
-        if (KeReadStateEvent(&gPmicGlinkTxNotificationEvent) != 0)
-        {
-            (VOID)KeClearEvent(&gPmicGlinkTxNotificationEvent);
+            waitIndex = waitStatus - STATUS_WAIT_0;
+            (VOID)KeClearEvent((PKEVENT)waitObjects[waitIndex]);
+            if ((waitIndex == 1u) || (waitIndex == 2u))
+            {
+                status = STATUS_RETRY;
+                break;
+            }
+
+            if (waitIndex != 4u)
+            {
+                waitCount++;
+                continue;
+            }
         }
 
         if (Context->LastRxValid)
@@ -2674,7 +2693,6 @@ PmicGlink_SendData(
             Context->LastRxValid = FALSE;
         }
 
-        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
         waitCount++;
     }
 
@@ -2683,13 +2701,30 @@ PmicGlink_SendData(
         waitCount = 0;
         while (waitCount < 140u)
         {
-            if (KeReadStateEvent(&gPmicGlinkRxNotificationEvent) != 0)
+            waitStatus = KeWaitForMultipleObjects(
+                waitObjectCount,
+                waitObjects,
+                WaitAny,
+                Executive,
+                KernelMode,
+                FALSE,
+                &pollInterval,
+                waitBlocks);
+            if (waitStatus < (STATUS_WAIT_0 + waitObjectCount))
             {
-                (VOID)KeClearEvent(&gPmicGlinkRxNotificationEvent);
-            }
-            if (KeReadStateEvent(&gPmicGlinkTxNotificationEvent) != 0)
-            {
-                (VOID)KeClearEvent(&gPmicGlinkTxNotificationEvent);
+                waitIndex = waitStatus - STATUS_WAIT_0;
+                (VOID)KeClearEvent((PKEVENT)waitObjects[waitIndex]);
+                if ((waitIndex == 1u) || (waitIndex == 2u))
+                {
+                    status = STATUS_RETRY;
+                    break;
+                }
+
+                if (waitIndex != 4u)
+                {
+                    waitCount++;
+                    continue;
+                }
             }
 
             if (Context->LastRxValid)
@@ -2704,12 +2739,11 @@ PmicGlink_SendData(
                 Context->LastRxValid = FALSE;
             }
 
-            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
             waitCount++;
         }
     }
 
-    if (!matchedResponse && WaitForRx)
+    if (!matchedResponse && WaitForRx && NT_SUCCESS(status))
     {
         status = STATUS_TIMEOUT;
     }
@@ -8042,6 +8076,7 @@ PmicGlinkRpeADSPStateNotificationCallback(
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     NTSTATUS status;
     PMIC_GLINK_LINK_ID linkId;
+    PMIC_GLINK_LINK_INFO linkInfo;
 
     UNREFERENCED_PARAMETER(PreviousState);
 
@@ -8069,27 +8104,13 @@ PmicGlinkRpeADSPStateNotificationCallback(
                 gPmicGlinkLinkStateHandle = linkId.Handle;
             }
         }
-
-        deviceContext->GlinkLinkStateUp = TRUE;
-        if (NT_SUCCESS(PmicGlink_OpenGlinkChannel(deviceContext)))
-        {
-            deviceContext->GlinkChannelRestart = FALSE;
-        }
-
-        if ((deviceContext->UlogInitEn != 0)
-            && NT_SUCCESS(PmicGlinkUlog_OpenGlinkChannelUlog(deviceContext)))
-        {
-            deviceContext->GlinkChannelUlogRestart = FALSE;
-        }
     }
-    else
-    {
-        deviceContext->GlinkLinkStateUp = FALSE;
-        deviceContext->GlinkChannelConnected = FALSE;
-        deviceContext->GlinkChannelRestart = TRUE;
-        deviceContext->GlinkChannelUlogConnected = FALSE;
-        deviceContext->GlinkChannelUlogRestart = TRUE;
-    }
+
+    RtlZeroMemory(&linkInfo, sizeof(linkInfo));
+    linkInfo.Xport = "SMEM";
+    linkInfo.RemoteSs = "lpass";
+    linkInfo.LinkState = (*CurrentState != 0) ? 1u : 0u;
+    PmicGLinkRegisterLinkStateCb(&linkInfo, deviceContext);
 }
 
 VOID
@@ -8487,6 +8508,12 @@ PmicGlinkUlogStateNotificationCb(
         deviceContext->GlinkChannelUlogFirstConnect = TRUE;
         deviceContext->GlinkChannelUlogConnected = TRUE;
         deviceContext->GlinkChannelUlogRestart = FALSE;
+        if (gPmicGlinkApiInterfaceValid
+            && (gPmicGlinkUlogChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.GLinkQueueRxIntent != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(gPmicGlinkUlogChannelHandle, deviceContext, 12288u);
+        }
         deviceContext->GlinkUlogRxIntent += 1;
         (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkUlogRegisterInterfaceWorkItem);
         break;
@@ -8642,18 +8669,11 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     NTSTATUS status;
     PMIC_GLINK_OPEN_CONFIG openConfig;
     GLINK_CHANNEL_CTX* channelHandle;
-    BOOLEAN oldFirstConnect;
-    BOOLEAN oldConnected;
-    BOOLEAN oldRestart;
 
     if (Context == NULL)
     {
         return STATUS_INVALID_PARAMETER;
     }
-
-    oldFirstConnect = Context->GlinkChannelUlogFirstConnect;
-    oldConnected = Context->GlinkChannelUlogConnected;
-    oldRestart = Context->GlinkChannelUlogRestart;
 
     status = PmicGlinkEnsureApiInterface(Context);
     if (!NT_SUCCESS(status))
@@ -8682,36 +8702,10 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
     if (!NT_SUCCESS(status) || (channelHandle == NULL))
     {
-        Context->GlinkChannelUlogFirstConnect = oldFirstConnect;
-        Context->GlinkChannelUlogConnected = oldConnected;
-        Context->GlinkChannelUlogRestart = oldRestart;
         return STATUS_UNSUCCESSFUL;
     }
 
     gPmicGlinkUlogChannelHandle = channelHandle;
-    Context->GlinkChannelUlogFirstConnect = TRUE;
-    Context->GlinkChannelUlogConnected = TRUE;
-    Context->GlinkChannelUlogRestart = FALSE;
-    if (gPmicGlinkApiInterface.GLinkQueueRxIntent != NULL)
-    {
-        (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(channelHandle, Context, 12288u);
-    }
-    Context->GlinkUlogRxIntent += 1;
-
-    status = PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkUlogRegisterInterfaceWorkItem);
-    if (!NT_SUCCESS(status))
-    {
-        if (gPmicGlinkApiInterface.GLinkClose != NULL)
-        {
-            (VOID)gPmicGlinkApiInterface.GLinkClose(channelHandle);
-        }
-        gPmicGlinkUlogChannelHandle = NULL;
-        Context->GlinkChannelUlogFirstConnect = oldFirstConnect;
-        Context->GlinkChannelUlogConnected = oldConnected;
-        Context->GlinkChannelUlogRestart = oldRestart;
-        return STATUS_UNSUCCESSFUL;
-    }
-
     return STATUS_SUCCESS;
 }
 
@@ -8852,6 +8846,11 @@ PmicGlinkUlog_SendData(
     NTSTATUS status;
     LARGE_INTEGER pollInterval;
     ULONG waitCount;
+    ULONG waitStatus;
+    ULONG waitIndex;
+    ULONG waitObjectCount;
+    PVOID waitObjects[2];
+    KWAIT_BLOCK waitBlocks[2];
     ULONG opCode;
     BOOLEAN matchedResponse;
     BOOLEAN waitForRx;
@@ -8937,18 +8936,33 @@ PmicGlinkUlog_SendData(
         }
     }
 
+    waitObjects[0] = &gPmicGlinkUlogTxNotificationEvent;
+    waitObjects[1] = &gPmicGlinkUlogRxNotificationEvent;
+    waitObjectCount = RTL_NUMBER_OF(waitObjects);
+
     matchedResponse = FALSE;
     waitCount = 0;
     pollInterval.QuadPart = -200000ll;
     while (waitCount < 50u)
     {
-        if (KeReadStateEvent(&gPmicGlinkUlogRxNotificationEvent) != 0)
+        waitStatus = KeWaitForMultipleObjects(
+            waitObjectCount,
+            waitObjects,
+            WaitAny,
+            Executive,
+            KernelMode,
+            FALSE,
+            &pollInterval,
+            waitBlocks);
+        if (waitStatus < (STATUS_WAIT_0 + waitObjectCount))
         {
-            (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
-        }
-        if (KeReadStateEvent(&gPmicGlinkUlogTxNotificationEvent) != 0)
-        {
-            (VOID)KeClearEvent(&gPmicGlinkUlogTxNotificationEvent);
+            waitIndex = waitStatus - STATUS_WAIT_0;
+            (VOID)KeClearEvent((PKEVENT)waitObjects[waitIndex]);
+            if (waitIndex == 0u)
+            {
+                waitCount++;
+                continue;
+            }
         }
 
         if (Context->LastUlogRxValid)
@@ -8963,7 +8977,6 @@ PmicGlinkUlog_SendData(
             Context->LastUlogRxValid = FALSE;
         }
 
-        (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
         waitCount++;
     }
 
@@ -8972,13 +8985,24 @@ PmicGlinkUlog_SendData(
         waitCount = 0;
         while (waitCount < 50u)
         {
-            if (KeReadStateEvent(&gPmicGlinkUlogRxNotificationEvent) != 0)
+            waitStatus = KeWaitForMultipleObjects(
+                waitObjectCount,
+                waitObjects,
+                WaitAny,
+                Executive,
+                KernelMode,
+                FALSE,
+                &pollInterval,
+                waitBlocks);
+            if (waitStatus < (STATUS_WAIT_0 + waitObjectCount))
             {
-                (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
-            }
-            if (KeReadStateEvent(&gPmicGlinkUlogTxNotificationEvent) != 0)
-            {
-                (VOID)KeClearEvent(&gPmicGlinkUlogTxNotificationEvent);
+                waitIndex = waitStatus - STATUS_WAIT_0;
+                (VOID)KeClearEvent((PKEVENT)waitObjects[waitIndex]);
+                if (waitIndex == 0u)
+                {
+                    waitCount++;
+                    continue;
+                }
             }
 
             if (Context->LastUlogRxValid)
@@ -8993,7 +9017,6 @@ PmicGlinkUlog_SendData(
                 Context->LastUlogRxValid = FALSE;
             }
 
-            (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
             waitCount++;
         }
     }
