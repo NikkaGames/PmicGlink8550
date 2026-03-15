@@ -1957,7 +1957,7 @@ PmicGlinkDevice_InitContext(
     Context->RpeInitialized = FALSE;
     Context->Hibernate = FALSE;
     KeInitializeMutex(&gPmicGlinkTxSync, 1);
-    (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+    gPmicGlinkRxInProgress = 0;
     KeInitializeEvent(&gPmicGlinkConnectedEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkLocalDisconnectedEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkRemoteDisconnectedEvent, NotificationEvent, FALSE);
@@ -1966,7 +1966,7 @@ PmicGlinkDevice_InitContext(
     KeInitializeEvent(&gPmicGlinkRxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkRxIntentNotificationEvent, NotificationEvent, FALSE);
     RtlZeroMemory(Context->CommData, sizeof(Context->CommData));
-    (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
+    gPmicGlinkUlogRxInProgress = 0;
     KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkUlogRxNotificationEvent, NotificationEvent, FALSE);
     RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
@@ -2729,7 +2729,7 @@ PmicGlink_SendData(
 
     waitCount = 0;
     pollInterval.QuadPart = -20000ll;
-    while (InterlockedCompareExchange(&gPmicGlinkRxInProgress, 1, 1) == 1)
+    while (gPmicGlinkRxInProgress == 1)
     {
         if (waitCount >= 0x5DCu)
         {
@@ -2741,7 +2741,7 @@ PmicGlink_SendData(
         waitCount++;
     }
 
-    (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 1);
+    gPmicGlinkRxInProgress = 1;
     KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
 
     status = STATUS_SUCCESS;
@@ -2765,7 +2765,7 @@ PmicGlink_SendData(
         1u);
     if (status != STATUS_SUCCESS)
     {
-        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+        gPmicGlinkRxInProgress = 0;
         return STATUS_UNSUCCESSFUL;
     }
 
@@ -2818,7 +2818,7 @@ PmicGlink_SendData(
             {
                 status = Context->LastRxStatus;
                 matchedResponse = TRUE;
-                (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+                gPmicGlinkRxInProgress = 0;
                 break;
             }
 
@@ -2830,19 +2830,19 @@ PmicGlink_SendData(
 
     if (!NT_SUCCESS(status))
     {
-        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+        gPmicGlinkRxInProgress = 0;
         return status;
     }
 
     if (!matchedResponse && !sawTxNotification)
     {
-        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+        gPmicGlinkRxInProgress = 0;
         return STATUS_TIMEOUT;
     }
 
     if (!WaitForRx)
     {
-        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+        gPmicGlinkRxInProgress = 0;
         return status;
     }
 
@@ -2879,7 +2879,7 @@ PmicGlink_SendData(
                 {
                     status = Context->LastRxStatus;
                     matchedResponse = TRUE;
-                    (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+                    gPmicGlinkRxInProgress = 0;
                     break;
                 }
 
@@ -2895,7 +2895,7 @@ PmicGlink_SendData(
         status = STATUS_TIMEOUT;
     }
 
-    (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+    gPmicGlinkRxInProgress = 0;
     return status;
 }
 
@@ -9484,7 +9484,7 @@ PmicGlinkUlog_SendData(
 
     waitCount = 0;
     pollInterval.QuadPart = -20000ll;
-    while (InterlockedCompareExchange(&gPmicGlinkUlogRxInProgress, 1, 1) == 1)
+    while (gPmicGlinkUlogRxInProgress == 1)
     {
         if (waitCount >= 0x3E8u)
         {
@@ -9495,7 +9495,7 @@ PmicGlinkUlog_SendData(
         waitCount++;
     }
 
-    (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 1);
+    gPmicGlinkUlogRxInProgress = 1;
 
     opCode = 0;
     if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
@@ -9518,7 +9518,7 @@ PmicGlinkUlog_SendData(
         1u);
     if (status != STATUS_SUCCESS)
     {
-        (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
+        gPmicGlinkUlogRxInProgress = 0;
         return STATUS_UNSUCCESSFUL;
     }
 
@@ -9561,7 +9561,7 @@ PmicGlinkUlog_SendData(
             {
                 status = Context->LastUlogRxStatus;
                 matchedResponse = TRUE;
-                (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
+                gPmicGlinkUlogRxInProgress = 0;
                 break;
             }
 
@@ -9607,7 +9607,7 @@ PmicGlinkUlog_SendData(
                 {
                     status = Context->LastUlogRxStatus;
                     matchedResponse = TRUE;
-                    (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
+                    gPmicGlinkUlogRxInProgress = 0;
                     break;
                 }
 
@@ -9623,7 +9623,7 @@ PmicGlinkUlog_SendData(
         status = STATUS_TIMEOUT;
     }
 
-    (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
+    gPmicGlinkUlogRxInProgress = 0;
     return status;
 }
 
