@@ -481,6 +481,8 @@ static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_C
 static VOID PmicGlinkResetApiInterface(VOID);
 static NTSTATUS PmicGlinkEnsureApiInterface(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkEnsureCommDataBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode, _In_ SIZE_T RequiredSize);
+static BOOLEAN PmicGlinkTryExtractMessageOp(_In_opt_ const VOID* Buffer, _In_ SIZE_T BufferSize, _Out_ PULONG MessageOp);
+static NTSTATUS PmicGlinkStoreCommDataPacket(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode, _In_reads_bytes_(BufferSize) const VOID* Buffer, _In_ SIZE_T BufferSize, _In_ BOOLEAN SanitizeWord5);
 static BOOLEAN PmicGlinkIsDeferredNotificationOp(_In_ ULONG OpCode);
 static VOID PmicGlinkClearCommDataSlot(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode);
 static BOOLEAN PmicGlinkGetPendingNotificationOp(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _Out_ PULONG OpCode);
@@ -2494,6 +2496,82 @@ PmicGlinkEnsureCommDataBuffer(
     }
 
     slot->Size = 0u;
+    return STATUS_SUCCESS;
+}
+
+static BOOLEAN
+PmicGlinkTryExtractMessageOp(
+    _In_opt_ const VOID* Buffer,
+    _In_ SIZE_T BufferSize,
+    _Out_ PULONG MessageOp
+    )
+{
+    if (MessageOp == NULL)
+    {
+        return FALSE;
+    }
+
+    *MessageOp = MAXULONG;
+    if ((Buffer == NULL) || (BufferSize < (sizeof(ULONGLONG) + sizeof(ULONG))))
+    {
+        return FALSE;
+    }
+
+    RtlCopyMemory(
+        MessageOp,
+        (const UCHAR*)Buffer + sizeof(ULONGLONG),
+        sizeof(*MessageOp));
+    return TRUE;
+}
+
+static NTSTATUS
+PmicGlinkStoreCommDataPacket(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG OpCode,
+    _In_reads_bytes_(BufferSize) const VOID* Buffer,
+    _In_ SIZE_T BufferSize,
+    _In_ BOOLEAN SanitizeWord5
+    )
+{
+    NTSTATUS status;
+    PMICGLINK_COMM_DATA* slot;
+    SIZE_T copySize;
+
+    if ((Context == NULL)
+        || (Buffer == NULL)
+        || (BufferSize == 0u)
+        || (OpCode >= PMICGLINK_COMM_DATA_SLOTS))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    status = PmicGlinkEnsureCommDataBuffer(Context, OpCode, BufferSize);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    slot = &Context->CommData[OpCode];
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockAcquire(Context->StateLock);
+    }
+
+    copySize = BufferSize;
+    RtlZeroMemory(slot->Buffer, copySize);
+    RtlCopyMemory(slot->Buffer, Buffer, copySize);
+    if (SanitizeWord5 && (copySize >= (sizeof(USHORT) * 6u)))
+    {
+        ((PUSHORT)slot->Buffer)[5] = 0u;
+    }
+
+    slot->Size = (copySize > 0xFFFFu) ? 0xFFFFu : (USHORT)copySize;
+
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockRelease(Context->StateLock);
+    }
+
     return STATUS_SUCCESS;
 }
 
@@ -8596,11 +8674,9 @@ PmicGlinkRxNotificationCb(
 {
     GLINK_CHANNEL_CTX* channelHandle;
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
-    PMICGLINK_COMM_DATA* commSlot;
     NTSTATUS status;
     ULONG messageOp;
     BOOLEAN queueWorkItem;
-    SIZE_T copySize;
 
     UNREFERENCED_PARAMETER(PacketContext);
     UNREFERENCED_PARAMETER(IntentUsed);
@@ -8619,40 +8695,18 @@ PmicGlinkRxNotificationCb(
     queueWorkItem = FALSE;
     if ((Buffer != NULL) && (BufferSize > 0u))
     {
-        if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
-        {
-            RtlCopyMemory(
-                &messageOp,
-                (const UCHAR*)Buffer + sizeof(ULONGLONG),
-                sizeof(messageOp));
-        }
-
+        (VOID)PmicGlinkTryExtractMessageOp(Buffer, BufferSize, &messageOp);
         if (messageOp < PMICGLINK_COMM_DATA_SLOTS)
         {
-            status = PmicGlinkEnsureCommDataBuffer(deviceContext, messageOp, BufferSize);
+            status = PmicGlinkStoreCommDataPacket(
+                deviceContext,
+                messageOp,
+                Buffer,
+                BufferSize,
+                TRUE);
             if (NT_SUCCESS(status))
             {
-                commSlot = &deviceContext->CommData[messageOp];
-                if (deviceContext->StateLock != NULL)
-                {
-                    WdfSpinLockAcquire(deviceContext->StateLock);
-                }
-
-                copySize = BufferSize;
-                RtlZeroMemory(commSlot->Buffer, copySize);
-                RtlCopyMemory(commSlot->Buffer, Buffer, copySize);
-                if (copySize >= (sizeof(USHORT) * 6u))
-                {
-                    ((PUSHORT)commSlot->Buffer)[5] = 0u;
-                }
-
-                commSlot->Size = (copySize > 0xFFFFu) ? 0xFFFFu : (USHORT)copySize;
                 queueWorkItem = PmicGlinkIsDeferredNotificationOp(messageOp);
-
-                if (deviceContext->StateLock != NULL)
-                {
-                    WdfSpinLockRelease(deviceContext->StateLock);
-                }
 
                 if (!queueWorkItem)
                 {
@@ -8937,10 +8991,8 @@ PmicGlinkUlogRxNotificationCb(
 {
     GLINK_CHANNEL_CTX* channelHandle;
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
-    PMICGLINK_COMM_DATA* commSlot;
     NTSTATUS status;
     ULONG messageOp;
-    SIZE_T copySize;
 
     UNREFERENCED_PARAMETER(PacketContext);
 
@@ -8952,43 +9004,23 @@ PmicGlinkUlogRxNotificationCb(
     if ((deviceContext != NULL) && (Buffer != NULL) && (BufferSize > 0))
     {
         messageOp = MAXULONG;
-        if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
+        if (PmicGlinkTryExtractMessageOp(Buffer, BufferSize, &messageOp))
         {
             ((PUSHORT)Buffer)[5] = 0u;
-            RtlCopyMemory(
-                &messageOp,
-                (const UCHAR*)Buffer + sizeof(ULONGLONG),
-                sizeof(messageOp));
         }
 
         if ((messageOp == PMICGLINK_ULOG_SET_PROPERTIES_OPCODE)
             || (messageOp == PMICGLINK_ULOG_GET_LOG_BUFFER_OPCODE)
             || (messageOp == PMICGLINK_ULOG_GET_BUFFER_OPCODE))
         {
-            status = PmicGlinkEnsureCommDataBuffer(deviceContext, messageOp, BufferSize);
+            status = PmicGlinkStoreCommDataPacket(
+                deviceContext,
+                messageOp,
+                Buffer,
+                BufferSize,
+                TRUE);
             if (NT_SUCCESS(status))
             {
-                commSlot = &deviceContext->CommData[messageOp];
-                if (deviceContext->StateLock != NULL)
-                {
-                    WdfSpinLockAcquire(deviceContext->StateLock);
-                }
-
-                copySize = BufferSize;
-                RtlZeroMemory(commSlot->Buffer, copySize);
-                RtlCopyMemory(commSlot->Buffer, Buffer, copySize);
-                if (copySize >= (sizeof(USHORT) * 6u))
-                {
-                    ((PUSHORT)commSlot->Buffer)[5] = 0u;
-                }
-
-                commSlot->Size = (copySize > 0xFFFFu) ? 0xFFFFu : (USHORT)copySize;
-
-                if (deviceContext->StateLock != NULL)
-                {
-                    WdfSpinLockRelease(deviceContext->StateLock);
-                }
-
                 (VOID)KeSetEvent(&gPmicGlinkUlogRxNotificationEvent, IO_NO_INCREMENT, FALSE);
             }
         }
