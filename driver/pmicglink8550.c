@@ -2387,6 +2387,9 @@ PmicGlinkResetApiInterface(
     }
 
     RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+    gPmicGlinkMainChannelHandle = NULL;
+    gPmicGlinkUlogChannelHandle = NULL;
+    gPmicGlinkLinkStateHandle = NULL;
 }
 
 static NTSTATUS
