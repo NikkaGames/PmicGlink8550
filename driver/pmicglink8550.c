@@ -2477,7 +2477,7 @@ PmicGlink_OpenGlinkChannel(
     status = PmicGlinkEnsureApiInterface(Context);
     if (!NT_SUCCESS(status))
     {
-        return status;
+        return STATUS_SUCCESS;
     }
 
     if (gPmicGlinkApiInterface.GLinkOpen == NULL)
@@ -9274,7 +9274,7 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     status = PmicGlinkEnsureApiInterface(Context);
     if (!NT_SUCCESS(status))
     {
-        return status;
+        return STATUS_SUCCESS;
     }
 
     if (gPmicGlinkApiInterface.GLinkOpen == NULL)
