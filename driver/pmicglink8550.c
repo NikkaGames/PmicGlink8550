@@ -483,6 +483,8 @@ static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING
 static VOID PmicGlinkLoadPlatformConfig(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
+static BOOLEAN PmicGlinkIsBattStateCharging(_In_ ULONG BatteryState);
+static BOOLEAN PmicGlinkIsBattStateNotCharging(_In_ ULONG BatteryState);
 static VOID PmicGlinkResetApiInterface(VOID);
 static NTSTATUS PmicGlinkEnsureApiInterface(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkResetCommDataSlots(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN DeleteMemory);
@@ -2238,6 +2240,7 @@ PmicGlinkDevice_InitContext(
     Context->LastChargerPortType = 0;
 
     Context->LegacyBattId.batt_id = 0xFFFF;
+    Context->LegacyBattStateId = 0xCu;
 
     Context->LegacyChargeStatus.power_state = 2;
     Context->LegacyChargeStatus.capacity = 0xFFFFFFFF;
@@ -6458,6 +6461,45 @@ PmicGlinkResolveProprietaryChargerCurrent(
     return 0;
 }
 
+static BOOLEAN
+PmicGlinkIsBattStateCharging(
+    _In_ ULONG BatteryState
+    )
+{
+    switch (BatteryState)
+    {
+    case 2u:  /* FAST */
+    case 3u:  /* TOP_OFF */
+    case 5u:  /* RECHARGE */
+        return TRUE;
+
+    default:
+        return FALSE;
+    }
+}
+
+static BOOLEAN
+PmicGlinkIsBattStateNotCharging(
+    _In_ ULONG BatteryState
+    )
+{
+    switch (BatteryState)
+    {
+    case 1u:   /* NO_CHG */
+    case 4u:   /* DONE */
+    case 6u:   /* TDONE */
+    case 7u:   /* NOT_CHARGING_THERMAL */
+    case 8u:   /* ERROR */
+    case 9u:   /* TEST */
+    case 0xBu: /* INVALID */
+    case 0xCu: /* NA */
+        return TRUE;
+
+    default:
+        return FALSE;
+    }
+}
+
 static NTSTATUS
 PmicGlinkCreateDeviceWorkItem(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
@@ -7663,6 +7705,12 @@ HandleLegacyBattMngrRequest(
     case IOCTL_BATTMNGR_GET_CHARGER_STATUS:
     {
         BATT_MNGR_CHG_STATUS_OUT* outChgStatus;
+        BOOLEAN externalPowerPresent;
+        BOOLEAN usbPowerPresent;
+        BOOLEAN stateCharging;
+        BOOLEAN stateNotCharging;
+        ULONG portIndex;
+        UCHAR usbStatusQueryPort;
         ULONGLONG nowMsec;
 
         if ((OutputBuffer == NULL) || (OutputBufferSize != sizeof(*outChgStatus)))
@@ -7691,7 +7739,59 @@ HandleLegacyBattMngrRequest(
 
         outChgStatus = (BATT_MNGR_CHG_STATUS_OUT*)OutputBuffer;
         *outChgStatus = Context->LegacyChargeStatus;
-        outChgStatus->charging_source = 2;
+        outChgStatus->charging_source = 2u;
+
+        usbStatusQueryPort = 0u;
+        if ((PmicGlinkQuerySystemTime().QuadPart - gPmicGlinkLastUsbIoctlEvent.QuadPart) > 10000000ll)
+        {
+            (VOID)PmicGlink_SyncSendReceive(
+                Context,
+                IOCTL_PMICGLINK_GET_USB_CHG_STATUS,
+                &usbStatusQueryPort,
+                sizeof(usbStatusQueryPort));
+            gPmicGlinkLastUsbIoctlEvent = PmicGlinkQuerySystemTime();
+        }
+
+        usbPowerPresent = FALSE;
+        for (portIndex = 0u; portIndex < PMICGLINK_MAX_PORTS; portIndex++)
+        {
+            if (Context->UsbinPower[portIndex] > 0)
+            {
+                usbPowerPresent = TRUE;
+                break;
+            }
+        }
+
+        stateCharging = PmicGlinkIsBattStateCharging(Context->LegacyBattStateId);
+        stateNotCharging = PmicGlinkIsBattStateNotCharging(Context->LegacyBattStateId);
+        externalPowerPresent = usbPowerPresent
+            || (Context->LastChargerVoltage > 0u)
+            || (Context->LastChargerPortType > 0u)
+            || stateCharging;
+
+        if (externalPowerPresent && (outChgStatus->rate > 0))
+        {
+            outChgStatus->power_state |= (1u | 4u);
+            outChgStatus->power_state &= ~2u;
+        }
+        else if (externalPowerPresent)
+        {
+            outChgStatus->power_state &= ~4u;
+            outChgStatus->power_state |= 1u;
+            if (stateNotCharging)
+            {
+                outChgStatus->power_state &= ~2u;
+            }
+        }
+        else
+        {
+            outChgStatus->power_state &= ~4u;
+            outChgStatus->power_state &= ~1u;
+            if (outChgStatus->rate <= 0)
+            {
+                outChgStatus->power_state |= 2u;
+            }
+        }
         *BytesReturned = sizeof(*outChgStatus);
 
         if (Context->LegacyBattId.batt_id == 0)
@@ -8503,6 +8603,7 @@ PmicGlink_RetrieveRxData(
     case 1u:
         if (BufferSize >= 40u)
         {
+            RtlCopyMemory(&Context->LegacyBattStateId, Buffer + 12, sizeof(Context->LegacyBattStateId));
             RtlCopyMemory(&Context->LegacyChargeStatus.capacity, Buffer + 16, sizeof(Context->LegacyChargeStatus.capacity));
             RtlCopyMemory(&Context->LegacyChargeStatus.rate, Buffer + 20, sizeof(Context->LegacyChargeStatus.rate));
             RtlCopyMemory(&Context->LegacyChargeStatus.voltage, Buffer + 24, sizeof(Context->LegacyChargeStatus.voltage));
