@@ -1197,16 +1197,20 @@ PmicGlinkEvtReleaseHardware(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    PPMIC_GLINK_DRIVER_CONTEXT driverContext;
+    WDFDRIVER driver;
     ULONG opCode;
 
     UNREFERENCED_PARAMETER(ResourcesTranslated);
 
     context = PmicGlinkGetDeviceContext(Device);
-    if (context->DriverContext != NULL)
+    driver = WdfDeviceGetDriver(Device);
+    driverContext = PmicGlinkGetDriverContext(driver);
+    if (driverContext != NULL)
     {
-        context->DriverContext->BattMngrDevice = NULL;
-        context->DriverContext = NULL;
+        driverContext->BattMngrDevice = NULL;
     }
+    context->DriverContext = NULL;
     context->GlinkDeviceLoaded = FALSE;
     if ((gPmicGlinkLinkStateHandle != NULL)
         && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
