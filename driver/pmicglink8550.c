@@ -1254,7 +1254,7 @@ PmicGlinkEvtD0Exit(
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget != NULL)
     {
-        WdfIoTargetPurge(ioTarget, WdfIoTargetPurgeIoAndWait);
+        WdfIoTargetPurge(ioTarget, WdfIoTargetPurgeIo);
     }
 
     return STATUS_SUCCESS;
@@ -1773,9 +1773,8 @@ PmicGlinkInterfaceNotificationCallback(
         }
         else
         {
-            if (deviceContext->ABDAttached && (deviceContext->AbdIoTarget != NULL))
+            if (deviceContext->AbdIoTarget != NULL)
             {
-                (VOID)PmicGlinkAbdUpdateConnections(deviceContext, FALSE);
                 WdfIoTargetClose(deviceContext->AbdIoTarget);
             }
 
@@ -1828,7 +1827,7 @@ PmicGlinkInterfaceNotificationCallback(
         }
         else
         {
-            if (deviceContext->BattMiniDeviceLoaded && (deviceContext->BattMiniIoTarget != NULL))
+            if (deviceContext->BattMiniDeviceLoaded)
             {
                 WdfIoTargetClose(deviceContext->BattMiniIoTarget);
             }
