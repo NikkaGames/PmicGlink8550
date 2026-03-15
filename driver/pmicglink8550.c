@@ -8588,7 +8588,7 @@ PmicGLinkRegisterLinkStateCb(
         return;
     }
 
-    if (LinkInfo->LinkState != 0u)
+    if (LinkInfo->LinkState == 1u)
     {
         deviceContext->GlinkLinkStateUp = TRUE;
         if (NT_SUCCESS(PmicGlink_OpenGlinkChannel(deviceContext)))
@@ -8602,7 +8602,7 @@ PmicGLinkRegisterLinkStateCb(
             deviceContext->GlinkChannelUlogRestart = FALSE;
         }
     }
-    else
+    else if (LinkInfo->LinkState == 0u)
     {
         deviceContext->GlinkLinkStateUp = FALSE;
         deviceContext->GlinkChannelConnected = FALSE;
