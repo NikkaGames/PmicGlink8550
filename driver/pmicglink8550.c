@@ -1153,7 +1153,6 @@ PmicGlinkEvtD0Entry(
     }
 
     context = PmicGlinkGetDeviceContext(Device);
-    context->Hibernate = FALSE;
 
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget == NULL)
@@ -8590,9 +8589,15 @@ PmicGlinkRpeADSPStateNotificationCallback(
         return;
     }
 
-    if (*CurrentState == PMICGLINK_RPE_STATE_ID_PDR_READY_FOR_COMMANDS)
+    if ((*CurrentState == PMICGLINK_RPE_STATE_ID_PDR_READY_FOR_COMMANDS)
+        && !deviceContext->RpeInitialized)
     {
-        status = PmicGlinkEnsureApiInterface(deviceContext);
+        status = STATUS_SUCCESS;
+        if (!deviceContext->Hibernate)
+        {
+            status = PmicGlinkEnsureApiInterface(deviceContext);
+        }
+
         if (NT_SUCCESS(status))
         {
             if (gPmicGlinkLinkStateHandle == NULL)
@@ -8609,7 +8614,10 @@ PmicGlinkRpeADSPStateNotificationCallback(
                 }
             }
 
-            deviceContext->RpeInitialized = (gPmicGlinkLinkStateHandle != NULL) ? TRUE : FALSE;
+            if (gPmicGlinkLinkStateHandle != NULL)
+            {
+                deviceContext->RpeInitialized = TRUE;
+            }
         }
     }
 }
