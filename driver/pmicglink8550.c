@@ -1248,14 +1248,18 @@ PmicGlinkEvtD0Exit(
     if (TargetState == WdfPowerDeviceD3Final)
     {
         (VOID)PmicGlinkGetDeviceContext(Device);
-        (VOID)PmicGlinkNotify_Interface_Free(context);
-        (VOID)RegisterDeviceInterfaces(Device, FALSE);
     }
 
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget != NULL)
     {
         WdfIoTargetPurge(ioTarget, WdfIoTargetPurgeIo);
+    }
+
+    if (TargetState == WdfPowerDeviceD3Final)
+    {
+        (VOID)PmicGlinkNotify_Interface_Free(context);
+        (VOID)RegisterDeviceInterfaces(Device, FALSE);
     }
 
     return STATUS_SUCCESS;
