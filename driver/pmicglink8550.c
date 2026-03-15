@@ -973,6 +973,11 @@ PmicGlinkEvtD0Exit(
     context->GlinkChannelConnected = FALSE;
     context->GlinkChannelRestart = FALSE;
 
+    if (TargetState == WdfPowerDeviceD3Final)
+    {
+        (VOID)RegisterDeviceInterfaces(Device, FALSE);
+    }
+
     return STATUS_SUCCESS;
 }
 
