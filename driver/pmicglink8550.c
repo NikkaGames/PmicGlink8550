@@ -472,6 +472,7 @@ static BOOLEAN PmicGlinkNotifyRxIntentReqCb(_In_opt_ PVOID Handle, _In_opt_ PVOI
 static VOID PmicGlinkNotifyRxIntentCb(_In_opt_ PVOID Handle, _In_opt_ PVOID Context, _In_ SIZE_T Size);
 static VOID PmicGlinkTxNotificationCb(_In_opt_ PVOID Handle, _In_opt_ const VOID* Context, _In_opt_ const VOID* PacketContext, _In_opt_ const VOID* Buffer, _In_ SIZE_T BufferSize);
 static VOID PmicGlinkRxNotificationWorkItem(_In_ WDFWORKITEM WorkItem);
+static NTSTATUS PmicGlink_RetrieveRxData(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_reads_bytes_(BufferSize) const UCHAR* Buffer, _In_ SIZE_T BufferSize);
 static VOID PmicGLinkRegisterLinkStateCb(_In_opt_ PMIC_GLINK_LINK_INFO* LinkInfo, _In_opt_ PVOID Context);
 static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PMICGLINK_CHANNEL_EVENT Event);
 static VOID PmicGlinkRpeADSPStateNotificationCallback(_In_opt_ PVOID Context, _In_ ULONG PreviousState, _In_opt_ PULONG CurrentState);
@@ -2726,6 +2727,15 @@ PmicGlink_SendData(
                 waitCount++;
                 continue;
             }
+
+            if (gPmicGlinkMainRxPacketLength > 0u)
+            {
+                SIZE_T stagedLength;
+
+                stagedLength = gPmicGlinkMainRxPacketLength;
+                gPmicGlinkMainRxPacketLength = 0u;
+                (VOID)PmicGlink_RetrieveRxData(Context, gPmicGlinkMainRxPacket, stagedLength);
+            }
         }
 
         if (Context->LastRxValid)
@@ -2771,6 +2781,15 @@ PmicGlink_SendData(
                 {
                     waitCount++;
                     continue;
+                }
+
+                if (gPmicGlinkMainRxPacketLength > 0u)
+                {
+                    SIZE_T stagedLength;
+
+                    stagedLength = gPmicGlinkMainRxPacketLength;
+                    gPmicGlinkMainRxPacketLength = 0u;
+                    (VOID)PmicGlink_RetrieveRxData(Context, gPmicGlinkMainRxPacket, stagedLength);
                 }
             }
 
@@ -7982,7 +8001,7 @@ PmicGlinkRxNotificationCb(
             ((PUSHORT)gPmicGlinkMainRxPacket)[5] = 0u;
         }
 
-        (VOID)PmicGlink_RetrieveRxData(deviceContext, gPmicGlinkMainRxPacket, copySize);
+        gPmicGlinkMainRxPacketLength = copySize;
         (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
     }
 
