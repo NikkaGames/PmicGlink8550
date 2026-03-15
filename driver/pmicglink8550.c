@@ -471,6 +471,9 @@ static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_C
 static VOID PmicGlinkResetApiInterface(VOID);
 static NTSTATUS PmicGlinkEnsureApiInterface(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkEnsureCommDataBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode, _In_ SIZE_T RequiredSize);
+static BOOLEAN PmicGlinkIsDeferredNotificationOp(_In_ ULONG OpCode);
+static VOID PmicGlinkClearCommDataSlot(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode);
+static BOOLEAN PmicGlinkGetPendingNotificationOp(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _Out_ PULONG OpCode);
 static BOOLEAN PmicGlinkConsumeCommDataPacket(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode);
 static NTSTATUS PmicGlink_OpenGlinkChannel(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
@@ -2485,12 +2488,109 @@ PmicGlinkEnsureCommDataBuffer(
 }
 
 static BOOLEAN
-PmicGlinkConsumeCommDataPacket(
+PmicGlinkIsDeferredNotificationOp(
+    _In_ ULONG OpCode
+    )
+{
+    return ((OpCode == 7u)
+        || (OpCode == 19u)
+        || (OpCode == 22u)
+        || (OpCode == 130u)
+        || (OpCode == 259u));
+}
+
+static VOID
+PmicGlinkClearCommDataSlot(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _In_ ULONG OpCode
     )
 {
     PMICGLINK_COMM_DATA* slot;
+
+    if ((Context == NULL) || (OpCode >= PMICGLINK_COMM_DATA_SLOTS))
+    {
+        return;
+    }
+
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockAcquire(Context->StateLock);
+    }
+
+    slot = &Context->CommData[OpCode];
+    if ((slot->Buffer != NULL) && (slot->Size > 0u))
+    {
+        RtlZeroMemory(slot->Buffer, slot->Size);
+    }
+
+    slot->Size = 0u;
+
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockRelease(Context->StateLock);
+    }
+}
+
+static BOOLEAN
+PmicGlinkGetPendingNotificationOp(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _Out_ PULONG OpCode
+    )
+{
+    static const ULONG notificationOps[] = { 19u, 7u, 22u, 259u, 130u };
+    BOOLEAN found;
+    ULONG i;
+
+    if (OpCode != NULL)
+    {
+        *OpCode = MAXULONG;
+    }
+
+    if (Context == NULL)
+    {
+        return FALSE;
+    }
+
+    found = FALSE;
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockAcquire(Context->StateLock);
+    }
+
+    for (i = 0u; i < ARRAYSIZE(notificationOps); i++)
+    {
+        PMICGLINK_COMM_DATA* slot;
+        ULONG currentOp;
+
+        currentOp = notificationOps[i];
+        slot = &Context->CommData[currentOp];
+        if ((slot->Buffer != NULL) && (slot->Size > 0u))
+        {
+            if (OpCode != NULL)
+            {
+                *OpCode = currentOp;
+            }
+
+            found = TRUE;
+            break;
+        }
+    }
+
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockRelease(Context->StateLock);
+    }
+
+    return found;
+}
+
+static BOOLEAN
+PmicGlinkConsumeCommDataPacket(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG OpCode
+    )
+{
+    BOOLEAN hasPacket;
     BOOLEAN expectedReceived;
 
     if ((Context == NULL) || (OpCode >= PMICGLINK_COMM_DATA_SLOTS))
@@ -2498,20 +2598,31 @@ PmicGlinkConsumeCommDataPacket(
         return FALSE;
     }
 
-    slot = &Context->CommData[OpCode];
-    if ((slot->Buffer == NULL) || (slot->Size == 0u))
+    hasPacket = FALSE;
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockAcquire(Context->StateLock);
+    }
+
+    if ((Context->CommData[OpCode].Buffer != NULL)
+        && (Context->CommData[OpCode].Size > 0u))
+    {
+        hasPacket = TRUE;
+    }
+
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockRelease(Context->StateLock);
+    }
+
+    if (!hasPacket)
     {
         return FALSE;
     }
 
     expectedReceived = FALSE;
     (VOID)PmicGlink_RetrieveRxData(Context, OpCode, &expectedReceived);
-    if ((slot->Buffer != NULL) && (slot->Size > 0u))
-    {
-        RtlZeroMemory(slot->Buffer, slot->Size);
-    }
-
-    slot->Size = 0u;
+    PmicGlinkClearCommDataSlot(Context, OpCode);
     return (expectedReceived != FALSE) ? TRUE : FALSE;
 }
 
@@ -2876,7 +2987,7 @@ PmicGlink_SendData(
     (VOID)KeClearEvent(&gPmicGlinkRxIntentNotificationEvent);
     if (OpCode < PMICGLINK_COMM_DATA_SLOTS)
     {
-        Context->CommData[OpCode].Size = 0u;
+        PmicGlinkClearCommDataSlot(Context, OpCode);
     }
     status = gPmicGlinkApiInterface.GLinkTx(
         channelHandle,
@@ -8473,11 +8584,7 @@ PmicGlinkRxNotificationCb(
                 }
 
                 commSlot->Size = (copySize > 0xFFFFu) ? 0xFFFFu : (USHORT)copySize;
-                queueWorkItem = ((messageOp == 7u)
-                    || (messageOp == 19u)
-                    || (messageOp == 22u)
-                    || (messageOp == 130u)
-                    || (messageOp == 259u));
+                queueWorkItem = PmicGlinkIsDeferredNotificationOp(messageOp);
 
                 if (deviceContext->StateLock != NULL)
                 {
@@ -8501,7 +8608,11 @@ PmicGlinkRxNotificationCb(
 
     if (queueWorkItem)
     {
-        (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkRxNotificationWorkItem);
+        status = PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkRxNotificationWorkItem);
+        if (!NT_SUCCESS(status))
+        {
+            (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
+        }
     }
 }
 
@@ -8597,16 +8708,24 @@ PmicGlinkRxNotificationWorkItem(
 {
     WDFOBJECT parentObject;
     PPMIC_GLINK_DEVICE_CONTEXT context;
-    ULONG i;
-    static const ULONG priorityOps[] = { 19u, 7u, 22u, 259u, 130u };
+    ULONG pendingOp;
+    BOOLEAN expectedReceived;
 
     parentObject = WdfWorkItemGetParentObject(WorkItem);
     context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
-    if (context != NULL)
+
+    if ((context != NULL)
+        && PmicGlinkGetPendingNotificationOp(context, &pendingOp))
     {
-        for (i = 0u; i < ARRAYSIZE(priorityOps); i++)
+        expectedReceived = PmicGlinkConsumeCommDataPacket(context, pendingOp);
+        if (expectedReceived)
         {
-            if (PmicGlinkConsumeCommDataPacket(context, priorityOps[i]))
+            (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
+        }
+
+        if (PmicGlinkGetPendingNotificationOp(context, &pendingOp))
+        {
+            if (!NT_SUCCESS(PmicGlinkCreateDeviceWorkItem(context, PmicGlinkRxNotificationWorkItem)))
             {
                 (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
             }
@@ -9641,6 +9760,11 @@ PmicGlinkUlog_SendData(
     Context->LastUlogRxValid = FALSE;
     (VOID)KeClearEvent(&gPmicGlinkUlogTxNotificationEvent);
     (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
+    if (opCode < PMICGLINK_COMM_DATA_SLOTS)
+    {
+        PmicGlinkClearCommDataSlot(Context, opCode);
+    }
+
     status = gPmicGlinkApiInterface.GLinkTx(
         channelHandle,
         (PVOID)(ULONG_PTR)(ULONG)txCount,
