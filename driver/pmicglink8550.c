@@ -8622,7 +8622,6 @@ PmicGlinkRpeADSPStateNotificationCallback(
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     NTSTATUS status;
     PMIC_GLINK_LINK_ID linkId;
-    PMIC_GLINK_LINK_INFO linkInfo;
 
     UNREFERENCED_PARAMETER(PreviousState);
 
@@ -8659,12 +8658,6 @@ PmicGlinkRpeADSPStateNotificationCallback(
     {
         deviceContext->RpeInitialized = FALSE;
     }
-
-    RtlZeroMemory(&linkInfo, sizeof(linkInfo));
-    linkInfo.Xport = "SMEM";
-    linkInfo.RemoteSs = "lpass";
-    linkInfo.LinkState = (*CurrentState != 0) ? 1u : 0u;
-    PmicGLinkRegisterLinkStateCb(&linkInfo, deviceContext);
 }
 
 NTSTATUS
