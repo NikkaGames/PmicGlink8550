@@ -2026,17 +2026,37 @@ PmicGlink_OpenGlinkChannel(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
+    NTSTATUS status;
+    BOOLEAN oldFirstConnect;
+    BOOLEAN oldConnected;
+    BOOLEAN oldRestart;
+    BOOLEAN oldLinkStateUp;
+
     if (Context == NULL)
     {
         return STATUS_INVALID_PARAMETER;
     }
+
+    oldFirstConnect = Context->GlinkChannelFirstConnect;
+    oldConnected = Context->GlinkChannelConnected;
+    oldRestart = Context->GlinkChannelRestart;
+    oldLinkStateUp = Context->GlinkLinkStateUp;
 
     Context->GlinkChannelFirstConnect = TRUE;
     Context->GlinkChannelConnected = TRUE;
     Context->GlinkChannelRestart = FALSE;
     Context->GlinkLinkStateUp = TRUE;
 
-    return PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
+    status = PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
+    if (!NT_SUCCESS(status))
+    {
+        Context->GlinkChannelFirstConnect = oldFirstConnect;
+        Context->GlinkChannelConnected = oldConnected;
+        Context->GlinkChannelRestart = oldRestart;
+        Context->GlinkLinkStateUp = oldLinkStateUp;
+    }
+
+    return status;
 }
 
 static VOID
@@ -7619,19 +7639,18 @@ PmicGlinkUlogRegisterInterfaceWorkItem(
                     {
                         context->UlogTimer = NULL;
                     }
-                }
 
-                if (context->UlogTimer != NULL)
-                {
-                    dueTime100ns = (context->UlogInterval != 0u)
-                        ? (-((LONGLONG)context->UlogInterval * PMICGLINK_100NS_PER_SECOND))
-                        : PMICGLINK_ULOG_DEFAULT_TIMER_DUE_TIME_100NS;
-                    (VOID)WdfTimerStart(context->UlogTimer, dueTime100ns);
+                    if (context->UlogTimer != NULL)
+                    {
+                        dueTime100ns = (context->UlogInterval != 0u)
+                            ? (-((LONGLONG)context->UlogInterval * PMICGLINK_100NS_PER_SECOND))
+                            : PMICGLINK_ULOG_DEFAULT_TIMER_DUE_TIME_100NS;
+                        (VOID)WdfTimerStart(context->UlogTimer, dueTime100ns);
+                    }
                 }
             }
         }
 
-        context->GlinkChannelUlogFirstConnect = FALSE;
     }
 
     WdfObjectDelete(WorkItem);
@@ -7977,15 +7996,33 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
+    NTSTATUS status;
+    BOOLEAN oldFirstConnect;
+    BOOLEAN oldConnected;
+    BOOLEAN oldRestart;
+
     if (Context == NULL)
     {
         return STATUS_INVALID_PARAMETER;
     }
 
+    oldFirstConnect = Context->GlinkChannelUlogFirstConnect;
+    oldConnected = Context->GlinkChannelUlogConnected;
+    oldRestart = Context->GlinkChannelUlogRestart;
+
     Context->GlinkChannelUlogFirstConnect = TRUE;
     Context->GlinkChannelUlogConnected = TRUE;
     Context->GlinkChannelUlogRestart = FALSE;
-    return PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkUlogRegisterInterfaceWorkItem);
+
+    status = PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkUlogRegisterInterfaceWorkItem);
+    if (!NT_SUCCESS(status))
+    {
+        Context->GlinkChannelUlogFirstConnect = oldFirstConnect;
+        Context->GlinkChannelUlogConnected = oldConnected;
+        Context->GlinkChannelUlogRestart = oldRestart;
+    }
+
+    return status;
 }
 
 NTSTATUS
