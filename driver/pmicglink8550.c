@@ -1852,49 +1852,6 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             Context->BattMiniNotificationEntry = NULL;
         }
 
-        WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-        if (Context->BattMiniDeviceLoaded)
-        {
-            WdfIoTargetClose(Context->BattMiniIoTarget);
-        }
-
-        Context->BattMiniDeviceLoaded = FALSE;
-        Context->NotificationFlag = FALSE;
-        WdfWaitLockRelease(Context->BattMiniNotifyLock);
-
-        if ((gPmicGlinkLinkStateHandle != NULL)
-            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
-        {
-            (VOID)gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
-            gPmicGlinkLinkStateHandle = NULL;
-        }
-
-        if ((gPmicGlinkMainChannelHandle != NULL)
-            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
-        {
-            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
-            gPmicGlinkMainChannelHandle = NULL;
-        }
-
-        if ((gPmicGlinkUlogChannelHandle != NULL)
-            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
-        {
-            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
-            gPmicGlinkUlogChannelHandle = NULL;
-        }
-
-        PmicGlinkResetApiInterface();
-        Context->RpeInitialized = FALSE;
-        Context->GlinkLinkStateUp = FALSE;
-
-        Context->AllReqIntfArrived = FALSE;
-        Context->ABDAttached = FALSE;
-        Context->GlinkDeviceLoaded = FALSE;
-        Context->NotificationFlag = FALSE;
-        Context->GlinkChannelConnected = FALSE;
-        Context->GlinkChannelRestart = FALSE;
-        Context->GlinkChannelUlogConnected = FALSE;
-        Context->GlinkChannelUlogRestart = FALSE;
         return status;
     }
 
