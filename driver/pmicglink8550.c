@@ -312,7 +312,6 @@ static ULONG gPmicGlinkUlogInitDataLength;
 static UCHAR gPmicGlinkUlogInitPrinted;
 static ACPI_INTERFACE_STANDARD2 gPmicGlinkAcpiInterface;
 static PMIC_GLINK_API_INTERFACE gPmicGlinkApiInterface;
-static BOOLEAN gPmicGlinkApiInterfaceValid;
 static GLINK_CHANNEL_CTX* gPmicGlinkMainChannelHandle;
 static GLINK_CHANNEL_CTX* gPmicGlinkUlogChannelHandle;
 static PVOID gPmicGlinkLinkStateHandle;
@@ -1971,7 +1970,6 @@ PmicGlinkDevice_InitContext(
     KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkUlogRxNotificationEvent, NotificationEvent, FALSE);
     RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
-    gPmicGlinkApiInterfaceValid = FALSE;
     gPmicGlinkMainChannelHandle = NULL;
     gPmicGlinkUlogChannelHandle = NULL;
     gPmicGlinkLinkStateHandle = NULL;
@@ -2346,7 +2344,7 @@ PmicGlinkEnsureApiInterface(
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (gPmicGlinkApiInterfaceValid)
+    if (gPmicGlinkApiInterface.GLinkOpen != NULL)
     {
         return STATUS_SUCCESS;
     }
@@ -2364,7 +2362,6 @@ PmicGlinkEnsureApiInterface(
         return status;
     }
 
-    gPmicGlinkApiInterfaceValid = TRUE;
     return STATUS_SUCCESS;
 }
 
