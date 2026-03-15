@@ -442,6 +442,7 @@ static VOID PmicGlinkPlatformSetState_Request_Write_WorkItem(_In_ WDFWORKITEM Wo
 static VOID PmicGlinkPlatformUsbc_AcpiNotificationHandler(_In_opt_ PVOID Context, _In_ ULONG NotifyValue);
 static NTSTATUS PmicGlinkEnsureBclCriticalCallback(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static VOID PmicGlinkNotifyBattMiniStatusFromGlink(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG NotificationData);
 static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkAbdUpdateConnections(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN Register);
@@ -3757,6 +3758,76 @@ PmicGlinkNotify_PingBattMiniClass(
 {
     UNREFERENCED_PARAMETER(Context);
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 1);
+}
+
+static VOID
+PmicGlinkNotifyBattMiniStatusFromGlink(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG NotificationData
+    )
+{
+    SIZE_T notifyBytesReturned;
+    NTSTATUS notifyStatus;
+
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    PmicGlinkNotify_PingBattMiniClass(Context);
+    if (InterlockedExchange(&gPmicGlinkNotifyGo, 0) == 0)
+    {
+        return;
+    }
+
+    if (Context->BattMiniNotifyLock != NULL)
+    {
+        WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+    }
+
+    if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+    {
+        notifyBytesReturned = 0u;
+        notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
+            Context->BattMiniIoTarget,
+            PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE,
+            NULL,
+            0u,
+            NULL,
+            0u,
+            PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
+            &notifyBytesReturned);
+        if (NT_SUCCESS(notifyStatus))
+        {
+            Context->LegacyStatusNotificationPending = TRUE;
+        }
+
+        if ((NotificationData & 0xFFu) == 0x83u)
+        {
+            ULONG battMiniNotifyArgument;
+
+            battMiniNotifyArgument = (NotificationData >> 8);
+            notifyBytesReturned = 0u;
+            notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
+                Context->BattMiniIoTarget,
+                PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
+                &battMiniNotifyArgument,
+                sizeof(battMiniNotifyArgument),
+                NULL,
+                0u,
+                PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
+                &notifyBytesReturned);
+            if (NT_SUCCESS(notifyStatus))
+            {
+                Context->LegacyStatusNotificationPending = TRUE;
+            }
+        }
+    }
+
+    if (Context->BattMiniNotifyLock != NULL)
+    {
+        WdfWaitLockRelease(Context->BattMiniNotifyLock);
+    }
 }
 
 static VOID
@@ -7998,6 +8069,102 @@ PmicGlink_RetrieveRxData(
             }
         }
         break;
+
+    case 7u:
+    case 19u:
+    case 22u:
+    case 130u:
+    case 259u:
+    {
+        ULONG notificationId;
+        ULONG notificationType;
+        ULONG notificationData;
+        ULONG notificationAux;
+
+        notificationId = 0u;
+        notificationType = 0u;
+        notificationData = 0u;
+        notificationAux = 0u;
+
+        if (BufferSize >= sizeof(ULONG))
+        {
+            RtlCopyMemory(&notificationId, Buffer, sizeof(notificationId));
+        }
+
+        if (BufferSize >= (sizeof(ULONG) * 2u))
+        {
+            RtlCopyMemory(&notificationType, Buffer + sizeof(ULONG), sizeof(notificationType));
+        }
+
+        if (BufferSize >= (sizeof(ULONG) * 4u))
+        {
+            RtlCopyMemory(&notificationData, Buffer + (sizeof(ULONG) * 3u), sizeof(notificationData));
+        }
+
+        if (BufferSize >= (sizeof(ULONG) * 5u))
+        {
+            RtlCopyMemory(&notificationAux, Buffer + (sizeof(ULONG) * 4u), sizeof(notificationAux));
+        }
+
+        if (notificationType == 2u)
+        {
+            switch (notificationId)
+            {
+            case 0x800Au:
+                PmicGlinkNotifyBattMiniStatusFromGlink(Context, notificationData);
+                break;
+
+            case 0x800Bu:
+                if (notificationAux == 0u)
+                {
+                    PmicGlinkDDI_NotifyUcsiAlert(Context, notificationId, notificationData);
+                }
+                break;
+
+            case 0x800Cu:
+                if (BufferSize >= (12u + sizeof(gPmicGlinkUsbcNotification.AsUINT8)))
+                {
+                    RtlCopyMemory(
+                        gPmicGlinkUsbcNotification.AsUINT8,
+                        Buffer + 12,
+                        sizeof(gPmicGlinkUsbcNotification.AsUINT8));
+                    gPmicGlinkPendingPan = (UCHAR)gPmicGlinkUsbcNotification.detail.common.port_index;
+                }
+                break;
+
+            case 0x800Eu:
+                Context->EventID = notificationData;
+                if (((notificationData >> 16) == 1u)
+                    && Context->BclCriticalCallbackEnabled
+                    && (Context->BclCriticalCallbackObject != NULL))
+                {
+                    ULONG bclArgument;
+
+                    bclArgument = notificationData & 0xFFFFu;
+                    ExNotifyCallback(Context->BclCriticalCallbackObject, &bclArgument, NULL);
+                }
+                break;
+
+            case 0x8010u:
+                if (notificationData == 128u)
+                {
+                    KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
+                }
+                break;
+
+            default:
+                break;
+            }
+        }
+
+        Context->LastRxStatus = STATUS_SUCCESS;
+        Context->LastRxValid = FALSE;
+        if (ExpectedReceived != NULL)
+        {
+            *ExpectedReceived = FALSE;
+        }
+        return STATUS_SUCCESS;
+    }
 
     default:
         if (BufferSize >= sizeof(gPmicGlinkUsbcNotification.AsUINT8))
