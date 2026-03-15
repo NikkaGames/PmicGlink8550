@@ -2645,7 +2645,6 @@ PmicGlinkStateNotificationCb(
         Context->GlinkChannelFirstConnect = TRUE;
         Context->GlinkChannelConnected = TRUE;
         Context->GlinkChannelRestart = FALSE;
-        Context->GlinkLinkStateUp = TRUE;
         (VOID)KeClearEvent(&gPmicGlinkLocalDisconnectedEvent);
         (VOID)KeClearEvent(&gPmicGlinkRemoteDisconnectedEvent);
         (VOID)KeSetEvent(&gPmicGlinkConnectedEvent, IO_NO_INCREMENT, FALSE);
