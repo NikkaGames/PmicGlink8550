@@ -1558,6 +1558,7 @@ PmicGlinkInterfaceNotificationCallback(
     PDEVICE_INTERFACE_CHANGE_NOTIFICATION notification;
     BOOLEAN arrival;
     NTSTATUS status;
+    ULONG currentState;
 
     if ((NotificationStructure == NULL) || (Context == NULL))
     {
@@ -1585,11 +1586,15 @@ PmicGlinkInterfaceNotificationCallback(
     {
         deviceContext->GlinkDeviceLoaded = arrival;
         deviceContext->AllReqIntfArrived = (deviceContext->GlinkDeviceLoaded && deviceContext->ABDAttached) ? TRUE : FALSE;
-        deviceContext->GlinkLinkStateUp = arrival;
+        if (!arrival)
+        {
+            deviceContext->GlinkLinkStateUp = FALSE;
+        }
 
         if (arrival)
         {
-            (VOID)PmicGlink_OpenGlinkChannel(deviceContext);
+            currentState = PMICGLINK_RPE_STATE_ID_PDR_READY_FOR_COMMANDS;
+            PmicGlinkRpeADSPStateNotificationCallback(deviceContext->Device, 0u, &currentState);
             (VOID)PmicGlinkEnsureBclCriticalCallback(deviceContext);
         }
         else
