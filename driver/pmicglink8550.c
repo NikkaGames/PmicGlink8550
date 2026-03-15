@@ -2523,6 +2523,11 @@ PmicGlink_OpenGlinkChannel(
         return STATUS_SUCCESS;
     }
 
+    if (gPmicGlinkApiInterface.GLinkOpen == NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+
     channelHandle = NULL;
     RtlZeroMemory(&openConfig, sizeof(openConfig));
     openConfig.Transport = "SMEM";
@@ -9314,6 +9319,11 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
 
     status = PmicGlinkEnsureApiInterface(Context);
     if (!NT_SUCCESS(status))
+    {
+        return STATUS_SUCCESS;
+    }
+
+    if (gPmicGlinkApiInterface.GLinkOpen == NULL)
     {
         return STATUS_SUCCESS;
     }
