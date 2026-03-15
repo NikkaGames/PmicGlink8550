@@ -319,6 +319,7 @@ static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_C
 static NTSTATUS PmicGlink_OpenGlinkChannel(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PMICGLINK_CHANNEL_EVENT Event);
+static VOID PmicGlinkRpeADSPStateNotificationCallback(_In_opt_ PVOID Context, _In_ ULONG PreviousState, _In_opt_ PULONG CurrentState);
 static VOID PmicGlinkUlogTimerFunction(_In_ WDFTIMER Timer);
 static NTSTATUS PmicGlinkUlogSendSetPropertiesRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUlogSendGetLogBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
@@ -873,6 +874,7 @@ PmicGlinkEvtPrepareHardware(
 {
     NTSTATUS status;
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    ULONG currentState;
 
     UNREFERENCED_PARAMETER(ResourcesRaw);
     UNREFERENCED_PARAMETER(ResourcesTranslated);
@@ -880,8 +882,8 @@ PmicGlinkEvtPrepareHardware(
     context = PmicGlinkGetDeviceContext(Device);
     context->GlinkDeviceLoaded = TRUE;
     context->AllReqIntfArrived = TRUE;
-    context->GlinkLinkStateUp = TRUE;
-    PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelConnected);
+    currentState = 1u;
+    PmicGlinkRpeADSPStateNotificationCallback(context, 0u, &currentState);
 
     status = CrashDump_RegisterGlobalCallbacks(context);
     if (!NT_SUCCESS(status))
