@@ -984,6 +984,7 @@ PmicGlinkEvtD0Exit(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    WDFIOTARGET ioTarget;
 
     context = PmicGlinkGetDeviceContext(Device);
 
@@ -1003,6 +1004,12 @@ PmicGlinkEvtD0Exit(
     if (TargetState == WdfPowerDeviceD3Final)
     {
         (VOID)RegisterDeviceInterfaces(Device, FALSE);
+    }
+
+    ioTarget = WdfDeviceGetIoTarget(Device);
+    if (ioTarget != NULL)
+    {
+        WdfIoTargetPurge(ioTarget, WdfIoTargetPurgeIoAndWait);
     }
 
     return STATUS_SUCCESS;
