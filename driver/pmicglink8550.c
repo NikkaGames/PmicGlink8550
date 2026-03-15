@@ -3653,8 +3653,16 @@ PmicGlinkPlatformQcmb_PreShutdown_Cmd(
     }
 
     Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x4u;
+    if ((CmdBitMask & 0xFFu) < 4u)
+    {
+        status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
+        if (NT_SUCCESS(status))
+        {
+            (VOID)PmicGlink_SendData(Context, 0x81u, qcmbMessage, sizeof(qcmbMessage), TRUE);
+        }
+    }
 
-    return status;
+    return STATUS_SUCCESS;
 }
 
 static NTSTATUS
@@ -3703,16 +3711,14 @@ PmicGlinkPlatformQcmb_GetChargerInfo_Cmd(
         return status;
     }
 
-    if ((qcmbStatus & 0xEu) != 0x4u)
+    if ((qcmbStatus & 0xEu) == 0x4u)
     {
-        return STATUS_UNSUCCESSFUL;
+        WdfSpinLockAcquire(Context->StateLock);
+        ChargerInfo->currentChargerPowerUW = Context->QcmbCurrentChargerPowerUW;
+        ChargerInfo->goodChargerThresholdUW = Context->QcmbGoodChargerThresholdUW;
+        ChargerInfo->chargerStatusInfo.AsUINT32 = Context->QcmbChargerStatusInfo;
+        WdfSpinLockRelease(Context->StateLock);
     }
-
-    WdfSpinLockAcquire(Context->StateLock);
-    ChargerInfo->currentChargerPowerUW = Context->QcmbCurrentChargerPowerUW;
-    ChargerInfo->goodChargerThresholdUW = Context->QcmbGoodChargerThresholdUW;
-    ChargerInfo->chargerStatusInfo.AsUINT32 = Context->QcmbChargerStatusInfo;
-    WdfSpinLockRelease(Context->StateLock);
 
     return STATUS_SUCCESS;
 }
