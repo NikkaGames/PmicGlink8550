@@ -1635,9 +1635,7 @@ PmicGlinkInterfaceNotificationCallback(
             RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
 
             deviceContext->GlinkChannelConnected = FALSE;
-            deviceContext->GlinkChannelRestart = TRUE;
             deviceContext->GlinkChannelUlogConnected = FALSE;
-            deviceContext->GlinkChannelUlogRestart = TRUE;
             deviceContext->BclCriticalCallbackEnabled = FALSE;
             (VOID)KeClearEvent(&gPmicGlinkConnectedEvent);
         }
