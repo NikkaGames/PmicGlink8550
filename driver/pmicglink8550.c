@@ -2791,7 +2791,7 @@ PmicGlink_SendData(
     if (status != STATUS_SUCCESS)
     {
         (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
-        return STATUS_RETRY;
+        return STATUS_UNSUCCESSFUL;
     }
 
     if (!WaitForRx)
@@ -9548,7 +9548,7 @@ PmicGlinkUlog_SendData(
         if (status != STATUS_SUCCESS)
         {
             (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
-            return STATUS_RETRY;
+            return STATUS_UNSUCCESSFUL;
         }
     }
 
