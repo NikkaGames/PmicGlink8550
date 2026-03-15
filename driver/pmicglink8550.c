@@ -3800,11 +3800,6 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     SIZE_T notifyBytesReturned;
     NTSTATUS notifyStatus;
 
-    if (Context == NULL)
-    {
-        return;
-    }
-
     PmicGlinkNotify_PingBattMiniClass(Context);
     if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) == 0)
     {
