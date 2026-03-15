@@ -2474,9 +2474,6 @@ PmicGlink_OpenGlinkChannel(
         return STATUS_INVALID_PARAMETER;
     }
 
-    KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
-    KeInitializeEvent(&gPmicGlinkUlogRxNotificationEvent, NotificationEvent, FALSE);
-
     status = PmicGlinkEnsureApiInterface(Context);
     if (!NT_SUCCESS(status))
     {
@@ -9281,6 +9278,9 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     {
         return STATUS_INVALID_PARAMETER;
     }
+
+    KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
+    KeInitializeEvent(&gPmicGlinkUlogRxNotificationEvent, NotificationEvent, FALSE);
 
     status = PmicGlinkEnsureApiInterface(Context);
     if (!NT_SUCCESS(status))
