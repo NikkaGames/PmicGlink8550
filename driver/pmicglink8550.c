@@ -441,7 +441,7 @@ static VOID PmicGlinkPlatformUsbc_Request_Write_WorkItem(_In_ WDFWORKITEM WorkIt
 static VOID PmicGlinkPlatformSetState_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkPlatformUsbc_AcpiNotificationHandler(_In_opt_ PVOID Context, _In_ ULONG NotifyValue);
 static NTSTATUS PmicGlinkEnsureBclCriticalCallback(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
-static VOID PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static NTSTATUS PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkNotifyBattMiniStatusFromGlink(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG NotificationData);
 static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
@@ -1372,18 +1372,6 @@ RegisterDeviceInterfaces(
             WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_BATT_MNGR, NULL, FALSE);
             WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL, FALSE);
 
-            if (context->ModernStandbyCallbackHandle != NULL)
-            {
-                ExUnregisterCallback(context->ModernStandbyCallbackHandle);
-                context->ModernStandbyCallbackHandle = NULL;
-            }
-
-            if (context->ModernStandbyCallbackObject != NULL)
-            {
-                ObDereferenceObject(context->ModernStandbyCallbackObject);
-                context->ModernStandbyCallbackObject = NULL;
-            }
-
             if (context->ABDAttached && (context->AbdIoTarget != NULL))
             {
                 (VOID)PmicGlinkAbdUpdateConnections(context, FALSE);
@@ -1391,6 +1379,18 @@ RegisterDeviceInterfaces(
 
             context->DdiInterface.PmicGlinkUCSIAlertCallback = NULL;
             context->DeviceInterfacesRegistered = FALSE;
+        }
+
+        if (context->ModernStandbyCallbackHandle != NULL)
+        {
+            ExUnregisterCallback(context->ModernStandbyCallbackHandle);
+            context->ModernStandbyCallbackHandle = NULL;
+        }
+
+        if (context->ModernStandbyCallbackObject != NULL)
+        {
+            ObDereferenceObject(context->ModernStandbyCallbackObject);
+            context->ModernStandbyCallbackObject = NULL;
         }
 
         return STATUS_SUCCESS;
@@ -1906,7 +1906,7 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         if (Context->BattMiniNotifyLock != NULL)
         {
             WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-            if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+            if (Context->BattMiniDeviceLoaded)
             {
                 WdfIoTargetClose(Context->BattMiniIoTarget);
             }
@@ -3834,13 +3834,14 @@ PmicGlinkRegistryQuery(
     return status;
 }
 
-static VOID
+static NTSTATUS
 PmicGlinkNotify_PingBattMiniClass(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
     UNREFERENCED_PARAMETER(Context);
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 1);
+    return STATUS_SUCCESS;
 }
 
 static VOID
@@ -3868,7 +3869,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
     }
 
-    if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+    if (Context->BattMiniDeviceLoaded)
     {
         notifyBytesReturned = 0u;
         notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
@@ -6138,7 +6139,7 @@ PmicGlink_OemHandleCommand(
 {
     if ((Context == NULL) || (InputBuffer == NULL) || (IsOEMCmd == NULL))
     {
-        return STATUS_UNSUCCESSFUL;
+        return STATUS_INVALID_PARAMETER;
     }
 
     *IsOEMCmd = FALSE;
@@ -7230,7 +7231,7 @@ HandleLegacyBattMngrRequest(
                 WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
             }
 
-            if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+            if (Context->BattMiniDeviceLoaded)
             {
                 SIZE_T notifyBytesReturned;
                 NTSTATUS notifyStatus;
@@ -7271,7 +7272,7 @@ HandleLegacyBattMngrRequest(
                     WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
                 }
 
-                if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+                if (Context->BattMiniDeviceLoaded)
                 {
                     SIZE_T notifyBytesReturned;
                     NTSTATUS notifyStatus;
