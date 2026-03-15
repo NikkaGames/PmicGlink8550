@@ -1916,13 +1916,6 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             WdfWaitLockRelease(Context->BattMiniNotifyLock);
         }
 
-        if (Context->BclCriticalCallbackObject != NULL)
-        {
-            ObDereferenceObject(Context->BclCriticalCallbackObject);
-            Context->BclCriticalCallbackObject = NULL;
-        }
-        Context->BclCriticalCallbackEnabled = FALSE;
-
         if ((gPmicGlinkLinkStateHandle != NULL)
             && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
         {
