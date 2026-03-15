@@ -1604,9 +1604,27 @@ PmicGlinkInterfaceNotificationCallback(
         }
         else
         {
+            if (gPmicGlinkApiInterfaceValid && (gPmicGlinkApiInterface.GLinkClose != NULL))
+            {
+                if (gPmicGlinkMainChannelHandle != NULL)
+                {
+                    (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
+                    gPmicGlinkMainChannelHandle = NULL;
+                }
+
+                if (gPmicGlinkUlogChannelHandle != NULL)
+                {
+                    (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
+                    gPmicGlinkUlogChannelHandle = NULL;
+                }
+            }
+
             deviceContext->GlinkChannelConnected = FALSE;
             deviceContext->GlinkChannelRestart = TRUE;
+            deviceContext->GlinkChannelUlogConnected = FALSE;
+            deviceContext->GlinkChannelUlogRestart = TRUE;
             deviceContext->BclCriticalCallbackEnabled = FALSE;
+            (VOID)KeClearEvent(&gPmicGlinkConnectedEvent);
         }
 
         return STATUS_SUCCESS;
@@ -8606,21 +8624,29 @@ PmicGlinkRpeADSPStateNotificationCallback(
     if (*CurrentState != 0)
     {
         status = PmicGlinkEnsureApiInterface(deviceContext);
-        if (NT_SUCCESS(status)
-            && (gPmicGlinkLinkStateHandle == NULL)
-            && (gPmicGlinkApiInterface.GLinkRegisterLinkStateCb != NULL))
+        if (NT_SUCCESS(status))
         {
-            RtlZeroMemory(&linkId, sizeof(linkId));
-            linkId.Version = 1u;
-            linkId.Xport = "SMEM";
-            linkId.RemoteSs = "lpass";
-            linkId.LinkNotifier = PmicGLinkRegisterLinkStateCb;
-            linkId.Handle = NULL;
-            if (gPmicGlinkApiInterface.GLinkRegisterLinkStateCb(&linkId, deviceContext) == STATUS_SUCCESS)
+            if ((gPmicGlinkLinkStateHandle == NULL)
+                && (gPmicGlinkApiInterface.GLinkRegisterLinkStateCb != NULL))
             {
-                gPmicGlinkLinkStateHandle = linkId.Handle;
+                RtlZeroMemory(&linkId, sizeof(linkId));
+                linkId.Version = 1u;
+                linkId.Xport = "SMEM";
+                linkId.RemoteSs = "lpass";
+                linkId.LinkNotifier = PmicGLinkRegisterLinkStateCb;
+                linkId.Handle = NULL;
+                if (gPmicGlinkApiInterface.GLinkRegisterLinkStateCb(&linkId, deviceContext) == STATUS_SUCCESS)
+                {
+                    gPmicGlinkLinkStateHandle = linkId.Handle;
+                }
             }
+
+            deviceContext->RpeInitialized = (gPmicGlinkLinkStateHandle != NULL) ? TRUE : FALSE;
         }
+    }
+    else
+    {
+        deviceContext->RpeInitialized = FALSE;
     }
 
     RtlZeroMemory(&linkInfo, sizeof(linkInfo));
