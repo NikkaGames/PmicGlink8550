@@ -1576,7 +1576,12 @@ PmicGlinkInterfaceNotificationCallback(
     NTSTATUS status;
     ULONG currentState;
 
-    if ((NotificationStructure == NULL) || (Context == NULL))
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_HANDLE;
+    }
+
+    if (NotificationStructure == NULL)
     {
         return STATUS_INVALID_PARAMETER;
     }
