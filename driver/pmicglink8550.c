@@ -9324,6 +9324,7 @@ PmicGlinkUlog_RetrieveRxData(
     PMICGLINK_COMM_DATA* slot;
     const CHAR* Buffer;
     SIZE_T BufferSize;
+    SIZE_T slotSize;
     ULONG packetOpCode;
     ULONG opCode;
     NTSTATUS status;
@@ -9342,6 +9343,7 @@ PmicGlinkUlog_RetrieveRxData(
     slot = &Context->CommData[OpCode];
     Buffer = (const CHAR*)slot->Buffer;
     BufferSize = slot->Size;
+    slotSize = BufferSize;
     if ((Buffer == NULL) || (BufferSize < (sizeof(ULONGLONG) + sizeof(ULONG))))
     {
         return STATUS_SUCCESS;
@@ -9452,6 +9454,11 @@ PmicGlinkUlog_RetrieveRxData(
     default:
         status = STATUS_SUCCESS;
         break;
+    }
+
+    if (responseMatched && (slot->Buffer != NULL) && (slotSize != 0u))
+    {
+        RtlZeroMemory(slot->Buffer, slotSize);
     }
 
     Context->LastUlogRxStatus = status;
