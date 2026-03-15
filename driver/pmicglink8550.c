@@ -9470,6 +9470,7 @@ PmicGlinkUlog_SendData(
     _In_ SIZE_T BufferSize
     )
 {
+    GLINK_CHANNEL_CTX* channelHandle;
     NTSTATUS status;
     LARGE_INTEGER pollInterval;
     ULONG waitCount;
@@ -9506,6 +9507,12 @@ PmicGlinkUlog_SendData(
         return STATUS_RETRY;
     }
 
+    channelHandle = gPmicGlinkUlogChannelHandle;
+    if (channelHandle == NULL)
+    {
+        return STATUS_RETRY;
+    }
+
     waitCount = 0;
     pollInterval.QuadPart = -20000ll;
     while (gPmicGlinkUlogRxInProgress == 1)
@@ -9535,7 +9542,7 @@ PmicGlinkUlog_SendData(
     (VOID)KeClearEvent(&gPmicGlinkUlogTxNotificationEvent);
     (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
     status = gPmicGlinkApiInterface.GLinkTx(
-        gPmicGlinkUlogChannelHandle,
+        channelHandle,
         (PVOID)(ULONG_PTR)(ULONG)txCount,
         Buffer,
         BufferSize,
