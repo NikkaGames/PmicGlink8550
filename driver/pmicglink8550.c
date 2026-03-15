@@ -1579,16 +1579,6 @@ PmicGlinkEnsureBclCriticalCallback(
     UNICODE_STRING callbackName;
     OBJECT_ATTRIBUTES callbackAttributes;
 
-    if (Context->BclCriticalCallbackObject != NULL)
-    {
-        if (Context->ABDAttached)
-        {
-            Context->BclCriticalCallbackEnabled = TRUE;
-        }
-
-        return STATUS_SUCCESS;
-    }
-
     if (!Context->GlinkDeviceLoaded || !Context->BattMiniDeviceLoaded)
     {
         return STATUS_SUCCESS;
