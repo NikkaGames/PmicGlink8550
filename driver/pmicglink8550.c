@@ -1842,13 +1842,6 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             }
         }
 
-        if (Context->ABDAttached && (Context->AbdIoTarget != NULL))
-        {
-            (VOID)PmicGlinkAbdUpdateConnections(Context, FALSE);
-            WdfIoTargetClose(Context->AbdIoTarget);
-        }
-        Context->ABDAttached = FALSE;
-
         if (Context->BattMiniNotificationEntry != NULL)
         {
             unregisterStatus = IoUnregisterPlugPlayNotification(Context->BattMiniNotificationEntry);
