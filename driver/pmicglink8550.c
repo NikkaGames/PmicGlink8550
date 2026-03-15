@@ -2711,6 +2711,8 @@ PmicGlink_SendData(
         return STATUS_UNSUCCESSFUL;
     }
 
+    txCount = InterlockedIncrement(&gPmicGlinkTxCount);
+
     if (Context == NULL)
     {
         return STATUS_RETRY;
@@ -2753,7 +2755,6 @@ PmicGlink_SendData(
     KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
 
     status = STATUS_SUCCESS;
-    txCount = InterlockedIncrement(&gPmicGlinkTxCount);
     Context->NotificationFlag = FALSE;
     Context->LastRxOpcode = 0;
     Context->LastRxStatus = STATUS_SUCCESS;
@@ -9477,6 +9478,8 @@ PmicGlinkUlog_SendData(
         return STATUS_UNSUCCESSFUL;
     }
 
+    txCount = InterlockedIncrement(&gPmicGlinkUlogTxCount);
+
     if (Context == NULL)
     {
         return STATUS_UNSUCCESSFUL;
@@ -9525,7 +9528,6 @@ PmicGlinkUlog_SendData(
     }
 
     status = STATUS_SUCCESS;
-    txCount = InterlockedIncrement(&gPmicGlinkUlogTxCount);
     Context->NotificationFlag = FALSE;
     Context->LastUlogRxOpcode = 0;
     Context->LastUlogRxStatus = STATUS_SUCCESS;
