@@ -428,6 +428,7 @@ static NTSTATUS PmicGlinkDevice_InitContext(_In_ PPMIC_GLINK_DEVICE_CONTEXT Cont
 static NTSTATUS RegisterDeviceInterfaces(_In_ WDFDEVICE Device, _In_ BOOLEAN Register);
 static NTSTATUS PmicGlinkDevice_RegisterForPnPNotifications(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN Register);
 static NTSTATUS PmicGlinkInterfaceNotificationCallback(_In_ PVOID NotificationStructure, _Inout_opt_ PVOID Context);
+static VOID PmicGlinkEvtSurpriseRemoval(_In_ WDFDEVICE Device);
 static VOID PmicGlinkEvtFileClose(_In_ WDFFILEOBJECT FileObject);
 static VOID PmicGlinkPower_ModernStandby_Callback(_In_opt_ PVOID CallbackContext, _In_opt_ PVOID Argument1, _In_opt_ PVOID Argument2);
 static VOID PmicGlinkDDI_InterfaceReference(_In_opt_ PVOID Context);
@@ -862,6 +863,7 @@ PmicGlinkEvtDeviceAdd(
     pnpCallbacks.EvtDeviceSelfManagedIoCleanup = PmicGlinkEvtSelfManagedIoCleanup;
     pnpCallbacks.EvtDeviceQueryRemove = PmicGlinkEvtQueryRemove;
     pnpCallbacks.EvtDeviceQueryStop = PmicGlinkEvtQueryStop;
+    pnpCallbacks.EvtDeviceSurpriseRemoval = PmicGlinkEvtSurpriseRemoval;
     WdfDeviceInitSetPnpPowerEventCallbacks(DeviceInit, &pnpCallbacks);
 
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, PMIC_GLINK_DEVICE_CONTEXT);
@@ -1317,6 +1319,16 @@ PmicGlinkEvtSelfManagedIoCleanup(
 
     context = PmicGlinkGetDeviceContext(Device);
     (VOID)PmicGlinkDevice_RegisterForPnPNotifications(context, FALSE);
+}
+
+VOID
+PmicGlinkEvtSurpriseRemoval(
+    _In_ WDFDEVICE Device
+    )
+{
+    UNREFERENCED_PARAMETER(Device);
+
+    KeBugCheckEx(334u, 1346858091ull, 0ull, 0ull, 0ull);
 }
 
 NTSTATUS
