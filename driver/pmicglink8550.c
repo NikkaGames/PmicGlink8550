@@ -2707,11 +2707,6 @@ PmicGlink_SendData(
         return STATUS_RETRY;
     }
 
-    if (gPmicGlinkMainChannelHandle == NULL)
-    {
-        return STATUS_RETRY;
-    }
-
     (VOID)KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
 
     waitCount = 0;
@@ -9424,11 +9419,6 @@ PmicGlinkUlog_SendData(
 
     if (Context->GlinkChannelUlogRestart
         || !Context->GlinkChannelUlogConnected)
-    {
-        return STATUS_RETRY;
-    }
-
-    if (gPmicGlinkUlogChannelHandle == NULL)
     {
         return STATUS_RETRY;
     }
