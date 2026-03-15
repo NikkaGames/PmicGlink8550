@@ -1495,17 +1495,7 @@ PmicGlinkDDI_InterfaceReference(
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
 
-    if (Context == NULL)
-    {
-        return;
-    }
-
     deviceContext = PmicGlinkGetDeviceContext((WDFDEVICE)Context);
-    if ((deviceContext == NULL) || (deviceContext->DdiInterfaceLock == NULL))
-    {
-        return;
-    }
-
     WdfWaitLockAcquire(deviceContext->DdiInterfaceLock, NULL);
     deviceContext->DdiInterfaceRefCount += 1;
     WdfWaitLockRelease(deviceContext->DdiInterfaceLock);
@@ -1518,22 +1508,9 @@ PmicGlinkDDI_InterfaceDereference(
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
 
-    if (Context == NULL)
-    {
-        return;
-    }
-
     deviceContext = PmicGlinkGetDeviceContext((WDFDEVICE)Context);
-    if ((deviceContext == NULL) || (deviceContext->DdiInterfaceLock == NULL))
-    {
-        return;
-    }
-
     WdfWaitLockAcquire(deviceContext->DdiInterfaceLock, NULL);
-    if (deviceContext->DdiInterfaceRefCount > 0)
-    {
-        deviceContext->DdiInterfaceRefCount -= 1;
-    }
+    deviceContext->DdiInterfaceRefCount -= 1;
     WdfWaitLockRelease(deviceContext->DdiInterfaceLock);
 }
 
