@@ -432,6 +432,7 @@ static BOOLEAN PmicGlinkNotifyRxIntentReqCb(_In_opt_ PVOID Handle, _In_opt_ PVOI
 static VOID PmicGlinkNotifyRxIntentCb(_In_opt_ PVOID Handle, _In_opt_ PVOID Context, _In_ SIZE_T Size);
 static VOID PmicGlinkTxNotificationCb(_In_opt_ PVOID Handle, _In_opt_ const VOID* Context, _In_opt_ const VOID* PacketContext, _In_opt_ const VOID* Buffer, _In_ SIZE_T BufferSize);
 static VOID PmicGlinkRxNotificationWorkItem(_In_ WDFWORKITEM WorkItem);
+static VOID PmicGLinkRegisterLinkStateCb(_In_opt_ PMIC_GLINK_LINK_INFO* LinkInfo, _In_opt_ PVOID Context);
 static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PMICGLINK_CHANNEL_EVENT Event);
 static VOID PmicGlinkRpeADSPStateNotificationCallback(_In_opt_ PVOID Context, _In_ ULONG PreviousState, _In_opt_ PULONG CurrentState);
 static VOID PmicGlinkUlogTimerFunction(_In_ WDFTIMER Timer);
@@ -7976,6 +7977,61 @@ PmicGlinkRxNotificationWorkItem(
     WdfObjectDelete(WorkItem);
 }
 
+static VOID
+PmicGLinkRegisterLinkStateCb(
+    _In_opt_ PMIC_GLINK_LINK_INFO* LinkInfo,
+    _In_opt_ PVOID Context
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+    BOOLEAN linkMatches;
+
+    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
+    if ((deviceContext == NULL) || (LinkInfo == NULL))
+    {
+        return;
+    }
+
+    linkMatches = FALSE;
+    if ((LinkInfo->Xport != NULL)
+        && (LinkInfo->RemoteSs != NULL)
+        && (RtlCompareMemory(LinkInfo->Xport, "SMEM", 4) == 4)
+        && (LinkInfo->Xport[4] == '\0')
+        && (RtlCompareMemory(LinkInfo->RemoteSs, "lpass", 5) == 5)
+        && (LinkInfo->RemoteSs[5] == '\0'))
+    {
+        linkMatches = TRUE;
+    }
+
+    if (!linkMatches)
+    {
+        return;
+    }
+
+    if (LinkInfo->LinkState != 0u)
+    {
+        deviceContext->GlinkLinkStateUp = TRUE;
+        if (NT_SUCCESS(PmicGlink_OpenGlinkChannel(deviceContext)))
+        {
+            deviceContext->GlinkChannelRestart = FALSE;
+        }
+
+        if ((deviceContext->UlogInitEn != 0)
+            && NT_SUCCESS(PmicGlinkUlog_OpenGlinkChannelUlog(deviceContext)))
+        {
+            deviceContext->GlinkChannelUlogRestart = FALSE;
+        }
+    }
+    else
+    {
+        deviceContext->GlinkLinkStateUp = FALSE;
+        deviceContext->GlinkChannelConnected = FALSE;
+        deviceContext->GlinkChannelRestart = TRUE;
+        deviceContext->GlinkChannelUlogConnected = FALSE;
+        deviceContext->GlinkChannelUlogRestart = TRUE;
+    }
+}
+
 VOID
 PmicGlinkRpeADSPStateNotificationCallback(
     _In_opt_ PVOID Context,
@@ -7984,6 +8040,8 @@ PmicGlinkRpeADSPStateNotificationCallback(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+    NTSTATUS status;
+    PMIC_GLINK_LINK_ID linkId;
 
     UNREFERENCED_PARAMETER(PreviousState);
 
@@ -7995,6 +8053,23 @@ PmicGlinkRpeADSPStateNotificationCallback(
 
     if (*CurrentState != 0)
     {
+        status = PmicGlinkEnsureApiInterface(deviceContext);
+        if (NT_SUCCESS(status)
+            && (gPmicGlinkLinkStateHandle == NULL)
+            && (gPmicGlinkApiInterface.GLinkRegisterLinkStateCb != NULL))
+        {
+            RtlZeroMemory(&linkId, sizeof(linkId));
+            linkId.Version = 1u;
+            linkId.Xport = "SMEM";
+            linkId.RemoteSs = "lpass";
+            linkId.LinkNotifier = PmicGLinkRegisterLinkStateCb;
+            linkId.Handle = NULL;
+            if (NT_SUCCESS(gPmicGlinkApiInterface.GLinkRegisterLinkStateCb(&linkId, deviceContext)))
+            {
+                gPmicGlinkLinkStateHandle = linkId.Handle;
+            }
+        }
+
         deviceContext->GlinkLinkStateUp = TRUE;
         if (NT_SUCCESS(PmicGlink_OpenGlinkChannel(deviceContext)))
         {
