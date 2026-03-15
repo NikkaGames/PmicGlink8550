@@ -1537,7 +1537,7 @@ PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(
 
     exposedDdi = (PPMICGLINK_DEVICE_DDIINTERFACE_TYPE)ExposedInterface;
     ucsiAlertCallback = exposedDdi->PmicGlinkUCSIAlertCallback;
-    *exposedDdi = context->DdiInterface;
+    exposedDdi->InterfaceHeader = context->DdiInterface.InterfaceHeader;
 
     if (ucsiAlertCallback == NULL)
     {
@@ -1545,7 +1545,7 @@ PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(
     }
 
     context->DdiInterface.PmicGlinkUCSIAlertCallback = ucsiAlertCallback;
-    *exposedDdi = context->DdiInterface;
+    exposedDdi->PmicGlinkUCSIAlertCallback = ucsiAlertCallback;
 
     return STATUS_SUCCESS;
 }
