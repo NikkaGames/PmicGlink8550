@@ -3870,7 +3870,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     }
 
     PmicGlinkNotify_PingBattMiniClass(Context);
-    if (InterlockedExchange(&gPmicGlinkNotifyGo, 0) == 0)
+    if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) == 0)
     {
         return;
     }
@@ -3892,6 +3892,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
             0u,
             PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
             &notifyBytesReturned);
+        (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
         if (NT_SUCCESS(notifyStatus))
         {
             Context->LegacyStatusNotificationPending = TRUE;
@@ -3912,6 +3913,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
                 0u,
                 PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
                 &notifyBytesReturned);
+            (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
             if (NT_SUCCESS(notifyStatus))
             {
                 Context->LegacyStatusNotificationPending = TRUE;
@@ -7242,7 +7244,7 @@ HandleLegacyBattMngrRequest(
     case IOCTL_BATTMNGR_GET_BATT_PRESENT:
         status = STATUS_SUCCESS;
         PmicGlinkNotify_PingBattMiniClass(Context);
-        if (InterlockedExchange(&gPmicGlinkNotifyGo, 0) != 0)
+        if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) != 0)
         {
             if (Context->BattMiniNotifyLock != NULL)
             {
@@ -7264,6 +7266,7 @@ HandleLegacyBattMngrRequest(
                     0,
                     PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
                     &notifyBytesReturned);
+                (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
                 if (NT_SUCCESS(notifyStatus))
                 {
                     Context->LegacyStatusNotificationPending = TRUE;
@@ -7282,7 +7285,7 @@ HandleLegacyBattMngrRequest(
 
             battMiniNotifyArgument = Context->LegacyStatusCriteria.batt_notify_criteria.high_capacity >> 8;
             PmicGlinkNotify_PingBattMiniClass(Context);
-            if (InterlockedExchange(&gPmicGlinkNotifyGo, 0) != 0)
+            if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) != 0)
             {
                 if (Context->BattMiniNotifyLock != NULL)
                 {
@@ -7304,6 +7307,7 @@ HandleLegacyBattMngrRequest(
                         0,
                         PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
                         &notifyBytesReturned);
+                    (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
                     if (NT_SUCCESS(notifyStatus))
                     {
                         Context->LegacyStatusNotificationPending = TRUE;
