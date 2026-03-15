@@ -1171,6 +1171,7 @@ PmicGlinkEvtD0Exit(
 {
     PPMIC_GLINK_DEVICE_CONTEXT context;
     WDFIOTARGET ioTarget;
+    NTSTATUS status;
 
     context = PmicGlinkGetDeviceContext(Device);
 
@@ -1200,6 +1201,19 @@ PmicGlinkEvtD0Exit(
 
     context->GlinkChannelConnected = FALSE;
     context->GlinkChannelRestart = FALSE;
+    context->GlinkChannelUlogConnected = FALSE;
+    context->GlinkChannelUlogRestart = FALSE;
+
+    if ((gPmicGlinkLinkStateHandle != NULL)
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+    {
+        status = gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
+        if (NT_SUCCESS(status))
+        {
+            gPmicGlinkLinkStateHandle = NULL;
+            context->RpeInitialized = FALSE;
+        }
+    }
 
     if (TargetState == WdfPowerDeviceD3Final)
     {
