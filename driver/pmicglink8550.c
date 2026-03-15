@@ -2154,7 +2154,7 @@ PmicGlinkDevice_InitContext(
 
     RtlZeroMemory(&Context->LegacyTestInfo, sizeof(Context->LegacyTestInfo));
 
-    Context->LegacyBattPercentage = 0;
+    Context->LegacyBattPercentage = 75;
     Context->LegacyStatusNotificationPending = FALSE;
     Context->LegacyStateChangePending = FALSE;
 
