@@ -2273,6 +2273,11 @@ PmicGlink_SendData(
     pollInterval.QuadPart = -200000ll;
     while (waitCount < 5u)
     {
+        if (KeReadStateEvent(&gPmicGlinkRxNotificationEvent) != 0)
+        {
+            (VOID)KeClearEvent(&gPmicGlinkRxNotificationEvent);
+        }
+
         if (Context->LastRxValid)
         {
             if (Context->LastRxOpcode == OpCode)
@@ -2294,6 +2299,11 @@ PmicGlink_SendData(
         waitCount = 0;
         while (waitCount < 140u)
         {
+            if (KeReadStateEvent(&gPmicGlinkRxNotificationEvent) != 0)
+            {
+                (VOID)KeClearEvent(&gPmicGlinkRxNotificationEvent);
+            }
+
             if (Context->LastRxValid)
             {
                 if (Context->LastRxOpcode == OpCode)
@@ -8287,6 +8297,11 @@ PmicGlinkUlog_SendData(
     pollInterval.QuadPart = -200000ll;
     while (waitCount < 50u)
     {
+        if (KeReadStateEvent(&gPmicGlinkUlogRxNotificationEvent) != 0)
+        {
+            (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
+        }
+
         if (Context->LastUlogRxValid)
         {
             if (Context->LastUlogRxOpcode == opCode)
@@ -8308,6 +8323,11 @@ PmicGlinkUlog_SendData(
         waitCount = 0;
         while (waitCount < 50u)
         {
+            if (KeReadStateEvent(&gPmicGlinkUlogRxNotificationEvent) != 0)
+            {
+                (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
+            }
+
             if (Context->LastUlogRxValid)
             {
                 if (Context->LastUlogRxOpcode == opCode)
