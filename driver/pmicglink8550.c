@@ -1174,10 +1174,11 @@ PmicGlinkEvtD0Entry(
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget == NULL)
     {
-        return STATUS_UNSUCCESSFUL;
+        return STATUS_INVALID_PARAMETER;
     }
 
     (VOID)WdfIoTargetStart(ioTarget);
+    (VOID)PmicGlinkGetDeviceContext(Device);
     return STATUS_SUCCESS;
 }
 
@@ -1269,10 +1270,11 @@ PmicGlinkEvtSelfManagedIoInit(
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget == NULL)
     {
-        return STATUS_UNSUCCESSFUL;
+        return STATUS_INVALID_PARAMETER;
     }
 
     (VOID)WdfIoTargetStart(ioTarget);
+    (VOID)PmicGlinkGetDeviceContext(Device);
     return STATUS_SUCCESS;
 }
 
@@ -1286,7 +1288,7 @@ PmicGlinkEvtSelfManagedIoRestart(
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget == NULL)
     {
-        return STATUS_UNSUCCESSFUL;
+        return STATUS_INVALID_PARAMETER;
     }
 
     (VOID)WdfIoTargetStart(ioTarget);
@@ -3816,22 +3818,18 @@ PmicGlinkRegistryQuery(
     _Out_ PULONG ReadData
     )
 {
-    ULONG value;
-    NTSTATUS status;
+    ULONG valueLength;
+    ULONG valueType;
 
-    if ((RegName == NULL) || (ReadData == NULL))
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    value = 0;
-    status = WdfRegistryQueryULong(RegKey, RegName, &value);
-    if (NT_SUCCESS(status))
-    {
-        *ReadData = value;
-    }
-
-    return status;
+    valueLength = 0;
+    valueType = 0;
+    return WdfRegistryQueryValue(
+        RegKey,
+        RegName,
+        sizeof(ULONG),
+        ReadData,
+        &valueLength,
+        &valueType);
 }
 
 static NTSTATUS
