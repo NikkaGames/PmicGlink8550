@@ -1601,21 +1601,30 @@ PmicGlinkInterfaceNotificationCallback(
 
     if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_GLINK_DEVICE_INTERFACE, sizeof(GUID)) == sizeof(GUID))
     {
-        deviceContext->GlinkDeviceLoaded = arrival;
-        deviceContext->AllReqIntfArrived = (deviceContext->GlinkDeviceLoaded && deviceContext->ABDAttached) ? TRUE : FALSE;
-        if (!arrival)
-        {
-            deviceContext->GlinkLinkStateUp = FALSE;
-        }
-
         if (arrival)
         {
+            if (deviceContext->GlinkDeviceLoaded)
+            {
+                return STATUS_SUCCESS;
+            }
+
+            deviceContext->GlinkDeviceLoaded = TRUE;
+            deviceContext->AllReqIntfArrived = deviceContext->ABDAttached ? TRUE : FALSE;
             currentState = PMICGLINK_RPE_STATE_ID_PDR_READY_FOR_COMMANDS;
             PmicGlinkRpeADSPStateNotificationCallback(deviceContext->Device, 0u, &currentState);
             (VOID)PmicGlinkEnsureBclCriticalCallback(deviceContext);
         }
         else
         {
+            if (!deviceContext->GlinkDeviceLoaded)
+            {
+                return STATUS_SUCCESS;
+            }
+
+            deviceContext->GlinkDeviceLoaded = FALSE;
+            deviceContext->AllReqIntfArrived = FALSE;
+            deviceContext->GlinkLinkStateUp = FALSE;
+
             if ((gPmicGlinkMainChannelHandle != NULL)
                 && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
             {
