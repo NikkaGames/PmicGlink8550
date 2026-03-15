@@ -1051,7 +1051,6 @@ PmicGlinkEvtPrepareHardware(
 {
     NTSTATUS status;
     PPMIC_GLINK_DEVICE_CONTEXT context;
-    ULONG currentState;
 
     UNREFERENCED_PARAMETER(ResourcesRaw);
     UNREFERENCED_PARAMETER(ResourcesTranslated);
@@ -1083,9 +1082,6 @@ PmicGlinkEvtPrepareHardware(
             return status;
         }
     }
-
-    currentState = 1u;
-    PmicGlinkRpeADSPStateNotificationCallback(Device, 0u, &currentState);
 
     status = CrashDump_RegisterGlobalCallbacks(context);
     if (!NT_SUCCESS(status))
