@@ -2054,9 +2054,10 @@ PmicGlink_OpenGlinkChannel(
         Context->GlinkChannelConnected = oldConnected;
         Context->GlinkChannelRestart = oldRestart;
         Context->GlinkLinkStateUp = oldLinkStateUp;
+        return STATUS_UNSUCCESSFUL;
     }
 
-    return status;
+    return STATUS_SUCCESS;
 }
 
 static VOID
@@ -8055,9 +8056,10 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
         Context->GlinkChannelUlogFirstConnect = oldFirstConnect;
         Context->GlinkChannelUlogConnected = oldConnected;
         Context->GlinkChannelUlogRestart = oldRestart;
+        return STATUS_UNSUCCESSFUL;
     }
 
-    return status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
