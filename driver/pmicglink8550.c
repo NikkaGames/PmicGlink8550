@@ -2631,8 +2631,7 @@ PmicGlinkStateNotificationCb(
         (VOID)KeClearEvent(&gPmicGlinkLocalDisconnectedEvent);
         (VOID)KeClearEvent(&gPmicGlinkRemoteDisconnectedEvent);
         (VOID)KeSetEvent(&gPmicGlinkConnectedEvent, IO_NO_INCREMENT, FALSE);
-        if ((gPmicGlinkMainChannelHandle != NULL)
-            && (gPmicGlinkApiInterface.GLinkQueueRxIntent != NULL))
+        if (gPmicGlinkMainChannelHandle != NULL)
         {
             (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(gPmicGlinkMainChannelHandle, Context, 4096u);
         }
@@ -8398,8 +8397,7 @@ PmicGlinkRxNotificationCb(
         }
     }
 
-    if ((gPmicGlinkApiInterface.GLinkRxDone != NULL)
-        && (gPmicGlinkMainChannelHandle != NULL))
+    if (gPmicGlinkMainChannelHandle != NULL)
     {
         (VOID)gPmicGlinkApiInterface.GLinkRxDone(gPmicGlinkMainChannelHandle, Buffer, TRUE);
     }
@@ -8431,8 +8429,7 @@ PmicGlinkNotifyRxIntentReqCb(
 
     intentSize = RequestedSize;
 
-    if ((gPmicGlinkMainChannelHandle == NULL)
-        || (gPmicGlinkApiInterface.GLinkQueueRxIntent == NULL))
+    if (gPmicGlinkMainChannelHandle == NULL)
     {
         return FALSE;
     }
@@ -8697,8 +8694,7 @@ PmicGlinkUlogRxNotificationCb(
         }
     }
 
-    if ((gPmicGlinkApiInterface.GLinkRxDone != NULL)
-        && (gPmicGlinkUlogChannelHandle != NULL))
+    if (gPmicGlinkUlogChannelHandle != NULL)
     {
         (VOID)gPmicGlinkApiInterface.GLinkRxDone(gPmicGlinkUlogChannelHandle, Buffer, TRUE);
     }
@@ -9060,8 +9056,7 @@ PmicGlinkUlogStateNotificationCb(
         deviceContext->GlinkChannelUlogFirstConnect = TRUE;
         deviceContext->GlinkChannelUlogConnected = TRUE;
         deviceContext->GlinkChannelUlogRestart = FALSE;
-        if ((gPmicGlinkUlogChannelHandle != NULL)
-            && (gPmicGlinkApiInterface.GLinkQueueRxIntent != NULL))
+        if (gPmicGlinkUlogChannelHandle != NULL)
         {
             (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(gPmicGlinkUlogChannelHandle, deviceContext, 12288u);
         }
@@ -9115,8 +9110,7 @@ PmicGlinkUlogNotifyRxIntentReqCb(
 
     intentSize = RequestedSize;
 
-    if ((gPmicGlinkUlogChannelHandle == NULL)
-        || (gPmicGlinkApiInterface.GLinkQueueRxIntent == NULL))
+    if (gPmicGlinkUlogChannelHandle == NULL)
     {
         return FALSE;
     }
