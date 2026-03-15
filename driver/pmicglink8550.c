@@ -1108,8 +1108,7 @@ PmicGlinkEvtReleaseHardware(
 
     context = PmicGlinkGetDeviceContext(Device);
     context->GlinkDeviceLoaded = FALSE;
-    if ((gPmicGlinkLinkStateHandle != NULL)
-        && (gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb != NULL))
+    if (gPmicGlinkLinkStateHandle != NULL)
     {
         (VOID)gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
         gPmicGlinkLinkStateHandle = NULL;
@@ -8597,8 +8596,7 @@ PmicGlinkRpeADSPStateNotificationCallback(
         status = PmicGlinkEnsureApiInterface(deviceContext);
         if (NT_SUCCESS(status))
         {
-            if ((gPmicGlinkLinkStateHandle == NULL)
-                && (gPmicGlinkApiInterface.GLinkRegisterLinkStateCb != NULL))
+            if (gPmicGlinkLinkStateHandle == NULL)
             {
                 RtlZeroMemory(&linkId, sizeof(linkId));
                 linkId.Version = 1u;
