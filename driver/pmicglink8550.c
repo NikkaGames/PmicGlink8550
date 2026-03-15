@@ -1211,40 +1211,6 @@ PmicGlinkEvtReleaseHardware(
         driverContext->BattMngrDevice = NULL;
     }
     context->DriverContext = NULL;
-    context->GlinkDeviceLoaded = FALSE;
-    if ((gPmicGlinkLinkStateHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
-    {
-        (VOID)gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
-        gPmicGlinkLinkStateHandle = NULL;
-    }
-
-    if ((gPmicGlinkMainChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
-    {
-        (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
-        gPmicGlinkMainChannelHandle = NULL;
-    }
-
-    if ((gPmicGlinkUlogChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
-    {
-        (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
-        gPmicGlinkUlogChannelHandle = NULL;
-    }
-
-    PmicGlinkResetApiInterface();
-
-    (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
-    if (context->UlogTimer != NULL)
-    {
-        (VOID)WdfTimerStop(context->UlogTimer, TRUE);
-    }
-    CrashDump_ResetState(context);
-    if (gCrashDumpContext == context)
-    {
-        gCrashDumpContext = NULL;
-    }
 
     for (opCode = 0; opCode < PMICGLINK_COMM_DATA_SLOTS; opCode++)
     {
