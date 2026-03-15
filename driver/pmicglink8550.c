@@ -4079,6 +4079,7 @@ PmicGlinkEvaluateAcpiMethodBuffer(
     inputBuffer->Signature = ACPI_EVAL_INPUT_BUFFER_COMPLEX_SIGNATURE;
     RtlCopyMemory(inputBuffer->MethodName, MethodName, 4u);
     inputBuffer->Size = (ULONG)inputSize;
+    inputBuffer->ArgumentCount = 1u;
 
     methodArg = &inputBuffer->Argument[0];
     ACPI_METHOD_SET_ARGUMENT_BUFFER(methodArg, Data, dataSize16);
@@ -8007,11 +8008,11 @@ PmicGlink_RetrieveRxData(
         }
         else if (fwStatus == 1u)
         {
-            status = STATUS_UNSUCCESSFUL;
+            status = (NTSTATUS)0xC0000463L;
         }
         else
         {
-            status = STATUS_NOT_SUPPORTED;
+            status = STATUS_UNSUCCESSFUL;
         }
         break;
     }
