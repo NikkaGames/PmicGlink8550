@@ -4,6 +4,81 @@
 #include <wdmguid.h>
 #include <acpiioct.h>
 
+typedef struct _GLINK_CHANNEL_CTX GLINK_CHANNEL_CTX;
+
+typedef struct _PMIC_GLINK_LINK_INFO
+{
+    const CHAR* Xport;
+    const CHAR* RemoteSs;
+    ULONG LinkState;
+} PMIC_GLINK_LINK_INFO;
+
+typedef struct _PMIC_GLINK_LINK_ID
+{
+    ULONG Version;
+    const CHAR* Xport;
+    const CHAR* RemoteSs;
+    VOID(*LinkNotifier)(_In_ PMIC_GLINK_LINK_INFO* LinkInfo, _In_opt_ PVOID Context);
+    PVOID Handle;
+} PMIC_GLINK_LINK_ID;
+
+typedef struct _PMIC_GLINK_OPEN_CONFIG
+{
+    const CHAR* Transport;
+    const CHAR* RemoteSs;
+    const CHAR* Name;
+    ULONG Options;
+    const VOID* Context;
+    VOID(*NotifyRx)(
+        _In_opt_ GLINK_CHANNEL_CTX* Channel,
+        _In_opt_ const VOID* Context,
+        _In_opt_ const VOID* PacketContext,
+        _In_opt_ const VOID* Buffer,
+        _In_ SIZE_T BufferSize,
+        _In_ SIZE_T IntentUsed);
+    VOID(*NotifyRxTracerPacket)(
+        _In_opt_ GLINK_CHANNEL_CTX* Channel,
+        _In_opt_ const VOID* Context,
+        _In_opt_ const VOID* PacketContext,
+        _In_opt_ const VOID* Buffer,
+        _In_ SIZE_T BufferSize);
+    PVOID NotifyRxVector;
+    VOID(*NotifyTxDone)(
+        _In_opt_ GLINK_CHANNEL_CTX* Channel,
+        _In_opt_ const VOID* Context,
+        _In_opt_ const VOID* PacketContext,
+        _In_opt_ const VOID* Buffer,
+        _In_ SIZE_T BufferSize);
+    VOID(*NotifyState)(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ ULONG Event);
+    BOOLEAN(*NotifyRxIntentReq)(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ SIZE_T RequestedSize);
+    VOID(*NotifyRxIntent)(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ SIZE_T Size);
+    PVOID NotifyRxSigs;
+    PVOID NotifyRxAbort;
+    PVOID NotifyTxAbort;
+    ULONG RemoteIntentTimeout;
+    PVOID NotifyAllocate;
+    PVOID NotifyDeallocate;
+} PMIC_GLINK_OPEN_CONFIG;
+
+typedef struct _PMIC_GLINK_API_INTERFACE
+{
+    INTERFACE InterfaceHeader;
+    NTSTATUS(*GLinkRegisterLinkStateCb)(_Inout_ PMIC_GLINK_LINK_ID* LinkId, _In_opt_ PVOID Context);
+    NTSTATUS(*GLinkDeregisterLinkStateCb)(_In_opt_ PVOID LinkHandle);
+    NTSTATUS(*GLinkOpen)(_In_ PMIC_GLINK_OPEN_CONFIG* OpenConfig, _Outptr_ GLINK_CHANNEL_CTX** ChannelHandle);
+    NTSTATUS(*GLinkClose)(_In_opt_ GLINK_CHANNEL_CTX* ChannelHandle);
+    NTSTATUS(*GLinkTx)(
+        _In_ GLINK_CHANNEL_CTX* ChannelHandle,
+        _In_opt_ const VOID* Context,
+        _In_opt_ const VOID* PacketContext,
+        _In_reads_bytes_(BufferSize) const VOID* Buffer,
+        _In_ SIZE_T BufferSize,
+        _In_ ULONG Options);
+    PVOID GLinkTxVector;
+    NTSTATUS(*GLinkQueueRxIntent)(_In_ GLINK_CHANNEL_CTX* ChannelHandle, _In_opt_ const VOID* Context, _In_ SIZE_T RequestedSize);
+    NTSTATUS(*GLinkRxDone)(_In_ GLINK_CHANNEL_CTX* ChannelHandle, _In_reads_bytes_(BufferSize) const VOID* Buffer, _In_ BOOLEAN ReuseIntent);
+} PMIC_GLINK_API_INTERFACE;
+
 DEFINE_GUID(
     GUID_DEVINTERFACE_PMICGLINK,
     0xbc8ef524,
@@ -158,6 +233,20 @@ DEFINE_GUID(
     0xec,
     0xa4);
 
+DEFINE_GUID(
+    GUID_GLINK_API_INTERFACE,
+    0xdc449f0c,
+    0x4d0f,
+    0x4a41,
+    0x8e,
+    0xa6,
+    0xb3,
+    0x3f,
+    0x4c,
+    0xca,
+    0xdf,
+    0x28);
+
 static PMICGLINK_UCSI_WRITE_DATA_BUF_TYPE gLatestUcsiCmd;
 static ULONGLONG gPmicGlinkRelTimeStartTicks;
 static BOOLEAN gPmicGlinkRelTimeInitialized;
@@ -185,6 +274,11 @@ static ULONG gPmicGlinkUlogDataLength;
 static ULONG gPmicGlinkUlogInitDataLength;
 static UCHAR gPmicGlinkUlogInitPrinted;
 static ACPI_INTERFACE_STANDARD2 gPmicGlinkAcpiInterface;
+static PMIC_GLINK_API_INTERFACE gPmicGlinkApiInterface;
+static BOOLEAN gPmicGlinkApiInterfaceValid;
+static GLINK_CHANNEL_CTX* gPmicGlinkMainChannelHandle;
+static GLINK_CHANNEL_CTX* gPmicGlinkUlogChannelHandle;
+static PVOID gPmicGlinkLinkStateHandle;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 static PVOID gKeInitializeTriageDumpDataArray;
@@ -318,11 +412,45 @@ static NTSTATUS PmicGlinkNotifyLinkStateAcpi(_In_ PPMIC_GLINK_DEVICE_CONTEXT Con
 static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
+static NTSTATUS PmicGlinkEnsureApiInterface(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlink_OpenGlinkChannel(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
+static VOID PmicGlinkRxNotificationCb(
+    _In_opt_ PVOID Handle,
+    _In_opt_ const VOID* Context,
+    _In_opt_ const VOID* PacketContext,
+    _In_opt_ const VOID* Buffer,
+    _In_ SIZE_T BufferSize,
+    _In_ SIZE_T IntentUsed);
+static VOID PmicGlinkStateNotificationShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_ ULONG Event);
+static BOOLEAN PmicGlinkNotifyRxIntentReqShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ SIZE_T RequestedSize);
+static VOID PmicGlinkNotifyRxIntentShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ SIZE_T Size);
+static BOOLEAN PmicGlinkNotifyRxIntentReqCb(_In_opt_ PVOID Handle, _In_opt_ PVOID Context, _In_ SIZE_T RequestedSize);
+static VOID PmicGlinkNotifyRxIntentCb(_In_opt_ PVOID Handle, _In_opt_ PVOID Context, _In_ SIZE_T Size);
+static VOID PmicGlinkTxNotificationCb(_In_opt_ PVOID Handle, _In_opt_ const VOID* Context, _In_opt_ const VOID* PacketContext, _In_opt_ const VOID* Buffer, _In_ SIZE_T BufferSize);
+static VOID PmicGlinkRxNotificationWorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PMICGLINK_CHANNEL_EVENT Event);
 static VOID PmicGlinkRpeADSPStateNotificationCallback(_In_opt_ PVOID Context, _In_ ULONG PreviousState, _In_opt_ PULONG CurrentState);
 static VOID PmicGlinkUlogTimerFunction(_In_ WDFTIMER Timer);
+static VOID PmicGlinkUlogStateNotificationShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ ULONG Event);
+static VOID PmicGlinkUlogRxNotificationShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_opt_ const VOID* PacketContext,
+    _In_opt_ const VOID* Buffer,
+    _In_ SIZE_T BufferSize,
+    _In_ SIZE_T IntentUsed);
+static VOID PmicGlinkUlogTxNotificationShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_opt_ const VOID* PacketContext,
+    _In_opt_ const VOID* Buffer,
+    _In_ SIZE_T BufferSize);
+static BOOLEAN PmicGlinkUlogNotifyRxIntentReqShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ SIZE_T RequestedSize);
+static VOID PmicGlinkUlogNotifyRxIntentShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ SIZE_T Size);
 static NTSTATUS PmicGlinkUlogSendSetPropertiesRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUlogSendGetLogBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUlogSendGetBufferRequest(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
@@ -1734,6 +1862,11 @@ PmicGlinkDevice_InitContext(
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
     KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkUlogRxNotificationEvent, NotificationEvent, FALSE);
+    RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+    gPmicGlinkApiInterfaceValid = FALSE;
+    gPmicGlinkMainChannelHandle = NULL;
+    gPmicGlinkUlogChannelHandle = NULL;
+    gPmicGlinkLinkStateHandle = NULL;
     Context->Notify = FALSE;
     Context->NotificationFlag = FALSE;
     Context->LastRxOpcode = 0;
@@ -2094,11 +2227,47 @@ PmicGlink_Init(
 }
 
 static NTSTATUS
+PmicGlinkEnsureApiInterface(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    NTSTATUS status;
+
+    if ((Context == NULL) || (Context->Device == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (gPmicGlinkApiInterfaceValid)
+    {
+        return STATUS_SUCCESS;
+    }
+
+    RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+    status = WdfFdoQueryForInterface(
+        Context->Device,
+        &GUID_GLINK_API_INTERFACE,
+        (PINTERFACE)&gPmicGlinkApiInterface,
+        sizeof(gPmicGlinkApiInterface),
+        1,
+        NULL);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    gPmicGlinkApiInterfaceValid = TRUE;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
 PmicGlink_OpenGlinkChannel(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
     NTSTATUS status;
+    PMIC_GLINK_OPEN_CONFIG openConfig;
+    GLINK_CHANNEL_CTX* channelHandle;
     BOOLEAN oldFirstConnect;
     BOOLEAN oldConnected;
     BOOLEAN oldRestart;
@@ -2114,14 +2283,58 @@ PmicGlink_OpenGlinkChannel(
     oldRestart = Context->GlinkChannelRestart;
     oldLinkStateUp = Context->GlinkLinkStateUp;
 
+    status = PmicGlinkEnsureApiInterface(Context);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    if (gPmicGlinkApiInterface.GLinkOpen == NULL)
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    channelHandle = NULL;
+    RtlZeroMemory(&openConfig, sizeof(openConfig));
+    openConfig.Transport = "SMEM";
+    openConfig.RemoteSs = "lpass";
+    openConfig.Name = "PMIC_BATTMGR_ADSP_APPS";
+    openConfig.Options = 0;
+    openConfig.Context = Context;
+    openConfig.NotifyTxDone = PmicGlinkTxNotificationCb;
+    openConfig.NotifyState = PmicGlinkStateNotificationShim;
+    openConfig.NotifyRxIntentReq = PmicGlinkNotifyRxIntentReqShim;
+    openConfig.NotifyRxIntent = PmicGlinkNotifyRxIntentShim;
+
+    status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
+    if (!NT_SUCCESS(status) || (channelHandle == NULL))
+    {
+        Context->GlinkChannelFirstConnect = oldFirstConnect;
+        Context->GlinkChannelConnected = oldConnected;
+        Context->GlinkChannelRestart = oldRestart;
+        Context->GlinkLinkStateUp = oldLinkStateUp;
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    gPmicGlinkMainChannelHandle = channelHandle;
     Context->GlinkChannelFirstConnect = TRUE;
     Context->GlinkChannelConnected = TRUE;
     Context->GlinkChannelRestart = FALSE;
     Context->GlinkLinkStateUp = TRUE;
+    if (gPmicGlinkApiInterface.GLinkQueueRxIntent != NULL)
+    {
+        (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(channelHandle, Context, 4096u);
+    }
+    Context->GlinkRxIntent += 1;
 
     status = PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
     if (!NT_SUCCESS(status))
     {
+        if (gPmicGlinkApiInterface.GLinkClose != NULL)
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkClose(channelHandle);
+        }
+        gPmicGlinkMainChannelHandle = NULL;
         Context->GlinkChannelFirstConnect = oldFirstConnect;
         Context->GlinkChannelConnected = oldConnected;
         Context->GlinkChannelRestart = oldRestart;
@@ -2211,6 +2424,41 @@ PmicGlinkRegisterInterfaceWorkItem(
 }
 
 static VOID
+PmicGlinkStateNotificationShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_ ULONG Event
+    )
+{
+    PMICGLINK_CHANNEL_EVENT channelEvent;
+
+    UNREFERENCED_PARAMETER(Channel);
+
+    channelEvent = (PMICGLINK_CHANNEL_EVENT)Event;
+    PmicGlinkStateNotificationCb(NULL, (PPMIC_GLINK_DEVICE_CONTEXT)Context, channelEvent);
+}
+
+static BOOLEAN
+PmicGlinkNotifyRxIntentReqShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_ SIZE_T RequestedSize
+    )
+{
+    return PmicGlinkNotifyRxIntentReqCb(Channel, (PVOID)Context, RequestedSize);
+}
+
+static VOID
+PmicGlinkNotifyRxIntentShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_ SIZE_T Size
+    )
+{
+    PmicGlinkNotifyRxIntentCb(Channel, (PVOID)Context, Size);
+}
+
+static VOID
 PmicGlinkStateNotificationCb(
     _In_opt_ PVOID Handle,
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
@@ -2244,8 +2492,14 @@ PmicGlinkStateNotificationCb(
         break;
 
     case PmicGlinkChannelRemoteDisconnected:
-        if (Context->GlinkChannelConnected)
+        if (gPmicGlinkMainChannelHandle != NULL)
         {
+            if (gPmicGlinkApiInterfaceValid && (gPmicGlinkApiInterface.GLinkClose != NULL))
+            {
+                (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
+            }
+
+            gPmicGlinkMainChannelHandle = NULL;
             Context->GlinkChannelConnected = FALSE;
             Context->GlinkChannelRestart = TRUE;
             (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
@@ -2325,6 +2579,26 @@ PmicGlink_SendData(
     Context->LastRxValid = FALSE;
     (VOID)KeClearEvent(&gPmicGlinkTxNotificationEvent);
     (VOID)KeClearEvent(&gPmicGlinkRxNotificationEvent);
+    if (!gPmicGlinkApiInterfaceValid
+        || (gPmicGlinkMainChannelHandle == NULL)
+        || (gPmicGlinkApiInterface.GLinkTx == NULL))
+    {
+        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+        return STATUS_RETRY;
+    }
+
+    status = gPmicGlinkApiInterface.GLinkTx(
+        gPmicGlinkMainChannelHandle,
+        Context,
+        Buffer,
+        Buffer,
+        BufferLen,
+        0u);
+    if (!NT_SUCCESS(status))
+    {
+        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+        return STATUS_RETRY;
+    }
 
     if (!WaitForRx)
     {
@@ -7520,6 +7794,49 @@ PmicGlink_RetrieveRxData(
     return status;
 }
 
+static VOID
+PmicGlinkRxNotificationCb(
+    _In_opt_ PVOID Handle,
+    _In_opt_ const VOID* Context,
+    _In_opt_ const VOID* PacketContext,
+    _In_opt_ const VOID* Buffer,
+    _In_ SIZE_T BufferSize,
+    _In_ SIZE_T IntentUsed
+    )
+{
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+    SIZE_T copySize;
+
+    UNREFERENCED_PARAMETER(Handle);
+    UNREFERENCED_PARAMETER(PacketContext);
+    UNREFERENCED_PARAMETER(IntentUsed);
+
+    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
+    if ((deviceContext == NULL) || (Buffer == NULL) || (BufferSize == 0u))
+    {
+        return;
+    }
+
+    copySize = (BufferSize < sizeof(gPmicGlinkUsbcNotification.AsUINT8))
+        ? BufferSize
+        : sizeof(gPmicGlinkUsbcNotification.AsUINT8);
+    RtlZeroMemory(gPmicGlinkUsbcNotification.AsUINT8, sizeof(gPmicGlinkUsbcNotification.AsUINT8));
+    RtlCopyMemory(gPmicGlinkUsbcNotification.AsUINT8, Buffer, copySize);
+    if (copySize >= sizeof(gPmicGlinkUsbcNotification.AsUINT8))
+    {
+        gPmicGlinkPendingPan = (UCHAR)gPmicGlinkUsbcNotification.detail.common.port_index;
+    }
+
+    if (gPmicGlinkApiInterfaceValid
+        && (gPmicGlinkApiInterface.GLinkRxDone != NULL)
+        && (gPmicGlinkMainChannelHandle != NULL))
+    {
+        (VOID)gPmicGlinkApiInterface.GLinkRxDone(gPmicGlinkMainChannelHandle, Buffer, TRUE);
+    }
+
+    (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkRxNotificationWorkItem);
+}
+
 BOOLEAN
 PmicGlinkNotifyRxIntentReqCb(
     _In_opt_ PVOID Handle,
@@ -8068,8 +8385,14 @@ PmicGlinkUlogStateNotificationCb(
         break;
 
     case PmicGlinkChannelRemoteDisconnected:
-        if (deviceContext->GlinkChannelUlogConnected)
+        if (gPmicGlinkUlogChannelHandle != NULL)
         {
+            if (gPmicGlinkApiInterfaceValid && (gPmicGlinkApiInterface.GLinkClose != NULL))
+            {
+                (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
+            }
+
+            gPmicGlinkUlogChannelHandle = NULL;
             deviceContext->GlinkChannelUlogConnected = FALSE;
             deviceContext->GlinkChannelUlogRestart = TRUE;
         }
@@ -8126,12 +8449,83 @@ PmicGlinkUlogNotifyRxIntentCb(
     }
 }
 
+static VOID
+PmicGlinkUlogRxNotificationShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_opt_ const VOID* PacketContext,
+    _In_opt_ const VOID* Buffer,
+    _In_ SIZE_T BufferSize,
+    _In_ SIZE_T IntentUsed
+    )
+{
+    UNREFERENCED_PARAMETER(IntentUsed);
+
+    PmicGlinkUlogRxNotificationCb(
+        Channel,
+        (PVOID)Context,
+        (PVOID)PacketContext,
+        (PVOID)Buffer,
+        BufferSize);
+}
+
+static VOID
+PmicGlinkUlogTxNotificationShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_opt_ const VOID* PacketContext,
+    _In_opt_ const VOID* Buffer,
+    _In_ SIZE_T BufferSize
+    )
+{
+    PmicGlinkUlogTxNotificationCb(
+        Channel,
+        (PVOID)Context,
+        (PVOID)PacketContext,
+        (PVOID)Buffer,
+        BufferSize);
+}
+
+static VOID
+PmicGlinkUlogStateNotificationShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_ ULONG Event
+    )
+{
+    UNREFERENCED_PARAMETER(Channel);
+
+    PmicGlinkUlogStateNotificationCb(NULL, (PVOID)Context, (PMICGLINK_CHANNEL_EVENT)Event);
+}
+
+static BOOLEAN
+PmicGlinkUlogNotifyRxIntentReqShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_ SIZE_T RequestedSize
+    )
+{
+    return PmicGlinkUlogNotifyRxIntentReqCb(Channel, (PVOID)Context, RequestedSize);
+}
+
+static VOID
+PmicGlinkUlogNotifyRxIntentShim(
+    _In_opt_ GLINK_CHANNEL_CTX* Channel,
+    _In_opt_ const VOID* Context,
+    _In_ SIZE_T Size
+    )
+{
+    PmicGlinkUlogNotifyRxIntentCb(Channel, (PVOID)Context, Size);
+}
+
 NTSTATUS
 PmicGlinkUlog_OpenGlinkChannelUlog(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
     NTSTATUS status;
+    PMIC_GLINK_OPEN_CONFIG openConfig;
+    GLINK_CHANNEL_CTX* channelHandle;
     BOOLEAN oldFirstConnect;
     BOOLEAN oldConnected;
     BOOLEAN oldRestart;
@@ -8145,13 +8539,57 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     oldConnected = Context->GlinkChannelUlogConnected;
     oldRestart = Context->GlinkChannelUlogRestart;
 
+    status = PmicGlinkEnsureApiInterface(Context);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    if (gPmicGlinkApiInterface.GLinkOpen == NULL)
+    {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    channelHandle = NULL;
+    RtlZeroMemory(&openConfig, sizeof(openConfig));
+    openConfig.Transport = "SMEM";
+    openConfig.RemoteSs = "lpass";
+    openConfig.Name = "PMIC_LOGS_ADSP_APPS";
+    openConfig.Options = 0;
+    openConfig.Context = Context;
+    openConfig.NotifyRx = PmicGlinkUlogRxNotificationShim;
+    openConfig.NotifyTxDone = PmicGlinkUlogTxNotificationShim;
+    openConfig.NotifyState = PmicGlinkUlogStateNotificationShim;
+    openConfig.NotifyRxIntentReq = PmicGlinkUlogNotifyRxIntentReqShim;
+    openConfig.NotifyRxIntent = PmicGlinkUlogNotifyRxIntentShim;
+
+    status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
+    if (!NT_SUCCESS(status) || (channelHandle == NULL))
+    {
+        Context->GlinkChannelUlogFirstConnect = oldFirstConnect;
+        Context->GlinkChannelUlogConnected = oldConnected;
+        Context->GlinkChannelUlogRestart = oldRestart;
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    gPmicGlinkUlogChannelHandle = channelHandle;
     Context->GlinkChannelUlogFirstConnect = TRUE;
     Context->GlinkChannelUlogConnected = TRUE;
     Context->GlinkChannelUlogRestart = FALSE;
+    if (gPmicGlinkApiInterface.GLinkQueueRxIntent != NULL)
+    {
+        (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(channelHandle, Context, 12288u);
+    }
+    Context->GlinkUlogRxIntent += 1;
 
     status = PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkUlogRegisterInterfaceWorkItem);
     if (!NT_SUCCESS(status))
     {
+        if (gPmicGlinkApiInterface.GLinkClose != NULL)
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkClose(channelHandle);
+        }
+        gPmicGlinkUlogChannelHandle = NULL;
         Context->GlinkChannelUlogFirstConnect = oldFirstConnect;
         Context->GlinkChannelUlogConnected = oldConnected;
         Context->GlinkChannelUlogRestart = oldRestart;
@@ -8365,6 +8803,23 @@ PmicGlinkUlog_SendData(
     Context->LastUlogRxValid = FALSE;
     (VOID)KeClearEvent(&gPmicGlinkUlogTxNotificationEvent);
     (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
+    if (gPmicGlinkApiInterfaceValid
+        && (gPmicGlinkUlogChannelHandle != NULL)
+        && (gPmicGlinkApiInterface.GLinkTx != NULL))
+    {
+        status = gPmicGlinkApiInterface.GLinkTx(
+            gPmicGlinkUlogChannelHandle,
+            Context,
+            Buffer,
+            Buffer,
+            BufferSize,
+            0u);
+        if (!NT_SUCCESS(status))
+        {
+            (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
+            return STATUS_RETRY;
+        }
+    }
 
     matchedResponse = FALSE;
     waitCount = 0;
