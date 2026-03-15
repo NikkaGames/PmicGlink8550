@@ -1265,14 +1265,16 @@ PmicGlinkEvtD0Exit(
 
     PmicGlinkStateNotificationCb(gPmicGlinkMainChannelHandle, context, PmicGlinkChannelLocalDisconnected);
     if ((gPmicGlinkMainChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+        && (gPmicGlinkApiInterface.GLinkClose != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
         gPmicGlinkMainChannelHandle = NULL;
     }
 
     if ((gPmicGlinkUlogChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+        && (gPmicGlinkApiInterface.GLinkClose != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
         gPmicGlinkUlogChannelHandle = NULL;
@@ -1288,7 +1290,8 @@ PmicGlinkEvtD0Exit(
 
     if (context->RpeInitialized
         && (gPmicGlinkLinkStateHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+        && (gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb != NULL))
     {
         status = gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
         if (NT_SUCCESS(status))
@@ -8691,7 +8694,8 @@ PmicGlinkRpeADSPStateNotificationCallback(
                 linkId.RemoteSs = "lpass";
                 linkId.LinkNotifier = PmicGLinkRegisterLinkStateCb;
                 linkId.Handle = NULL;
-                if (gPmicGlinkApiInterface.GLinkRegisterLinkStateCb(&linkId, deviceContext) == STATUS_SUCCESS)
+                if ((gPmicGlinkApiInterface.GLinkRegisterLinkStateCb != NULL)
+                    && (gPmicGlinkApiInterface.GLinkRegisterLinkStateCb(&linkId, deviceContext) == STATUS_SUCCESS))
                 {
                     gPmicGlinkLinkStateHandle = linkId.Handle;
                 }
