@@ -349,6 +349,7 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_LKMDTEL_DEFAULT_MAX_REPORT_MB 25u
 #define PMICGLINK_LKMDTEL_MAX_REPORT_MB 200u
 #define PMICGLINK_LKMDTEL_SECONDARY_OVERHEAD_BYTES 262192u
+#define PMICGLINK_QUEUE_TIMER_PERIOD_MS 10000u
 
 typedef struct _PMICGLINK_ABD_CONNECTION_ENTRY
 {
@@ -378,6 +379,18 @@ typedef struct _PMICGLINK_USBC_SET_STATE_MESSAGE
     ULONG MessageOp;
     ULONG State;
 } PMICGLINK_USBC_SET_STATE_MESSAGE;
+
+typedef struct _PMICGLINK_QUEUE_CONTEXT
+{
+    PVOID Buffer;
+    ULONG Length;
+    WDFTIMER Timer;
+    WDFREQUEST CurrentRequest;
+    NTSTATUS CurrentStatus;
+    PPMIC_GLINK_DEVICE_CONTEXT DeviceContext;
+} PMICGLINK_QUEUE_CONTEXT, *PPMICGLINK_QUEUE_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(PMICGLINK_QUEUE_CONTEXT, PmicGlinkGetQueueContext)
 
 typedef struct _PEP_Modern_Standby_Notif_Struct
 {
@@ -533,6 +546,9 @@ static VOID CrashDump_BugCheckSecondaryDumpDataCallbackRingBuffer(_In_ KBUGCHECK
 static VOID CrashDump_BugCheckSecondaryDumpDataCallbackAdditional(_In_ KBUGCHECK_CALLBACK_REASON Reason, _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record, _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData, _In_ ULONG ReasonSpecificDataLength);
 static VOID CrashDump_BugCheckTriageDumpDataCallback(_In_ KBUGCHECK_CALLBACK_REASON Reason, _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record, _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData, _In_ ULONG ReasonSpecificDataLength);
 static VOID PmicGlinkEvtDmfDeviceModulesAdd(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request);
+static VOID PmicGlinkOnIoQueueContextDestroy(_In_ WDFOBJECT Object);
+static VOID PmicGlinkOnIoQueueTimer(_In_ WDFTIMER Timer);
+static NTSTATUS PmicGlinkQueueTimerCreate(_Out_ WDFTIMER* Timer, _In_ ULONG PeriodMs, _In_ WDFQUEUE Queue);
 static NTSTATUS PmicGlinkDeviceCreate(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceInit);
 static NTSTATUS PmicGlinkOnDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceInit);
 static VOID PmicGlinkOnDriverCleanup(_In_ WDFOBJECT DriverObject);
@@ -943,14 +959,31 @@ PmicGlinkEvtIoDeviceControl(
     PVOID inputBuffer;
     PVOID outputBuffer;
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    PPMICGLINK_QUEUE_CONTEXT queueContext;
     WDFDEVICE device;
 
     bytesReturned = 0;
     inputBuffer = NULL;
     outputBuffer = NULL;
 
-    device = WdfIoQueueGetDevice(Queue);
-    context = PmicGlinkGetDeviceContext(device);
+    queueContext = PmicGlinkGetQueueContext(Queue);
+    context = NULL;
+    if ((queueContext != NULL) && (queueContext->DeviceContext != NULL))
+    {
+        context = queueContext->DeviceContext;
+    }
+
+    if (context == NULL)
+    {
+        device = WdfIoQueueGetDevice(Queue);
+        context = PmicGlinkGetDeviceContext(device);
+    }
+
+    if (context == NULL)
+    {
+        WdfRequestCompleteWithInformation(Request, STATUS_INVALID_DEVICE_STATE, 0);
+        return;
+    }
 
     if (InputBufferLength > 0)
     {
@@ -5864,9 +5897,6 @@ PmicGlinkEvtDmfDeviceModulesAdd(
     WDFDEVICE device;
     UCHAR dummy;
 
-    UNREFERENCED_PARAMETER(Queue);
-    UNREFERENCED_PARAMETER(Request);
-
     device = WdfIoQueueGetDevice(Queue);
     if (device != NULL)
     {
@@ -5876,6 +5906,8 @@ PmicGlinkEvtDmfDeviceModulesAdd(
     dummy = 0;
     (VOID)CrashDump_RingBufferElementsFirstBufferGet(NULL, &dummy, sizeof(dummy), NULL);
     CrashDump_BugCheckTriageDumpDataCallback((KBUGCHECK_CALLBACK_REASON)0, NULL, &dummy, sizeof(dummy));
+
+    WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
 }
 
 static BOOLEAN
@@ -9615,6 +9647,76 @@ PmicGlinkOnDeviceAdd(
     return PmicGlinkDeviceCreate(Driver, DeviceInit);
 }
 
+static VOID
+PmicGlinkOnIoQueueContextDestroy(
+    _In_ WDFOBJECT Object
+    )
+{
+    PPMICGLINK_QUEUE_CONTEXT queueContext;
+
+    queueContext = PmicGlinkGetQueueContext(Object);
+    if ((queueContext != NULL) && (queueContext->Buffer != NULL))
+    {
+        ExFreePoolWithTag(queueContext->Buffer, 0);
+        queueContext->Buffer = NULL;
+    }
+}
+
+static VOID
+PmicGlinkOnIoQueueTimer(
+    _In_ WDFTIMER Timer
+    )
+{
+    WDFOBJECT parent;
+    PPMICGLINK_QUEUE_CONTEXT queueContext;
+    WDFREQUEST request;
+    NTSTATUS status;
+
+    parent = WdfTimerGetParentObject(Timer);
+    queueContext = PmicGlinkGetQueueContext(parent);
+    if (queueContext == NULL)
+    {
+        return;
+    }
+
+    request = queueContext->CurrentRequest;
+    if (request == NULL)
+    {
+        return;
+    }
+
+    status = WdfRequestUnmarkCancelable(request);
+    if (status != STATUS_CANCELLED)
+    {
+        queueContext->CurrentRequest = NULL;
+        WdfRequestComplete(request, queueContext->CurrentStatus);
+    }
+}
+
+static NTSTATUS
+PmicGlinkQueueTimerCreate(
+    _Out_ WDFTIMER* Timer,
+    _In_ ULONG PeriodMs,
+    _In_ WDFQUEUE Queue
+    )
+{
+    WDF_TIMER_CONFIG timerConfig;
+    WDF_OBJECT_ATTRIBUTES timerAttributes;
+
+    if ((Timer == NULL) || (Queue == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    WDF_TIMER_CONFIG_INIT_PERIODIC(&timerConfig, PmicGlinkOnIoQueueTimer, PeriodMs);
+    timerConfig.AutomaticSerialization = TRUE;
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
+    timerAttributes.ParentObject = Queue;
+
+    return WdfTimerCreate(&timerConfig, &timerAttributes, Timer);
+}
+
 NTSTATUS
 PmicGlinkQueueInitialize(
     _In_ WDFDEVICE Device
@@ -9622,6 +9724,10 @@ PmicGlinkQueueInitialize(
 {
     NTSTATUS status;
     WDF_IO_QUEUE_CONFIG queueConfig;
+    WDF_OBJECT_ATTRIBUTES queueAttributes;
+    WDFQUEUE queue;
+    PPMICGLINK_QUEUE_CONTEXT queueContext;
+    ULONG timerPeriodMs;
 
     if (Device == NULL)
     {
@@ -9630,12 +9736,43 @@ PmicGlinkQueueInitialize(
 
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
     queueConfig.EvtIoDeviceControl = PmicGlinkEvtIoDeviceControl;
+    queueConfig.EvtIoDefault = PmicGlinkEvtDmfDeviceModulesAdd;
 
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&queueAttributes, PMICGLINK_QUEUE_CONTEXT);
+    queueAttributes.EvtDestroyCallback = PmicGlinkOnIoQueueContextDestroy;
+
+    queue = NULL;
     status = WdfIoQueueCreate(
         Device,
         &queueConfig,
-        WDF_NO_OBJECT_ATTRIBUTES,
-        WDF_NO_HANDLE);
+        &queueAttributes,
+        &queue);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    queueContext = PmicGlinkGetQueueContext(queue);
+    if (queueContext == NULL)
+    {
+        WdfObjectDelete(queue);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    queueContext->Buffer = NULL;
+    queueContext->Length = 0;
+    queueContext->Timer = NULL;
+    queueContext->CurrentRequest = NULL;
+    queueContext->CurrentStatus = STATUS_INVALID_DEVICE_REQUEST;
+    queueContext->DeviceContext = PmicGlinkGetDeviceContext(Device);
+
+    timerPeriodMs = PMICGLINK_QUEUE_TIMER_PERIOD_MS;
+    status = PmicGlinkQueueTimerCreate(&queueContext->Timer, timerPeriodMs, queue);
+    if (!NT_SUCCESS(status))
+    {
+        WdfObjectDelete(queue);
+        return status;
+    }
 
     return status;
 }
