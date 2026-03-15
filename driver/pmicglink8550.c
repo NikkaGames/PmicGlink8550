@@ -3650,7 +3650,7 @@ PmicGlinkPlatformQcmb_PreShutdown_Cmd(
     status = PmicGlink_SendData(Context, 0x81u, qcmbMessage, sizeof(qcmbMessage), TRUE);
     if (NT_SUCCESS(status))
     {
-        (VOID)PmicGlinkPlatformQcmb_WaitCmdStatus(Context, 50u);
+        (VOID)PmicGlinkPlatformQcmb_WaitCmdStatus(Context, 100u);
     }
 
     Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x4u;
@@ -3703,7 +3703,7 @@ PmicGlinkPlatformQcmb_GetChargerInfo_Cmd(
     status = PmicGlink_SendData(Context, 0x81u, qcmbMessage, sizeof(qcmbMessage), TRUE);
     if (NT_SUCCESS(status))
     {
-        (VOID)PmicGlinkPlatformQcmb_WaitCmdStatus(Context, 50u);
+        (VOID)PmicGlinkPlatformQcmb_WaitCmdStatus(Context, 100u);
     }
 
     status = PmicGlinkPlatformQcmb_GetStatus(Context, &qcmbStatus);
