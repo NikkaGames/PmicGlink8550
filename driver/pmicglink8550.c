@@ -2457,6 +2457,11 @@ PmicGlinkConsumeCommDataPacket(
 
     expectedReceived = FALSE;
     (VOID)PmicGlink_RetrieveRxData(Context, OpCode, &expectedReceived);
+    if ((slot->Buffer != NULL) && (slot->Size > 0u))
+    {
+        RtlZeroMemory(slot->Buffer, slot->Size);
+    }
+
     slot->Size = 0u;
     return (expectedReceived != FALSE) ? TRUE : FALSE;
 }
