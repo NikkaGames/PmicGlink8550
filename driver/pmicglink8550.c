@@ -2467,11 +2467,6 @@ PmicGlink_OpenGlinkChannel(
         return STATUS_SUCCESS;
     }
 
-    if (gPmicGlinkApiInterface.GLinkOpen == NULL)
-    {
-        return STATUS_SUCCESS;
-    }
-
     channelHandle = NULL;
     RtlZeroMemory(&openConfig, sizeof(openConfig));
     openConfig.Transport = "SMEM";
@@ -2708,8 +2703,7 @@ PmicGlink_SendData(
         return STATUS_RETRY;
     }
 
-    if ((gPmicGlinkMainChannelHandle == NULL)
-        || (gPmicGlinkApiInterface.GLinkTx == NULL))
+    if (gPmicGlinkMainChannelHandle == NULL)
     {
         return STATUS_RETRY;
     }
@@ -9230,11 +9224,6 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
         return STATUS_SUCCESS;
     }
 
-    if (gPmicGlinkApiInterface.GLinkOpen == NULL)
-    {
-        return STATUS_SUCCESS;
-    }
-
     channelHandle = NULL;
     RtlZeroMemory(&openConfig, sizeof(openConfig));
     openConfig.Transport = "SMEM";
@@ -9445,8 +9434,7 @@ PmicGlinkUlog_SendData(
         return STATUS_RETRY;
     }
 
-    if ((gPmicGlinkUlogChannelHandle == NULL)
-        || (gPmicGlinkApiInterface.GLinkTx == NULL))
+    if (gPmicGlinkUlogChannelHandle == NULL)
     {
         return STATUS_RETRY;
     }
