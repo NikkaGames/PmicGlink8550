@@ -1459,8 +1459,10 @@ RegisterDeviceInterfaces(
             WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_BATT_MNGR, NULL, FALSE);
             WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL, FALSE);
 
-            PmicGlinkClearAbdAttachment(context, TRUE);
-            PmicGlinkClearBattMiniAttachment(context);
+            if (context->ABDAttached && (context->AbdIoTarget != NULL))
+            {
+                (VOID)PmicGlinkAbdUpdateConnections(context, FALSE);
+            }
 
             context->DdiInterface.PmicGlinkUCSIAlertCallback = NULL;
             context->DeviceInterfacesRegistered = FALSE;
@@ -3938,10 +3940,20 @@ PmicGlinkPlatformQcmb_WriteMBToBuffer(
     }
 
     RtlZeroMemory(Buffer, BufferSize);
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockAcquire(Context->StateLock);
+    }
+
     ((ULONG*)Buffer)[0] = Context->QcmbStatus;
     ((ULONG*)Buffer)[1] = Context->QcmbCurrentChargerPowerUW;
     ((ULONG*)Buffer)[2] = Context->QcmbGoodChargerThresholdUW;
     ((ULONG*)Buffer)[3] = Context->QcmbChargerStatusInfo;
+
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockRelease(Context->StateLock);
+    }
 
     return STATUS_SUCCESS;
 }
@@ -3977,7 +3989,17 @@ PmicGlinkPlatformQcmb_GetStatus(
     status = PmicGlink_SendData(Context, 0x80u, &requestMessage, sizeof(requestMessage), TRUE);
     if (NT_SUCCESS(status))
     {
+        if (Context->StateLock != NULL)
+        {
+            WdfSpinLockAcquire(Context->StateLock);
+        }
+
         *QcmbStatus = Context->QcmbStatus;
+
+        if (Context->StateLock != NULL)
+        {
+            WdfSpinLockRelease(Context->StateLock);
+        }
     }
 
     return status;
@@ -4051,7 +4073,10 @@ PmicGlinkPlatformQcmb_PreShutdown_Cmd(
         (VOID)PmicGlinkPlatformQcmb_WaitCmdStatus(Context, 100u);
     }
 
+    WdfSpinLockAcquire(Context->StateLock);
     Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x4u;
+    WdfSpinLockRelease(Context->StateLock);
+
     if ((CmdBitMask & 0xFFu) < 4u)
     {
         status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
@@ -4091,7 +4116,10 @@ PmicGlinkPlatformQcmb_GetChargerInfo_Cmd(
         return STATUS_SUCCESS;
     }
 
+    WdfSpinLockAcquire(Context->StateLock);
     Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x2u;
+    WdfSpinLockRelease(Context->StateLock);
+
     status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
     if (!NT_SUCCESS(status))
     {
@@ -8631,10 +8659,21 @@ PmicGlink_RetrieveRxData(
     case 128u:
         if (BufferSize >= 44u)
         {
+            if (Context->StateLock != NULL)
+            {
+                WdfSpinLockAcquire(Context->StateLock);
+            }
+
             RtlCopyMemory(&Context->QcmbStatus, Buffer + 16, sizeof(Context->QcmbStatus));
             RtlCopyMemory(&Context->QcmbCurrentChargerPowerUW, Buffer + 28, sizeof(Context->QcmbCurrentChargerPowerUW));
             RtlCopyMemory(&Context->QcmbGoodChargerThresholdUW, Buffer + 32, sizeof(Context->QcmbGoodChargerThresholdUW));
             RtlCopyMemory(&Context->QcmbChargerStatusInfo, Buffer + 36, sizeof(Context->QcmbChargerStatusInfo));
+
+            if (Context->StateLock != NULL)
+            {
+                WdfSpinLockRelease(Context->StateLock);
+            }
+
             KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
         }
 
@@ -8654,8 +8693,20 @@ PmicGlink_RetrieveRxData(
 
             RtlCopyMemory(&fwStatus, Buffer + 12, sizeof(fwStatus));
             status = (NTSTATUS)(LONG)fwStatus;
+
+            if (Context->StateLock != NULL)
+            {
+                WdfSpinLockAcquire(Context->StateLock);
+            }
+
             RtlCopyMemory(&Context->QcmbStatus, Buffer + 12, sizeof(Context->QcmbStatus));
             Context->QcmbConnected = ((Context->QcmbStatus & 1u) != 0u) ? TRUE : FALSE;
+
+            if (Context->StateLock != NULL)
+            {
+                WdfSpinLockRelease(Context->StateLock);
+            }
+
             KeSetEvent(&Context->QcmbNotifyEvent, IO_NO_INCREMENT, FALSE);
         }
         break;
