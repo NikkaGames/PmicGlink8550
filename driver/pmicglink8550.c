@@ -9542,6 +9542,12 @@ PmicGlinkUlog_SendData(
         gPmicGlinkUlogRxInProgress = 0;
     }
 
+    if (!NT_SUCCESS(status))
+    {
+        gPmicGlinkUlogRxInProgress = 0;
+        return status;
+    }
+
     waitCount = 0;
     while (waitCount < 50u)
     {
