@@ -7028,6 +7028,13 @@ PmicGlink_RetrieveRxData(
 
     RtlCopyMemory(&opCode, Buffer + sizeof(ULONGLONG), sizeof(opCode));
     Context->LastRxOpcode = opCode;
+    if (opCode > 0x105u)
+    {
+        Context->LastRxStatus = STATUS_INVALID_DEVICE_REQUEST;
+        Context->LastRxValid = FALSE;
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
     switch (opCode)
     {
     case 0u:
@@ -7433,10 +7440,23 @@ PmicGlinkNotifyRxIntentReqCb(
     _In_ SIZE_T RequestedSize
     )
 {
+    PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+
     UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(RequestedSize);
 
-    return (Context != NULL) ? TRUE : FALSE;
+    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
+    if (deviceContext == NULL)
+    {
+        return FALSE;
+    }
+
+    if (deviceContext->GlinkChannelRestart || !deviceContext->GlinkChannelConnected)
+    {
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 VOID
@@ -7975,6 +7995,11 @@ PmicGlinkUlogNotifyRxIntentReqCb(
         return FALSE;
     }
 
+    if (deviceContext->GlinkChannelUlogRestart || !deviceContext->GlinkChannelUlogConnected)
+    {
+        return FALSE;
+    }
+
     return TRUE;
 }
 
@@ -8052,6 +8077,13 @@ PmicGlinkUlog_RetrieveRxData(
 
     opCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
     Context->LastUlogRxOpcode = opCode;
+    if (opCode > 0x105u)
+    {
+        Context->LastUlogRxStatus = STATUS_INVALID_DEVICE_REQUEST;
+        Context->LastUlogRxValid = FALSE;
+        return STATUS_INVALID_DEVICE_REQUEST;
+    }
+
     switch (opCode)
     {
     case 24u:
