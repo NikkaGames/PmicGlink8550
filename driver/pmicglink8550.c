@@ -901,14 +901,14 @@ PmicGlinkEvtReleaseHardware(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    ULONG currentState;
 
     UNREFERENCED_PARAMETER(ResourcesTranslated);
 
     context = PmicGlinkGetDeviceContext(Device);
     context->GlinkDeviceLoaded = FALSE;
-    context->GlinkLinkStateUp = FALSE;
-    PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
-    context->GlinkChannelConnected = FALSE;
+    currentState = 0u;
+    PmicGlinkRpeADSPStateNotificationCallback(context, 0u, &currentState);
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     if (context->UlogTimer != NULL)
     {
