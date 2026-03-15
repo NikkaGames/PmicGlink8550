@@ -2277,6 +2277,10 @@ PmicGlink_SendData(
         {
             (VOID)KeClearEvent(&gPmicGlinkRxNotificationEvent);
         }
+        if (KeReadStateEvent(&gPmicGlinkTxNotificationEvent) != 0)
+        {
+            (VOID)KeClearEvent(&gPmicGlinkTxNotificationEvent);
+        }
 
         if (Context->LastRxValid)
         {
@@ -2302,6 +2306,10 @@ PmicGlink_SendData(
             if (KeReadStateEvent(&gPmicGlinkRxNotificationEvent) != 0)
             {
                 (VOID)KeClearEvent(&gPmicGlinkRxNotificationEvent);
+            }
+            if (KeReadStateEvent(&gPmicGlinkTxNotificationEvent) != 0)
+            {
+                (VOID)KeClearEvent(&gPmicGlinkTxNotificationEvent);
             }
 
             if (Context->LastRxValid)
@@ -8301,6 +8309,10 @@ PmicGlinkUlog_SendData(
         {
             (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
         }
+        if (KeReadStateEvent(&gPmicGlinkUlogTxNotificationEvent) != 0)
+        {
+            (VOID)KeClearEvent(&gPmicGlinkUlogTxNotificationEvent);
+        }
 
         if (Context->LastUlogRxValid)
         {
@@ -8326,6 +8338,10 @@ PmicGlinkUlog_SendData(
             if (KeReadStateEvent(&gPmicGlinkUlogRxNotificationEvent) != 0)
             {
                 (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
+            }
+            if (KeReadStateEvent(&gPmicGlinkUlogTxNotificationEvent) != 0)
+            {
+                (VOID)KeClearEvent(&gPmicGlinkUlogTxNotificationEvent);
             }
 
             if (Context->LastUlogRxValid)
