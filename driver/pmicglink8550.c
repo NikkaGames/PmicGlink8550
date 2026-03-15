@@ -1842,6 +1842,7 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             }
         }
 
+        WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
         if (Context->BattMiniNotificationEntry != NULL)
         {
             unregisterStatus = IoUnregisterPlugPlayNotification(Context->BattMiniNotificationEntry);
@@ -1851,6 +1852,7 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             }
             Context->BattMiniNotificationEntry = NULL;
         }
+        WdfWaitLockRelease(Context->BattMiniNotifyLock);
 
         return status;
     }
