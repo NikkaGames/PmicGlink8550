@@ -480,6 +480,7 @@ static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
 static VOID PmicGlinkResetApiInterface(VOID);
 static NTSTATUS PmicGlinkEnsureApiInterface(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static VOID PmicGlinkResetCommDataSlots(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN DeleteMemory);
 static NTSTATUS PmicGlinkEnsureCommDataBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode, _In_ SIZE_T RequiredSize);
 static BOOLEAN PmicGlinkTryExtractMessageOp(_In_opt_ const VOID* Buffer, _In_ SIZE_T BufferSize, _Out_ PULONG MessageOp);
 static NTSTATUS PmicGlinkStoreCommDataPacket(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode, _In_reads_bytes_(BufferSize) const VOID* Buffer, _In_ SIZE_T BufferSize, _In_ BOOLEAN SanitizeWord5);
@@ -1202,7 +1203,6 @@ PmicGlinkEvtReleaseHardware(
     PPMIC_GLINK_DEVICE_CONTEXT context;
     PPMIC_GLINK_DRIVER_CONTEXT driverContext;
     WDFDRIVER driver;
-    ULONG opCode;
 
     UNREFERENCED_PARAMETER(ResourcesTranslated);
 
@@ -1211,16 +1211,7 @@ PmicGlinkEvtReleaseHardware(
     driverContext = PmicGlinkGetDriverContext(driver);
     driverContext->BattMngrDevice = NULL;
 
-    for (opCode = 0; opCode < PMICGLINK_COMM_DATA_SLOTS; opCode++)
-    {
-        PMICGLINK_COMM_DATA* slot;
-
-        slot = &context->CommData[opCode];
-        if (slot->Memory != NULL)
-        {
-            WdfObjectDelete(slot->Memory);
-        }
-    }
+    PmicGlinkResetCommDataSlots(context, TRUE);
 
     return STATUS_SUCCESS;
 }
@@ -1308,14 +1299,18 @@ PmicGlinkEvtD0Exit(
     context->GlinkLinkStateUp = FALSE;
     context->LegacyStatusNotificationPending = FALSE;
     context->LegacyStateChangePending = FALSE;
+    PmicGlinkResetCommDataSlots(context, FALSE);
 
-    if (context->RpeInitialized
-        && (gPmicGlinkLinkStateHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
-        && (gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb != NULL))
+    if (context->RpeInitialized && (gPmicGlinkLinkStateHandle != NULL))
     {
-        status = gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
-        if (NT_SUCCESS(status))
+        status = STATUS_NOT_SUPPORTED;
+        if ((gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+            && (gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb != NULL))
+        {
+            status = gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
+        }
+
+        if (NT_SUCCESS(status) || (TargetState == WdfPowerDeviceD3Final))
         {
             gPmicGlinkLinkStateHandle = NULL;
             context->RpeInitialized = FALSE;
@@ -2405,6 +2400,49 @@ PmicGlinkResetApiInterface(
     gPmicGlinkMainChannelHandle = NULL;
     gPmicGlinkUlogChannelHandle = NULL;
     gPmicGlinkLinkStateHandle = NULL;
+}
+
+static VOID
+PmicGlinkResetCommDataSlots(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ BOOLEAN DeleteMemory
+    )
+{
+    ULONG opCode;
+
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    if (!DeleteMemory && (Context->StateLock != NULL))
+    {
+        WdfSpinLockAcquire(Context->StateLock);
+    }
+
+    for (opCode = 0u; opCode < PMICGLINK_COMM_DATA_SLOTS; opCode++)
+    {
+        PMICGLINK_COMM_DATA* slot;
+
+        slot = &Context->CommData[opCode];
+        if ((slot->Buffer != NULL) && (slot->Size > 0u))
+        {
+            RtlZeroMemory(slot->Buffer, slot->Size);
+        }
+
+        slot->Size = 0u;
+        if (DeleteMemory && (slot->Memory != NULL))
+        {
+            WdfObjectDelete(slot->Memory);
+            slot->Memory = NULL;
+            slot->Buffer = NULL;
+        }
+    }
+
+    if (!DeleteMemory && (Context->StateLock != NULL))
+    {
+        WdfSpinLockRelease(Context->StateLock);
+    }
 }
 
 static NTSTATUS
