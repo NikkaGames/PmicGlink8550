@@ -1063,6 +1063,30 @@ PmicGlinkEvtReleaseHardware(
 
     context = PmicGlinkGetDeviceContext(Device);
     context->GlinkDeviceLoaded = FALSE;
+    if (gPmicGlinkApiInterfaceValid)
+    {
+        if ((gPmicGlinkLinkStateHandle != NULL)
+            && (gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
+            gPmicGlinkLinkStateHandle = NULL;
+        }
+
+        if ((gPmicGlinkMainChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.GLinkClose != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
+            gPmicGlinkMainChannelHandle = NULL;
+        }
+
+        if ((gPmicGlinkUlogChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.GLinkClose != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
+            gPmicGlinkUlogChannelHandle = NULL;
+        }
+    }
+
     currentState = 0u;
     PmicGlinkRpeADSPStateNotificationCallback(context, 0u, &currentState);
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
@@ -1126,6 +1150,23 @@ PmicGlinkEvtD0Exit(
     }
 
     PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
+    if (gPmicGlinkApiInterfaceValid)
+    {
+        if ((gPmicGlinkMainChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.GLinkClose != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
+            gPmicGlinkMainChannelHandle = NULL;
+        }
+
+        if ((gPmicGlinkUlogChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.GLinkClose != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
+            gPmicGlinkUlogChannelHandle = NULL;
+        }
+    }
+
     context->GlinkChannelConnected = FALSE;
     context->GlinkChannelRestart = FALSE;
 
