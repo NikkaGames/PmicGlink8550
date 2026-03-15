@@ -1101,7 +1101,8 @@ PmicGlinkEvtReleaseHardware(
 
     context = PmicGlinkGetDeviceContext(Device);
     context->GlinkDeviceLoaded = FALSE;
-    if (gPmicGlinkLinkStateHandle != NULL)
+    if ((gPmicGlinkLinkStateHandle != NULL)
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
         gPmicGlinkLinkStateHandle = NULL;
@@ -9417,7 +9418,7 @@ PmicGlinkUlog_SendData(
     BOOLEAN matchedResponse;
     BOOLEAN expectedReceived;
 
-    if ((Buffer == NULL) || (BufferSize == 0))
+    if (Buffer == NULL)
     {
         return STATUS_UNSUCCESSFUL;
     }
