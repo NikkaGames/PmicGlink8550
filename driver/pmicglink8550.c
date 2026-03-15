@@ -2636,10 +2636,8 @@ PmicGlinkStateNotificationShim(
 {
     PMICGLINK_CHANNEL_EVENT channelEvent;
 
-    UNREFERENCED_PARAMETER(Channel);
-
     channelEvent = (PMICGLINK_CHANNEL_EVENT)Event;
-    PmicGlinkStateNotificationCb(NULL, (PPMIC_GLINK_DEVICE_CONTEXT)Context, channelEvent);
+    PmicGlinkStateNotificationCb(Channel, (PPMIC_GLINK_DEVICE_CONTEXT)Context, channelEvent);
 }
 
 static BOOLEAN
@@ -2707,7 +2705,11 @@ PmicGlinkStateNotificationCb(
     _In_ PMICGLINK_CHANNEL_EVENT Event
     )
 {
-    UNREFERENCED_PARAMETER(Handle);
+    GLINK_CHANNEL_CTX* channelHandle;
+
+    channelHandle = (Handle != NULL)
+        ? (GLINK_CHANNEL_CTX*)Handle
+        : gPmicGlinkMainChannelHandle;
 
     if (Context == NULL)
     {
@@ -2720,13 +2722,17 @@ PmicGlinkStateNotificationCb(
         Context->GlinkChannelFirstConnect = TRUE;
         Context->GlinkChannelConnected = TRUE;
         Context->GlinkChannelRestart = FALSE;
+        if (channelHandle != NULL)
+        {
+            gPmicGlinkMainChannelHandle = channelHandle;
+        }
         (VOID)KeClearEvent(&gPmicGlinkLocalDisconnectedEvent);
         (VOID)KeClearEvent(&gPmicGlinkRemoteDisconnectedEvent);
         (VOID)KeSetEvent(&gPmicGlinkConnectedEvent, IO_NO_INCREMENT, FALSE);
-        if ((gPmicGlinkMainChannelHandle != NULL)
+        if ((channelHandle != NULL)
             && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
         {
-            (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(gPmicGlinkMainChannelHandle, Context, 4096u);
+            (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(channelHandle, Context, 4096u);
         }
         Context->GlinkRxIntent += 1;
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
@@ -2743,10 +2749,10 @@ PmicGlinkStateNotificationCb(
         break;
 
     case PmicGlinkChannelRemoteDisconnected:
-        if ((gPmicGlinkMainChannelHandle != NULL)
+        if ((channelHandle != NULL)
             && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
         {
-            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
+            (VOID)gPmicGlinkApiInterface.GLinkClose(channelHandle);
 
             gPmicGlinkMainChannelHandle = NULL;
             Context->GlinkChannelConnected = FALSE;
@@ -8373,6 +8379,7 @@ PmicGlinkRxNotificationCb(
     _In_ SIZE_T IntentUsed
     )
 {
+    GLINK_CHANNEL_CTX* channelHandle;
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     PMICGLINK_COMM_DATA* commSlot;
     NTSTATUS status;
@@ -8380,9 +8387,12 @@ PmicGlinkRxNotificationCb(
     BOOLEAN queueWorkItem;
     SIZE_T copySize;
 
-    UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(PacketContext);
     UNREFERENCED_PARAMETER(IntentUsed);
+
+    channelHandle = (Handle != NULL)
+        ? (GLINK_CHANNEL_CTX*)Handle
+        : gPmicGlinkMainChannelHandle;
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext == NULL)
@@ -8441,10 +8451,10 @@ PmicGlinkRxNotificationCb(
         }
     }
 
-    if ((gPmicGlinkMainChannelHandle != NULL)
+    if ((channelHandle != NULL)
         && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
-        (VOID)gPmicGlinkApiInterface.GLinkRxDone(gPmicGlinkMainChannelHandle, Buffer, TRUE);
+        (VOID)gPmicGlinkApiInterface.GLinkRxDone(channelHandle, Buffer, TRUE);
     }
 
     if (queueWorkItem)
@@ -8460,11 +8470,13 @@ PmicGlinkNotifyRxIntentReqCb(
     _In_ SIZE_T RequestedSize
     )
 {
+    GLINK_CHANNEL_CTX* channelHandle;
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     NTSTATUS status;
-    SIZE_T intentSize;
 
-    UNREFERENCED_PARAMETER(Handle);
+    channelHandle = (Handle != NULL)
+        ? (GLINK_CHANNEL_CTX*)Handle
+        : gPmicGlinkMainChannelHandle;
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext == NULL)
@@ -8472,12 +8484,16 @@ PmicGlinkNotifyRxIntentReqCb(
         return FALSE;
     }
 
-    intentSize = RequestedSize;
+    if ((channelHandle == NULL)
+        || (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL))
+    {
+        return FALSE;
+    }
 
     status = gPmicGlinkApiInterface.GLinkQueueRxIntent(
-        gPmicGlinkMainChannelHandle,
+        channelHandle,
         deviceContext,
-        intentSize);
+        RequestedSize);
     return (status == STATUS_SUCCESS) ? TRUE : FALSE;
 }
 
