@@ -292,8 +292,6 @@ static KEVENT gPmicGlinkTxNotificationEvent;
 static KEVENT gPmicGlinkRxIntentReqEvent;
 static KEVENT gPmicGlinkRxNotificationEvent;
 static KEVENT gPmicGlinkRxIntentNotificationEvent;
-static UCHAR gPmicGlinkMainRxPacket[4096];
-static SIZE_T gPmicGlinkMainRxPacketLength;
 static LONG gPmicGlinkTxCount;
 static KMUTEX gPmicGlinkUlogTxSync;
 static LONG gPmicGlinkUlogRxInProgress;
@@ -328,6 +326,7 @@ static ULONG gPmicGlinkLkmdTelMaxSecondarySize = ((25u << 20) - 262192u);
 static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 
 #define PMICGLINK_POOLTAG_CRASHDUMP 'DmGP'
+#define PMICGLINK_POOLTAG_COMMDATA  'CmGP'
 #define PMICGLINK_CRASHDUMP_STALE_FILE_OBJECT ((WDFFILEOBJECT)(ULONG_PTR)-1)
 #define PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE 0x800A2008u
 #define PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS 0x800A0FB0u
@@ -453,6 +452,8 @@ static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
 static NTSTATUS PmicGlinkEnsureApiInterface(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static NTSTATUS PmicGlinkEnsureCommDataBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode, _In_ SIZE_T RequiredSize);
+static BOOLEAN PmicGlinkConsumeCommDataPacket(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode);
 static NTSTATUS PmicGlink_OpenGlinkChannel(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkRxNotificationCb(
@@ -1946,8 +1947,7 @@ PmicGlinkDevice_InitContext(
     KeInitializeEvent(&gPmicGlinkRxIntentReqEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkRxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&gPmicGlinkRxIntentNotificationEvent, NotificationEvent, FALSE);
-    RtlZeroMemory(gPmicGlinkMainRxPacket, sizeof(gPmicGlinkMainRxPacket));
-    gPmicGlinkMainRxPacketLength = 0u;
+    RtlZeroMemory(Context->CommData, sizeof(Context->CommData));
     KeInitializeMutex(&gPmicGlinkUlogTxSync, 1);
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
     KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
@@ -2351,6 +2351,91 @@ PmicGlinkEnsureApiInterface(
 }
 
 static NTSTATUS
+PmicGlinkEnsureCommDataBuffer(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG OpCode,
+    _In_ SIZE_T RequiredSize
+    )
+{
+    NTSTATUS status;
+    WDF_OBJECT_ATTRIBUTES attributes;
+    PMICGLINK_COMM_DATA* slot;
+    SIZE_T allocatedSize;
+
+    if ((Context == NULL)
+        || (OpCode >= PMICGLINK_COMM_DATA_SLOTS)
+        || (RequiredSize == 0u))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    slot = &Context->CommData[OpCode];
+    if ((slot->Memory != NULL) && (slot->Buffer != NULL))
+    {
+        allocatedSize = 0u;
+        (VOID)WdfMemoryGetBuffer(slot->Memory, &allocatedSize);
+        if (allocatedSize >= RequiredSize)
+        {
+            return STATUS_SUCCESS;
+        }
+    }
+
+    if (slot->Memory != NULL)
+    {
+        WdfObjectDelete(slot->Memory);
+        slot->Memory = NULL;
+        slot->Buffer = NULL;
+        slot->Size = 0u;
+    }
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
+    attributes.ParentObject = Context->Device;
+    status = WdfMemoryCreate(
+        &attributes,
+        NonPagedPoolNx,
+        PMICGLINK_POOLTAG_COMMDATA,
+        RequiredSize,
+        &slot->Memory,
+        (PVOID*)&slot->Buffer);
+    if (!NT_SUCCESS(status))
+    {
+        slot->Memory = NULL;
+        slot->Buffer = NULL;
+        slot->Size = 0u;
+        return status;
+    }
+
+    slot->Size = 0u;
+    return STATUS_SUCCESS;
+}
+
+static BOOLEAN
+PmicGlinkConsumeCommDataPacket(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG OpCode
+    )
+{
+    PMICGLINK_COMM_DATA* slot;
+    SIZE_T packetLength;
+
+    if ((Context == NULL) || (OpCode >= PMICGLINK_COMM_DATA_SLOTS))
+    {
+        return FALSE;
+    }
+
+    slot = &Context->CommData[OpCode];
+    if ((slot->Buffer == NULL) || (slot->Size == 0u))
+    {
+        return FALSE;
+    }
+
+    packetLength = slot->Size;
+    slot->Size = 0u;
+    (VOID)PmicGlink_RetrieveRxData(Context, slot->Buffer, packetLength);
+    return TRUE;
+}
+
+static NTSTATUS
 PmicGlink_OpenGlinkChannel(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
@@ -2663,6 +2748,10 @@ PmicGlink_SendData(
     (VOID)KeClearEvent(&gPmicGlinkRxIntentReqEvent);
     (VOID)KeClearEvent(&gPmicGlinkRxNotificationEvent);
     (VOID)KeClearEvent(&gPmicGlinkRxIntentNotificationEvent);
+    if (OpCode < PMICGLINK_COMM_DATA_SLOTS)
+    {
+        Context->CommData[OpCode].Size = 0u;
+    }
     if (!gPmicGlinkApiInterfaceValid
         || (gPmicGlinkMainChannelHandle == NULL)
         || (gPmicGlinkApiInterface.GLinkTx == NULL))
@@ -2728,14 +2817,7 @@ PmicGlink_SendData(
                 continue;
             }
 
-            if (gPmicGlinkMainRxPacketLength > 0u)
-            {
-                SIZE_T stagedLength;
-
-                stagedLength = gPmicGlinkMainRxPacketLength;
-                gPmicGlinkMainRxPacketLength = 0u;
-                (VOID)PmicGlink_RetrieveRxData(Context, gPmicGlinkMainRxPacket, stagedLength);
-            }
+            (VOID)PmicGlinkConsumeCommDataPacket(Context, OpCode);
         }
 
         if (Context->LastRxValid)
@@ -2783,14 +2865,7 @@ PmicGlink_SendData(
                     continue;
                 }
 
-                if (gPmicGlinkMainRxPacketLength > 0u)
-                {
-                    SIZE_T stagedLength;
-
-                    stagedLength = gPmicGlinkMainRxPacketLength;
-                    gPmicGlinkMainRxPacketLength = 0u;
-                    (VOID)PmicGlink_RetrieveRxData(Context, gPmicGlinkMainRxPacket, stagedLength);
-                }
+                (VOID)PmicGlinkConsumeCommDataPacket(Context, OpCode);
             }
 
             if (Context->LastRxValid)
@@ -7947,6 +8022,8 @@ PmicGlinkRxNotificationCb(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+    PMICGLINK_COMM_DATA* commSlot;
+    NTSTATUS status;
     ULONG messageOp;
     BOOLEAN queueWorkItem;
     SIZE_T copySize;
@@ -7962,6 +8039,7 @@ PmicGlinkRxNotificationCb(
     }
 
     messageOp = MAXULONG;
+    queueWorkItem = FALSE;
     if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
     {
         RtlCopyMemory(
@@ -7970,39 +8048,31 @@ PmicGlinkRxNotificationCb(
             sizeof(messageOp));
     }
 
-    queueWorkItem = ((messageOp == 7u)
-        || (messageOp == 19u)
-        || (messageOp == 22u)
-        || (messageOp == 130u)
-        || (messageOp == 259u));
-
-    if (queueWorkItem)
+    if (messageOp < PMICGLINK_COMM_DATA_SLOTS)
     {
-        copySize = (BufferSize < sizeof(gPmicGlinkMainRxPacket))
-            ? BufferSize
-            : sizeof(gPmicGlinkMainRxPacket);
-        RtlZeroMemory(gPmicGlinkMainRxPacket, sizeof(gPmicGlinkMainRxPacket));
-        RtlCopyMemory(gPmicGlinkMainRxPacket, Buffer, copySize);
-        if (copySize >= (sizeof(USHORT) * 6u))
+        status = PmicGlinkEnsureCommDataBuffer(deviceContext, messageOp, BufferSize);
+        if (NT_SUCCESS(status))
         {
-            ((PUSHORT)gPmicGlinkMainRxPacket)[5] = 0u;
-        }
-        gPmicGlinkMainRxPacketLength = copySize;
-    }
-    else
-    {
-        copySize = (BufferSize < sizeof(gPmicGlinkMainRxPacket))
-            ? BufferSize
-            : sizeof(gPmicGlinkMainRxPacket);
-        RtlZeroMemory(gPmicGlinkMainRxPacket, sizeof(gPmicGlinkMainRxPacket));
-        RtlCopyMemory(gPmicGlinkMainRxPacket, Buffer, copySize);
-        if (copySize >= (sizeof(USHORT) * 6u))
-        {
-            ((PUSHORT)gPmicGlinkMainRxPacket)[5] = 0u;
-        }
+            commSlot = &deviceContext->CommData[messageOp];
+            copySize = BufferSize;
+            RtlZeroMemory(commSlot->Buffer, copySize);
+            RtlCopyMemory(commSlot->Buffer, Buffer, copySize);
+            if (copySize >= (sizeof(USHORT) * 6u))
+            {
+                ((PUSHORT)commSlot->Buffer)[5] = 0u;
+            }
 
-        gPmicGlinkMainRxPacketLength = copySize;
-        (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
+            commSlot->Size = (copySize > 0xFFFFu) ? 0xFFFFu : (USHORT)copySize;
+            queueWorkItem = ((messageOp == 7u)
+                || (messageOp == 19u)
+                || (messageOp == 22u)
+                || (messageOp == 130u)
+                || (messageOp == 259u));
+            if (!queueWorkItem)
+            {
+                (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
+            }
+        }
     }
 
     if (gPmicGlinkApiInterfaceValid
@@ -8118,23 +8188,20 @@ PmicGlinkRxNotificationWorkItem(
 {
     WDFOBJECT parentObject;
     PPMIC_GLINK_DEVICE_CONTEXT context;
-    SIZE_T packetLength;
+    ULONG i;
+    static const ULONG priorityOps[] = { 19u, 7u, 22u, 259u, 130u };
 
     parentObject = WdfWorkItemGetParentObject(WorkItem);
     context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
     if (context != NULL)
     {
-        packetLength = gPmicGlinkMainRxPacketLength;
-        gPmicGlinkMainRxPacketLength = 0u;
-        if (packetLength > 0u)
+        for (i = 0u; i < ARRAYSIZE(priorityOps); i++)
         {
-            if (packetLength >= (sizeof(ULONGLONG) + sizeof(ULONG)))
+            if (PmicGlinkConsumeCommDataPacket(context, priorityOps[i]))
             {
-                ((PUSHORT)gPmicGlinkMainRxPacket)[5] = 0u;
+                (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
+                break;
             }
-
-            (VOID)PmicGlink_RetrieveRxData(context, gPmicGlinkMainRxPacket, packetLength);
-            (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
         }
     }
 

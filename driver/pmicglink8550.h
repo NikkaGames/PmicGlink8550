@@ -82,6 +82,7 @@
 #define PMICGLINK_BATTMNGR_BATT_INFO_OUT_SIZE 512u
 #define PMICGLINK_BATTMNGR_TEST_INFO_INPUT_DWORDS 128u
 #define PMICGLINK_BATTMNGR_TEST_INFO_OUTPUT_DWORDS 80u
+#define PMICGLINK_COMM_DATA_SLOTS 261u
 
 typedef struct _PMICGLINK_UCSI_WRITE_DATA_BUF_TYPE
 {
@@ -418,6 +419,13 @@ typedef struct _PMICGLINK_TAD_TIV_OUTBUF
     ULONG TimerValueRemain;
 } PMICGLINK_TAD_TIV_OUTBUF;
 
+typedef struct _PMICGLINK_COMM_DATA
+{
+    WDFMEMORY Memory;
+    UCHAR* Buffer;
+    USHORT Size;
+} PMICGLINK_COMM_DATA;
+
 typedef struct _PMIC_GLINK_DEVICE_CONTEXT
 {
     WDFDEVICE Device;
@@ -426,6 +434,7 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     BOOLEAN AllReqIntfArrived;
     BOOLEAN GlinkDeviceLoaded;
     BOOLEAN ABDAttached;
+    PMICGLINK_COMM_DATA CommData[PMICGLINK_COMM_DATA_SLOTS];
     BOOLEAN GlinkChannelConnected;
     BOOLEAN GlinkChannelRestart;
     BOOLEAN GlinkChannelFirstConnect;
