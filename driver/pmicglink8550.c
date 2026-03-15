@@ -7593,6 +7593,7 @@ PmicGlinkUlogRxNotificationCb(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+    PUSHORT rxWords;
 
     UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(PacketContext);
@@ -7600,6 +7601,8 @@ PmicGlinkUlogRxNotificationCb(
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if ((deviceContext != NULL) && (Buffer != NULL) && (BufferSize > 0))
     {
+        rxWords = (PUSHORT)Buffer;
+        rxWords[5] = 0u;
         (VOID)PmicGlinkUlog_RetrieveRxData(deviceContext, (const CHAR*)Buffer, BufferSize);
         deviceContext->NotificationFlag = TRUE;
         (VOID)KeSetEvent(&gPmicGlinkUlogRxNotificationEvent, IO_NO_INCREMENT, FALSE);
