@@ -2542,6 +2542,7 @@ PmicGlink_OpenGlinkChannel(
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
     if (status != STATUS_SUCCESS)
     {
+        gPmicGlinkMainChannelHandle = NULL;
         return STATUS_UNSUCCESSFUL;
     }
 
@@ -9336,6 +9337,7 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
     if (status != STATUS_SUCCESS)
     {
+        gPmicGlinkUlogChannelHandle = NULL;
         return STATUS_UNSUCCESSFUL;
     }
 
