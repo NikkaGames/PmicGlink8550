@@ -1056,8 +1056,6 @@ PmicGlinkEvtPrepareHardware(
     UNREFERENCED_PARAMETER(ResourcesTranslated);
 
     context = PmicGlinkGetDeviceContext(Device);
-    context->GlinkDeviceLoaded = TRUE;
-    context->AllReqIntfArrived = TRUE;
     RtlZeroMemory(&gPmicGlinkAcpiInterface, sizeof(gPmicGlinkAcpiInterface));
     status = WdfFdoQueryForInterface(
         Device,
