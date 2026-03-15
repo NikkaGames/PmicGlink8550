@@ -8613,10 +8613,6 @@ PmicGlinkRpeADSPStateNotificationCallback(
             deviceContext->RpeInitialized = (gPmicGlinkLinkStateHandle != NULL) ? TRUE : FALSE;
         }
     }
-    else
-    {
-        deviceContext->RpeInitialized = FALSE;
-    }
 }
 
 NTSTATUS
