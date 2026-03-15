@@ -8525,7 +8525,6 @@ PmicGlinkTxNotificationCb(
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext != NULL)
     {
-        deviceContext->NotificationFlag = TRUE;
         (VOID)KeSetEvent(&gPmicGlinkTxNotificationEvent, IO_NO_INCREMENT, FALSE);
     }
 }
@@ -8738,7 +8737,6 @@ PmicGlinkUlogRxNotificationCb(
                     WdfSpinLockRelease(deviceContext->StateLock);
                 }
 
-                deviceContext->NotificationFlag = TRUE;
                 (VOID)KeSetEvent(&gPmicGlinkUlogRxNotificationEvent, IO_NO_INCREMENT, FALSE);
             }
         }
@@ -8777,7 +8775,6 @@ PmicGlinkUlogTxNotificationCb(
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext != NULL)
     {
-        deviceContext->NotificationFlag = TRUE;
         (VOID)KeSetEvent(&gPmicGlinkUlogTxNotificationEvent, IO_NO_INCREMENT, FALSE);
     }
 }
