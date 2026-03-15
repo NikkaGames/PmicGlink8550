@@ -8723,8 +8723,7 @@ PmicGlinkUlogRxNotificationCb(
 
     if (gPmicGlinkApiInterfaceValid
         && (gPmicGlinkApiInterface.GLinkRxDone != NULL)
-        && (gPmicGlinkUlogChannelHandle != NULL)
-        && (Buffer != NULL))
+        && (gPmicGlinkUlogChannelHandle != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkRxDone(gPmicGlinkUlogChannelHandle, Buffer, TRUE);
     }
