@@ -69,7 +69,6 @@ typedef struct _PMIC_GLINK_API_INTERFACE
     NTSTATUS(*GLinkClose)(_In_opt_ GLINK_CHANNEL_CTX* ChannelHandle);
     NTSTATUS(*GLinkTx)(
         _In_ GLINK_CHANNEL_CTX* ChannelHandle,
-        _In_opt_ const VOID* Context,
         _In_opt_ const VOID* PacketContext,
         _In_reads_bytes_(BufferSize) const VOID* Buffer,
         _In_ SIZE_T BufferSize,
@@ -261,10 +260,12 @@ static KEVENT gPmicGlinkTxNotificationEvent;
 static KEVENT gPmicGlinkRxIntentReqEvent;
 static KEVENT gPmicGlinkRxNotificationEvent;
 static KEVENT gPmicGlinkRxIntentNotificationEvent;
+static LONG gPmicGlinkTxCount;
 static KMUTEX gPmicGlinkUlogTxSync;
 static LONG gPmicGlinkUlogRxInProgress;
 static KEVENT gPmicGlinkUlogTxNotificationEvent;
 static KEVENT gPmicGlinkUlogRxNotificationEvent;
+static LONG gPmicGlinkUlogTxCount;
 static LARGE_INTEGER gPmicGlinkLastUsbIoctlEvent;
 static ULONGLONG gPmicGlinkLastBattIdQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
@@ -2354,7 +2355,7 @@ PmicGlink_OpenGlinkChannel(
     openConfig.NotifyRxIntent = PmicGlinkNotifyRxIntentShim;
 
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
-    if (!NT_SUCCESS(status) || (channelHandle == NULL))
+    if ((status != STATUS_SUCCESS) || (channelHandle == NULL))
     {
         return STATUS_UNSUCCESSFUL;
     }
@@ -2559,6 +2560,7 @@ PmicGlink_SendData(
     ULONG waitObjectCount;
     PVOID waitObjects[7];
     KWAIT_BLOCK waitBlocks[7];
+    LONG txCount;
     BOOLEAN matchedResponse;
 
     if ((Buffer == NULL) || (BufferLen == 0))
@@ -2615,6 +2617,7 @@ PmicGlink_SendData(
     KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
 
     status = STATUS_SUCCESS;
+    txCount = InterlockedIncrement(&gPmicGlinkTxCount);
     Context->NotificationFlag = FALSE;
     Context->LastRxOpcode = 0;
     Context->LastRxStatus = STATUS_SUCCESS;
@@ -2633,12 +2636,11 @@ PmicGlink_SendData(
 
     status = gPmicGlinkApiInterface.GLinkTx(
         gPmicGlinkMainChannelHandle,
-        Context,
-        Buffer,
+        (PVOID)(ULONG_PTR)(ULONG)txCount,
         Buffer,
         BufferLen,
         1u);
-    if (!NT_SUCCESS(status))
+    if (status != STATUS_SUCCESS)
     {
         (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
         return STATUS_RETRY;
@@ -7968,7 +7970,7 @@ PmicGlinkNotifyRxIntentReqCb(
         gPmicGlinkMainChannelHandle,
         deviceContext,
         intentSize);
-    return NT_SUCCESS(status) ? TRUE : FALSE;
+    return (status == STATUS_SUCCESS) ? TRUE : FALSE;
 }
 
 VOID
@@ -8128,7 +8130,7 @@ PmicGlinkRpeADSPStateNotificationCallback(
             linkId.RemoteSs = "lpass";
             linkId.LinkNotifier = PmicGLinkRegisterLinkStateCb;
             linkId.Handle = NULL;
-            if (NT_SUCCESS(gPmicGlinkApiInterface.GLinkRegisterLinkStateCb(&linkId, deviceContext)))
+            if (gPmicGlinkApiInterface.GLinkRegisterLinkStateCb(&linkId, deviceContext) == STATUS_SUCCESS)
             {
                 gPmicGlinkLinkStateHandle = linkId.Handle;
             }
@@ -8619,7 +8621,7 @@ PmicGlinkUlogNotifyRxIntentReqCb(
         gPmicGlinkUlogChannelHandle,
         deviceContext,
         intentSize);
-    return NT_SUCCESS(status) ? TRUE : FALSE;
+    return (status == STATUS_SUCCESS) ? TRUE : FALSE;
 }
 
 VOID
@@ -8746,7 +8748,7 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     openConfig.NotifyRxIntent = PmicGlinkUlogNotifyRxIntentShim;
 
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
-    if (!NT_SUCCESS(status) || (channelHandle == NULL))
+    if ((status != STATUS_SUCCESS) || (channelHandle == NULL))
     {
         return STATUS_UNSUCCESSFUL;
     }
@@ -8897,6 +8899,7 @@ PmicGlinkUlog_SendData(
     ULONG waitObjectCount;
     PVOID waitObjects[2];
     KWAIT_BLOCK waitBlocks[2];
+    LONG txCount;
     ULONG opCode;
     BOOLEAN matchedResponse;
     BOOLEAN waitForRx;
@@ -8958,6 +8961,7 @@ PmicGlinkUlog_SendData(
         || (opCode == PMICGLINK_ULOG_GET_BUFFER_OPCODE));
 
     status = STATUS_SUCCESS;
+    txCount = InterlockedIncrement(&gPmicGlinkUlogTxCount);
     Context->NotificationFlag = FALSE;
     Context->LastUlogRxOpcode = 0;
     Context->LastUlogRxStatus = STATUS_SUCCESS;
@@ -8970,12 +8974,11 @@ PmicGlinkUlog_SendData(
     {
         status = gPmicGlinkApiInterface.GLinkTx(
             gPmicGlinkUlogChannelHandle,
-            Context,
-            Buffer,
+            (PVOID)(ULONG_PTR)(ULONG)txCount,
             Buffer,
             BufferSize,
             1u);
-        if (!NT_SUCCESS(status))
+        if (status != STATUS_SUCCESS)
         {
             (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
             return STATUS_RETRY;
