@@ -1333,6 +1333,8 @@ PmicGlinkEvtD0Exit(
     context->GlinkChannelUlogConnected = FALSE;
     context->GlinkChannelUlogRestart = FALSE;
     context->GlinkLinkStateUp = FALSE;
+    context->LegacyStatusNotificationPending = FALSE;
+    context->LegacyStateChangePending = FALSE;
 
     if (context->RpeInitialized
         && (gPmicGlinkLinkStateHandle != NULL)
