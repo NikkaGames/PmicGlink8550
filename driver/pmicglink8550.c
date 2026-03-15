@@ -480,6 +480,7 @@ static NTSTATUS PmicGlink_RetrieveRxData(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context
 static VOID PmicGLinkRegisterLinkStateCb(_In_opt_ PMIC_GLINK_LINK_INFO* LinkInfo, _In_opt_ PVOID Context);
 static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PMICGLINK_CHANNEL_EVENT Event);
 static VOID PmicGlinkRpeADSPStateNotificationCallback(_In_opt_ PVOID Context, _In_ ULONG PreviousState, _In_opt_ PULONG CurrentState);
+static NTSTATUS PmicGlinkAppStateNotificationCallback(_In_opt_ PVOID Context, _In_ ULONG PreviousState, _In_opt_ PULONG CurrentState);
 static VOID PmicGlinkUlogTimerFunction(_In_ WDFTIMER Timer);
 static VOID PmicGlinkUlogStateNotificationShim(_In_opt_ GLINK_CHANNEL_CTX* Channel, _In_opt_ const VOID* Context, _In_ ULONG Event);
 static VOID PmicGlinkUlogRxNotificationShim(
@@ -8662,7 +8663,7 @@ PmicGlinkRpeADSPStateNotificationCallback(
     PmicGLinkRegisterLinkStateCb(&linkInfo, deviceContext);
 }
 
-VOID
+NTSTATUS
 PmicGlinkAppStateNotificationCallback(
     _In_opt_ PVOID Context,
     _In_ ULONG PreviousState,
@@ -8672,6 +8673,8 @@ PmicGlinkAppStateNotificationCallback(
     UNREFERENCED_PARAMETER(Context);
     UNREFERENCED_PARAMETER(PreviousState);
     UNREFERENCED_PARAMETER(CurrentState);
+
+    return (NTSTATUS)1;
 }
 
 VOID
