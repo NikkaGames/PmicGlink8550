@@ -1203,6 +1203,7 @@ PmicGlinkEvtD0Exit(
     context->GlinkChannelRestart = FALSE;
     context->GlinkChannelUlogConnected = FALSE;
     context->GlinkChannelUlogRestart = FALSE;
+    context->GlinkLinkStateUp = FALSE;
 
     if (context->RpeInitialized
         && (gPmicGlinkLinkStateHandle != NULL)
@@ -8449,11 +8450,6 @@ PmicGlinkNotifyRxIntentReqCb(
         return FALSE;
     }
 
-    if (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL)
-    {
-        return FALSE;
-    }
-
     intentSize = RequestedSize;
 
     status = gPmicGlinkApiInterface.GLinkQueueRxIntent(
@@ -9132,11 +9128,6 @@ PmicGlinkUlogNotifyRxIntentReqCb(
     
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext == NULL)
-    {
-        return FALSE;
-    }
-
-    if (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL)
     {
         return FALSE;
     }
