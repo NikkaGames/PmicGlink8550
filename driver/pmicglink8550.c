@@ -2813,12 +2813,6 @@ PmicGlink_SendData(
         {
             waitIndex = waitStatus - STATUS_WAIT_0;
             (VOID)KeClearEvent((PKEVENT)waitObjects[waitIndex]);
-            if ((waitIndex == 1u) || (waitIndex == 2u))
-            {
-                status = STATUS_RETRY;
-                break;
-            }
-
             if (waitIndex == 3u)
             {
                 sawTxNotification = TRUE;
@@ -2885,12 +2879,6 @@ PmicGlink_SendData(
             {
                 waitIndex = waitStatus - STATUS_WAIT_0;
                 (VOID)KeClearEvent((PKEVENT)waitObjects[waitIndex]);
-                if ((waitIndex == 1u) || (waitIndex == 2u))
-                {
-                    status = STATUS_RETRY;
-                    break;
-                }
-
                 if (waitIndex != 5u)
                 {
                     waitCount++;
