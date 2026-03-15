@@ -7443,10 +7443,14 @@ PmicGlinkNotifyRxIntentReqCb(
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
 
     UNREFERENCED_PARAMETER(Handle);
-    UNREFERENCED_PARAMETER(RequestedSize);
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext == NULL)
+    {
+        return FALSE;
+    }
+
+    if (RequestedSize == 0u)
     {
         return FALSE;
     }
@@ -7988,9 +7992,12 @@ PmicGlinkUlogNotifyRxIntentReqCb(
     UNREFERENCED_PARAMETER(Handle);
     
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
-    UNREFERENCED_PARAMETER(RequestedSize);
-
     if (deviceContext == NULL)
+    {
+        return FALSE;
+    }
+
+    if (RequestedSize == 0u)
     {
         return FALSE;
     }
