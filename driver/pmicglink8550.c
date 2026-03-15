@@ -1857,16 +1857,7 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         return status;
     }
 
-    if (Context->Device == NULL)
-    {
-        return STATUS_INVALID_DEVICE_STATE;
-    }
-
     driverObject = WdfDriverWdmGetDriverObject(WdfDeviceGetDriver(Context->Device));
-    if (driverObject == NULL)
-    {
-        return STATUS_INVALID_DEVICE_STATE;
-    }
 
     if (Context->GlinkNotificationEntry == NULL)
     {
