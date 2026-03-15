@@ -1327,16 +1327,20 @@ RegisterDeviceInterfaces(
 
     if (!Register)
     {
-        WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_BATT_MNGR, NULL, FALSE);
-        WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL, FALSE);
-
-        if (context->ABDAttached && (context->AbdIoTarget != NULL))
+        if (context->DeviceInterfacesRegistered)
         {
-            (VOID)PmicGlinkAbdUpdateConnections(context, FALSE);
+            WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_BATT_MNGR, NULL, FALSE);
+            WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL, FALSE);
+
+            if (context->ABDAttached && (context->AbdIoTarget != NULL))
+            {
+                (VOID)PmicGlinkAbdUpdateConnections(context, FALSE);
+            }
+
+            context->DdiInterface.PmicGlinkUCSIAlertCallback = NULL;
+            context->DeviceInterfacesRegistered = FALSE;
         }
 
-        context->DdiInterface.PmicGlinkUCSIAlertCallback = NULL;
-        context->DeviceInterfacesRegistered = FALSE;
         return STATUS_SUCCESS;
     }
 
@@ -1372,12 +1376,6 @@ RegisterDeviceInterfaces(
     }
 
     status = WdfDeviceCreateDeviceInterface(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    status = WdfDeviceCreateDeviceInterface(Device, &GUID_DEVINTERFACE_PMIC_BATT_MINI, NULL);
     if (!NT_SUCCESS(status))
     {
         return status;
