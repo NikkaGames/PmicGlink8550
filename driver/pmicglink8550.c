@@ -2347,6 +2347,7 @@ PmicGlink_OpenGlinkChannel(
     openConfig.Name = "PMIC_RTR_ADSP_APPS";
     openConfig.Options = 0;
     openConfig.Context = Context;
+    openConfig.NotifyRx = PmicGlinkRxNotificationCb;
     openConfig.NotifyTxDone = PmicGlinkTxNotificationCb;
     openConfig.NotifyState = PmicGlinkStateNotificationShim;
     openConfig.NotifyRxIntentReq = PmicGlinkNotifyRxIntentReqShim;
