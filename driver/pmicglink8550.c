@@ -452,6 +452,7 @@ static NTSTATUS PmicGlinkNotifyLinkStateAcpi(_In_ PPMIC_GLINK_DEVICE_CONTEXT Con
 static NTSTATUS PmicGlinkEvaluateAcpiMethodInteger(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_reads_(4) const CHAR MethodName[4], _In_ ULONG Value);
 static NTSTATUS PmicGlinkEvaluateAcpiMethodBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_reads_(4) const CHAR MethodName[4], _In_reads_bytes_(DataSize) const VOID* Data, _In_ ULONG DataSize);
 static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
+static VOID PmicGlinkLoadPlatformConfig(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
 static ULONG PmicGlinkResolveProprietaryChargerCurrent(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const GUID* ChargerGuid);
 static VOID PmicGlinkResetApiInterface(VOID);
@@ -1120,6 +1121,7 @@ PmicGlinkEvtPrepareHardware(
 
     context->IOResourceCount = ioCount;
     context->InterruptResourceCount = interruptCount;
+    PmicGlinkLoadPlatformConfig(context);
 
     RtlZeroMemory(&gPmicGlinkAcpiInterface, sizeof(gPmicGlinkAcpiInterface));
     status = WdfFdoQueryForInterface(
@@ -2244,13 +2246,6 @@ PmicGlink_Init(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
-    NTSTATUS status;
-    NTSTATUS queryStatus;
-    WDFKEY regKey;
-    WDFKEY configRegKey;
-    UNICODE_STRING regValueName;
-    ULONG regValueData;
-
     if (Context == NULL)
     {
         return STATUS_INVALID_PARAMETER;
@@ -2261,9 +2256,13 @@ PmicGlink_Init(
     Context->GlinkChannelUlogConnected = FALSE;
     Context->GlinkChannelUlogRestart = FALSE;
     Context->GlinkChannelUlogFirstConnect = FALSE;
+    Context->GlinkDeviceLoaded = FALSE;
     Context->GlinkLinkStateUp = FALSE;
     Context->RpeInitialized = FALSE;
     Context->Hibernate = FALSE;
+    Context->GlinkRxIntent = 0;
+    Context->GlinkUlogRxIntent = 0;
+    KeInitializeMutex(&gPmicGlinkTxSync, 1);
     Context->LastRxOpcode = 0;
     Context->LastRxStatus = STATUS_SUCCESS;
     Context->LastRxValid = FALSE;
@@ -2278,6 +2277,26 @@ PmicGlink_Init(
     Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
     Context->UlogTimer = NULL;
 
+    return STATUS_SUCCESS;
+}
+
+static VOID
+PmicGlinkLoadPlatformConfig(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    NTSTATUS status;
+    NTSTATUS queryStatus;
+    WDFKEY regKey;
+    WDFKEY configRegKey;
+    UNICODE_STRING regValueName;
+    ULONG regValueData;
+
+    if ((Context == NULL) || (Context->Device == NULL))
+    {
+        return;
+    }
+
     regValueData = 0;
     configRegKey = NULL;
     status = WdfDeviceOpenRegistryKey(
@@ -2286,88 +2305,74 @@ PmicGlink_Init(
         KEY_READ,
         WDF_NO_OBJECT_ATTRIBUTES,
         &regKey);
-    if (NT_SUCCESS(status))
+    if (!NT_SUCCESS(status))
     {
-        RtlInitUnicodeString(&regValueName, L"PlatformConfig");
-        status = WdfRegistryOpenKey(
-            regKey,
-            &regValueName,
-            KEY_READ,
-            WDF_NO_OBJECT_ATTRIBUTES,
-            &configRegKey);
-        if (NT_SUCCESS(status))
-        {
-            regValueData = 0;
-            RtlInitUnicodeString(&regValueName, L"UsbcPinAssignmentNotifyEn");
-            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
-            if (NT_SUCCESS(queryStatus))
-            {
-                Context->UsbcPinAssignmentNotifyEn = (UCHAR)regValueData;
-            }
-
-            regValueData = 0;
-            RtlInitUnicodeString(&regValueName, L"UlogInitEn");
-            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
-            if (NT_SUCCESS(queryStatus))
-            {
-                Context->UlogInitEn = (UCHAR)regValueData;
-            }
-
-            regValueData = 0;
-            RtlInitUnicodeString(&regValueName, L"UlogInterval");
-            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
-            if (NT_SUCCESS(queryStatus))
-            {
-                Context->UlogInterval = regValueData;
-            }
-
-            regValueData = 0;
-            RtlInitUnicodeString(&regValueName, L"UlogLevel");
-            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
-            if (NT_SUCCESS(queryStatus))
-            {
-                Context->UlogLevel = regValueData;
-            }
-            else
-            {
-                Context->UlogLevel = PMICGLINK_ULOG_DEFAULT_LEVEL;
-            }
-
-            Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
-            regValueData = 0;
-            RtlInitUnicodeString(&regValueName, L"UlogCategoriesL");
-            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
-            if (NT_SUCCESS(queryStatus))
-            {
-                ULONGLONG categoriesLow;
-                ULONG categoriesHigh;
-
-                categoriesLow = (ULONGLONG)regValueData;
-                categoriesHigh = 0;
-                RtlInitUnicodeString(&regValueName, L"UlogCategoriesH");
-                queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &categoriesHigh);
-                if (NT_SUCCESS(queryStatus))
-                {
-                    Context->UlogCategories = categoriesLow | ((ULONGLONG)categoriesHigh << 32);
-                }
-                else
-                {
-                    Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
-                }
-            }
-            else
-            {
-                Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
-            }
-
-            WdfRegistryClose(configRegKey);
-            configRegKey = NULL;
-        }
-
-        WdfRegistryClose(regKey);
+        return;
     }
 
-    return STATUS_SUCCESS;
+    RtlInitUnicodeString(&regValueName, L"PlatformConfig");
+    status = WdfRegistryOpenKey(
+        regKey,
+        &regValueName,
+        KEY_READ,
+        WDF_NO_OBJECT_ATTRIBUTES,
+        &configRegKey);
+    if (NT_SUCCESS(status))
+    {
+        regValueData = 0;
+        RtlInitUnicodeString(&regValueName, L"UsbcPinAssignmentNotifyEn");
+        queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
+        if (NT_SUCCESS(queryStatus))
+        {
+            Context->UsbcPinAssignmentNotifyEn = (UCHAR)regValueData;
+        }
+
+        regValueData = 0;
+        RtlInitUnicodeString(&regValueName, L"UlogInitEn");
+        queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
+        if (NT_SUCCESS(queryStatus))
+        {
+            Context->UlogInitEn = (UCHAR)regValueData;
+        }
+
+        regValueData = 0;
+        RtlInitUnicodeString(&regValueName, L"UlogInterval");
+        queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
+        if (NT_SUCCESS(queryStatus))
+        {
+            Context->UlogInterval = regValueData;
+        }
+
+        regValueData = 0;
+        RtlInitUnicodeString(&regValueName, L"UlogLevel");
+        queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
+        if (NT_SUCCESS(queryStatus))
+        {
+            Context->UlogLevel = regValueData;
+        }
+
+        regValueData = 0;
+        RtlInitUnicodeString(&regValueName, L"UlogCategoriesL");
+        queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &regValueData);
+        if (NT_SUCCESS(queryStatus))
+        {
+            ULONGLONG categoriesLow;
+            ULONG categoriesHigh;
+
+            categoriesLow = (ULONGLONG)regValueData;
+            categoriesHigh = 0;
+            RtlInitUnicodeString(&regValueName, L"UlogCategoriesH");
+            queryStatus = PmicGlinkRegistryQuery(configRegKey, &regValueName, &categoriesHigh);
+            if (NT_SUCCESS(queryStatus))
+            {
+                Context->UlogCategories = categoriesLow | ((ULONGLONG)categoriesHigh << 32);
+            }
+        }
+
+        WdfRegistryClose(configRegKey);
+    }
+
+    WdfRegistryClose(regKey);
 }
 
 static VOID
