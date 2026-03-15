@@ -1555,11 +1555,6 @@ PmicGlinkDDI_NotifyUcsiAlert(
 {
     PFN_PMICGLINK_UCSI_ALERT_CALLBACK callback;
 
-    if ((Context == NULL) || (Context->DdiInterfaceLock == NULL))
-    {
-        return;
-    }
-
     callback = NULL;
     WdfWaitLockAcquire(Context->DdiInterfaceLock, NULL);
     callback = Context->DdiInterface.PmicGlinkUCSIAlertCallback;
