@@ -8162,7 +8162,7 @@ PmicGlinkUlog_SendData(
     BOOLEAN matchedResponse;
     BOOLEAN waitForRx;
 
-    if (Buffer == NULL)
+    if ((Buffer == NULL) || (BufferSize == 0))
     {
         return STATUS_UNSUCCESSFUL;
     }
