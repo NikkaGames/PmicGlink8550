@@ -1579,11 +1579,6 @@ PmicGlinkEnsureBclCriticalCallback(
     UNICODE_STRING callbackName;
     OBJECT_ATTRIBUTES callbackAttributes;
 
-    if (Context == NULL)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     if (Context->BclCriticalCallbackObject != NULL)
     {
         if (Context->ABDAttached)
