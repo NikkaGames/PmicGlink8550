@@ -963,30 +963,18 @@ PmicGlinkEvtIoDeviceControl(
     PVOID outputBuffer;
     PPMIC_GLINK_DEVICE_CONTEXT context;
     PPMICGLINK_QUEUE_CONTEXT queueContext;
-    WDFDEVICE device;
 
     bytesReturned = 0;
     inputBuffer = NULL;
     outputBuffer = NULL;
 
     queueContext = PmicGlinkGetQueueContext(Queue);
-    context = NULL;
-    if ((queueContext != NULL) && (queueContext->DeviceContext != NULL))
+    if ((queueContext == NULL) || (queueContext->DeviceContext == NULL))
     {
-        context = queueContext->DeviceContext;
-    }
-
-    if (context == NULL)
-    {
-        device = WdfIoQueueGetDevice(Queue);
-        context = PmicGlinkGetDeviceContext(device);
-    }
-
-    if (context == NULL)
-    {
-        WdfRequestCompleteWithInformation(Request, STATUS_INVALID_DEVICE_STATE, 0);
+        WdfRequestCompleteWithInformation(Request, STATUS_INVALID_PARAMETER, 0);
         return;
     }
+    context = queueContext->DeviceContext;
 
     if (InputBufferLength > 0)
     {
