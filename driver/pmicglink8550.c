@@ -8427,11 +8427,6 @@ PmicGlinkNotifyRxIntentReqCb(
 
     intentSize = RequestedSize;
 
-    if (gPmicGlinkMainChannelHandle == NULL)
-    {
-        return FALSE;
-    }
-
     status = gPmicGlinkApiInterface.GLinkQueueRxIntent(
         gPmicGlinkMainChannelHandle,
         deviceContext,
@@ -9107,11 +9102,6 @@ PmicGlinkUlogNotifyRxIntentReqCb(
     }
 
     intentSize = RequestedSize;
-
-    if (gPmicGlinkUlogChannelHandle == NULL)
-    {
-        return FALSE;
-    }
 
     status = gPmicGlinkApiInterface.GLinkQueueRxIntent(
         gPmicGlinkUlogChannelHandle,
