@@ -1742,7 +1742,6 @@ PmicGlinkInterfaceNotificationCallback(
             }
 
             deviceContext->ABDAttached = FALSE;
-            deviceContext->BclCriticalCallbackEnabled = FALSE;
         }
 
         deviceContext->AllReqIntfArrived = (deviceContext->GlinkDeviceLoaded && deviceContext->ABDAttached) ? TRUE : FALSE;
@@ -1794,7 +1793,6 @@ PmicGlinkInterfaceNotificationCallback(
 
             deviceContext->BattMiniDeviceLoaded = FALSE;
             deviceContext->NotificationFlag = FALSE;
-            deviceContext->BclCriticalCallbackEnabled = FALSE;
         }
 
         WdfWaitLockRelease(deviceContext->BattMiniNotifyLock);
