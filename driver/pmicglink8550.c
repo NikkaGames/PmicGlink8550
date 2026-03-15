@@ -8404,6 +8404,11 @@ PmicGlinkRxNotificationCb(
         if (NT_SUCCESS(status))
         {
             commSlot = &deviceContext->CommData[messageOp];
+            if (deviceContext->StateLock != NULL)
+            {
+                WdfSpinLockAcquire(deviceContext->StateLock);
+            }
+
             copySize = BufferSize;
             RtlZeroMemory(commSlot->Buffer, copySize);
             RtlCopyMemory(commSlot->Buffer, Buffer, copySize);
@@ -8418,6 +8423,12 @@ PmicGlinkRxNotificationCb(
                 || (messageOp == 22u)
                 || (messageOp == 130u)
                 || (messageOp == 259u));
+
+            if (deviceContext->StateLock != NULL)
+            {
+                WdfSpinLockRelease(deviceContext->StateLock);
+            }
+
             if (!queueWorkItem)
             {
                 (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
@@ -8706,6 +8717,11 @@ PmicGlinkUlogRxNotificationCb(
             if (NT_SUCCESS(status))
             {
                 commSlot = &deviceContext->CommData[messageOp];
+                if (deviceContext->StateLock != NULL)
+                {
+                    WdfSpinLockAcquire(deviceContext->StateLock);
+                }
+
                 copySize = BufferSize;
                 RtlZeroMemory(commSlot->Buffer, copySize);
                 RtlCopyMemory(commSlot->Buffer, Buffer, copySize);
@@ -8715,6 +8731,12 @@ PmicGlinkUlogRxNotificationCb(
                 }
 
                 commSlot->Size = (copySize > 0xFFFFu) ? 0xFFFFu : (USHORT)copySize;
+
+                if (deviceContext->StateLock != NULL)
+                {
+                    WdfSpinLockRelease(deviceContext->StateLock);
+                }
+
                 deviceContext->NotificationFlag = TRUE;
                 (VOID)KeSetEvent(&gPmicGlinkUlogRxNotificationEvent, IO_NO_INCREMENT, FALSE);
             }
