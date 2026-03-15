@@ -1643,7 +1643,6 @@ PmicGlinkInterfaceNotificationCallback(
 
             deviceContext->GlinkChannelConnected = FALSE;
             deviceContext->GlinkChannelUlogConnected = FALSE;
-            deviceContext->BclCriticalCallbackEnabled = FALSE;
             (VOID)KeClearEvent(&gPmicGlinkConnectedEvent);
         }
 
