@@ -8478,8 +8478,7 @@ PmicGlinkNotifyRxIntentReqCb(
 
     intentSize = RequestedSize;
 
-    if (!gPmicGlinkApiInterfaceValid
-        || (gPmicGlinkMainChannelHandle == NULL)
+    if ((gPmicGlinkMainChannelHandle == NULL)
         || (gPmicGlinkApiInterface.GLinkQueueRxIntent == NULL))
     {
         return FALSE;
@@ -9169,8 +9168,7 @@ PmicGlinkUlogNotifyRxIntentReqCb(
 
     intentSize = RequestedSize;
 
-    if (!gPmicGlinkApiInterfaceValid
-        || (gPmicGlinkUlogChannelHandle == NULL)
+    if ((gPmicGlinkUlogChannelHandle == NULL)
         || (gPmicGlinkApiInterface.GLinkQueueRxIntent == NULL))
     {
         return FALSE;
