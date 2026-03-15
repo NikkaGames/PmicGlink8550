@@ -9483,27 +9483,20 @@ PmicGlinkUlog_SendData(
         return STATUS_RETRY;
     }
 
-    status = KeWaitForSingleObject(&gPmicGlinkUlogTxSync, Executive, KernelMode, FALSE, NULL);
-
     waitCount = 0;
     pollInterval.QuadPart = -20000ll;
     while (InterlockedCompareExchange(&gPmicGlinkUlogRxInProgress, 1, 1) == 1)
     {
         if (waitCount >= 0x3E8u)
         {
-            KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
             return STATUS_RETRY;
         }
 
-        KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
         (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
         waitCount++;
-
-        status = KeWaitForSingleObject(&gPmicGlinkUlogTxSync, Executive, KernelMode, FALSE, NULL);
     }
 
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 1);
-    KeReleaseMutex(&gPmicGlinkUlogTxSync, FALSE);
 
     opCode = 0;
     if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
