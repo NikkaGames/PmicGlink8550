@@ -1039,16 +1039,6 @@ PmicGlinkEvtSelfManagedIoCleanup(
 
     context = PmicGlinkGetDeviceContext(Device);
     (VOID)PmicGlinkDevice_RegisterForPnPNotifications(context, FALSE);
-    (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
-    if (context->UlogTimer != NULL)
-    {
-        (VOID)WdfTimerStop(context->UlogTimer, TRUE);
-    }
-    CrashDump_ResetState(context);
-    if (gCrashDumpContext == context)
-    {
-        gCrashDumpContext = NULL;
-    }
 }
 
 NTSTATUS
