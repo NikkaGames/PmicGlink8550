@@ -9271,9 +9271,7 @@ PmicGlinkUlogStateNotificationShim(
     _In_ ULONG Event
     )
 {
-    UNREFERENCED_PARAMETER(Channel);
-
-    PmicGlinkUlogStateNotificationCb(NULL, (PVOID)Context, (PMICGLINK_CHANNEL_EVENT)Event);
+    PmicGlinkUlogStateNotificationCb(Channel, (PVOID)Context, (PMICGLINK_CHANNEL_EVENT)Event);
 }
 
 static BOOLEAN
