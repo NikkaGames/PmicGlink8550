@@ -1636,8 +1636,6 @@ PmicGlinkInterfaceNotificationCallback(
                 (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
                 gPmicGlinkUlogChannelHandle = NULL;
             }
-
-            RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
         }
 
         return STATUS_SUCCESS;
