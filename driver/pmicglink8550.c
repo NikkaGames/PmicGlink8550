@@ -680,6 +680,7 @@ PmicGlinkEvtDeviceAdd(
     pnpCallbacks.EvtDeviceD0Entry = PmicGlinkEvtD0Entry;
     pnpCallbacks.EvtDeviceD0Exit = PmicGlinkEvtD0Exit;
     pnpCallbacks.EvtDeviceSelfManagedIoInit = PmicGlinkEvtSelfManagedIoInit;
+    pnpCallbacks.EvtDeviceSelfManagedIoSuspend = PmicGlinkEvtSelfManagedIoSuspend;
     pnpCallbacks.EvtDeviceSelfManagedIoRestart = PmicGlinkEvtSelfManagedIoRestart;
     pnpCallbacks.EvtDeviceSelfManagedIoCleanup = PmicGlinkEvtSelfManagedIoCleanup;
     pnpCallbacks.EvtDeviceQueryRemove = PmicGlinkEvtQueryRemove;
@@ -930,13 +931,23 @@ PmicGlinkEvtD0Entry(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    WDFIOTARGET ioTarget;
 
-    UNREFERENCED_PARAMETER(PreviousState);
+    if (PreviousState != WdfPowerDeviceD3)
+    {
+        return STATUS_SUCCESS;
+    }
 
     context = PmicGlinkGetDeviceContext(Device);
     context->Hibernate = FALSE;
 
-    return STATUS_SUCCESS;
+    ioTarget = WdfDeviceGetIoTarget(Device);
+    if (ioTarget == NULL)
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    return WdfIoTargetStart(ioTarget);
 }
 
 NTSTATUS
@@ -970,9 +981,15 @@ PmicGlinkEvtSelfManagedIoInit(
     _In_ WDFDEVICE Device
     )
 {
-    UNREFERENCED_PARAMETER(Device);
+    WDFIOTARGET ioTarget;
 
-    return STATUS_SUCCESS;
+    ioTarget = WdfDeviceGetIoTarget(Device);
+    if (ioTarget == NULL)
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    return WdfIoTargetStart(ioTarget);
 }
 
 NTSTATUS
@@ -980,8 +997,31 @@ PmicGlinkEvtSelfManagedIoRestart(
     _In_ WDFDEVICE Device
     )
 {
-    UNREFERENCED_PARAMETER(Device);
+    WDFIOTARGET ioTarget;
 
+    ioTarget = WdfDeviceGetIoTarget(Device);
+    if (ioTarget == NULL)
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    return WdfIoTargetStart(ioTarget);
+}
+
+NTSTATUS
+PmicGlinkEvtSelfManagedIoSuspend(
+    _In_ WDFDEVICE Device
+    )
+{
+    WDFIOTARGET ioTarget;
+
+    ioTarget = WdfDeviceGetIoTarget(Device);
+    if (ioTarget == NULL)
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    WdfIoTargetStop(ioTarget, WdfIoTargetCancelSentIo);
     return STATUS_SUCCESS;
 }
 
