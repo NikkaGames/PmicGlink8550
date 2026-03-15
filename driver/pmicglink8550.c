@@ -1078,7 +1078,7 @@ PmicGlinkEvtPrepareHardware(
         status = gPmicGlinkAcpiInterface.RegisterForDeviceNotifications(
             gPmicGlinkAcpiInterface.Context,
             PmicGlinkPlatformUsbc_AcpiNotificationHandler,
-            context);
+            Device);
         if (!NT_SUCCESS(status))
         {
             return status;
@@ -6036,7 +6036,17 @@ PmicGlinkPlatformUsbc_AcpiNotificationHandler(
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     USBPD_DPM_USBC_WRITE_BUFFER request;
 
-    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    deviceContext = PmicGlinkGetDeviceContext((WDFDEVICE)Context);
+    if (deviceContext == NULL)
+    {
+        return;
+    }
+
     RtlZeroMemory(&request, sizeof(request));
 
     if ((NotifyValue == 240u) || (NotifyValue == 241u))
@@ -6061,10 +6071,7 @@ PmicGlinkPlatformUsbc_AcpiNotificationHandler(
     }
 
     gPmicGlinkPendingPlatformState = (UCHAR)NotifyValue;
-    if (deviceContext != NULL)
-    {
-        (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkPlatformSetState_Request_Write_WorkItem);
-    }
+    (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkPlatformSetState_Request_Write_WorkItem);
 }
 
 static NTSTATUS
@@ -8466,8 +8473,6 @@ PmicGlinkNotifyRxIntentReqCb(
         return FALSE;
     }
 
-    (VOID)KeSetEvent(&gPmicGlinkRxIntentReqEvent, IO_NO_INCREMENT, FALSE);
-
     if (!gPmicGlinkApiInterfaceValid
         || (gPmicGlinkMainChannelHandle == NULL)
         || (gPmicGlinkApiInterface.GLinkQueueRxIntent == NULL))
@@ -8498,7 +8503,6 @@ PmicGlinkNotifyRxIntentCb(
     if (deviceContext != NULL)
     {
         deviceContext->GlinkRxIntent += 1;
-        (VOID)KeSetEvent(&gPmicGlinkRxIntentNotificationEvent, IO_NO_INCREMENT, FALSE);
     }
 }
 
@@ -8924,7 +8928,7 @@ PmicGlinkUlogPrintBuffer(
             gPmicGlinkUlogInitPrinted = 1u;
         }
 
-        return STATUS_PNP_DRIVER_CONFIGURATION_NOT_FOUND;
+        return STATUS_INVALID_MESSAGE;
     }
 
     lineStart = 0u;
