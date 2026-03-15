@@ -8540,8 +8540,12 @@ PmicGlinkNotifyRxIntentCb(
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
 
-    UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(Size);
+
+    if (Handle != NULL)
+    {
+        gPmicGlinkMainChannelHandle = (GLINK_CHANNEL_CTX*)Handle;
+    }
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext != NULL)
@@ -8561,10 +8565,14 @@ PmicGlinkTxNotificationCb(
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
 
-    UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(PacketContext);
     UNREFERENCED_PARAMETER(Buffer);
     UNREFERENCED_PARAMETER(BufferSize);
+
+    if (Handle != NULL)
+    {
+        gPmicGlinkMainChannelHandle = (GLINK_CHANNEL_CTX*)Handle;
+    }
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext != NULL)
@@ -8812,9 +8820,13 @@ PmicGlinkUlogTxNotificationCb(
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     PUSHORT txWords;
 
-    UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(PacketContext);
     UNREFERENCED_PARAMETER(BufferSize);
+
+    if (Handle != NULL)
+    {
+        gPmicGlinkUlogChannelHandle = (GLINK_CHANNEL_CTX*)Handle;
+    }
 
     if (Buffer != NULL)
     {
@@ -9242,8 +9254,12 @@ PmicGlinkUlogNotifyRxIntentCb(
     _In_ SIZE_T Size
     )
 {
-    UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(Size);
+
+    if (Handle != NULL)
+    {
+        gPmicGlinkUlogChannelHandle = (GLINK_CHANNEL_CTX*)Handle;
+    }
 
     if (Context != NULL)
     {
