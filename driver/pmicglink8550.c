@@ -9560,45 +9560,42 @@ PmicGlinkUlog_SendData(
         gPmicGlinkUlogRxInProgress = 0;
     }
 
-    if (!matchedResponse)
+    waitCount = 0;
+    while (waitCount < 50u)
     {
-        waitCount = 0;
-        while (waitCount < 50u)
+        waitStatus = KeWaitForMultipleObjects(
+            waitObjectCount,
+            waitObjects,
+            WaitAny,
+            Executive,
+            KernelMode,
+            FALSE,
+            &pollInterval,
+            waitBlocks);
+        if (waitStatus < (STATUS_WAIT_0 + waitObjectCount))
         {
-            waitStatus = KeWaitForMultipleObjects(
-                waitObjectCount,
-                waitObjects,
-                WaitAny,
-                Executive,
-                KernelMode,
-                FALSE,
-                &pollInterval,
-                waitBlocks);
-            if (waitStatus < (STATUS_WAIT_0 + waitObjectCount))
+            waitIndex = waitStatus - STATUS_WAIT_0;
+            (VOID)KeClearEvent((PKEVENT)waitObjects[waitIndex]);
+            if (waitIndex == 0u)
             {
-                waitIndex = waitStatus - STATUS_WAIT_0;
-                (VOID)KeClearEvent((PKEVENT)waitObjects[waitIndex]);
-                if (waitIndex == 0u)
-                {
-                    waitCount++;
-                    continue;
-                }
+                waitCount++;
+                continue;
             }
-
-            if ((waitStatus < (STATUS_WAIT_0 + waitObjectCount)) && (waitIndex == 1u))
-            {
-                expectedReceived = FALSE;
-                status = PmicGlinkUlog_RetrieveRxData(Context, opCode, &expectedReceived);
-                if (expectedReceived)
-                {
-                    matchedResponse = TRUE;
-                    gPmicGlinkUlogRxInProgress = 0;
-                    break;
-                }
-            }
-
-            waitCount++;
         }
+
+        if ((waitStatus < (STATUS_WAIT_0 + waitObjectCount)) && (waitIndex == 1u))
+        {
+            expectedReceived = FALSE;
+            status = PmicGlinkUlog_RetrieveRxData(Context, opCode, &expectedReceived);
+            if (expectedReceived)
+            {
+                matchedResponse = TRUE;
+                gPmicGlinkUlogRxInProgress = 0;
+                break;
+            }
+        }
+
+        waitCount++;
     }
 
     if (!matchedResponse)
