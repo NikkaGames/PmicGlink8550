@@ -1633,11 +1633,6 @@ PmicGlinkInterfaceNotificationCallback(
         return STATUS_INVALID_HANDLE;
     }
 
-    if (NotificationStructure == NULL)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     notification = (PDEVICE_INTERFACE_CHANGE_NOTIFICATION)NotificationStructure;
 
