@@ -1222,6 +1222,7 @@ PmicGlinkEvtD0Exit(
 
     if (TargetState == WdfPowerDeviceD3Final)
     {
+        (VOID)PmicGlinkNotify_Interface_Free(context);
         (VOID)RegisterDeviceInterfaces(Device, FALSE);
     }
 
