@@ -2340,7 +2340,7 @@ PmicGlinkEnsureApiInterface(
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (gPmicGlinkApiInterface.GLinkOpen != NULL)
+    if (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
     {
         return STATUS_SUCCESS;
     }
