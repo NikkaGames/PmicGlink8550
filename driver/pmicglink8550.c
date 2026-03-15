@@ -6414,6 +6414,80 @@ PmicGlink_OemHandleCommand(
     return STATUS_SUCCESS;
 }
 
+static SIZE_T
+PmicGlinkGetBoundedOemPayloadSize(
+    _In_reads_bytes_(InputBufferSize) const UCHAR* InputBuffer,
+    _In_ SIZE_T InputBufferSize
+    )
+{
+    SIZE_T payloadSize;
+
+    if ((InputBuffer == NULL) || (InputBufferSize == 0u))
+    {
+        return 0u;
+    }
+
+    payloadSize = (InputBuffer[1] <= PMICGLINK_OEM_BUFFER_SIZE)
+        ? (SIZE_T)(InputBuffer[1] + 2u)
+        : PMICGLINK_OEM_SEND_BUFFER_SIZE;
+
+    if (payloadSize > InputBufferSize)
+    {
+        payloadSize = InputBufferSize;
+    }
+
+    return payloadSize;
+}
+
+static ULONG
+PmicGlinkGetUcsiRequestedLength(
+    _In_reads_bytes_opt_(InputBufferSize) const UCHAR* InputBuffer,
+    _In_ SIZE_T InputBufferSize
+    )
+{
+    ULONG requestedLength;
+
+    requestedLength = PMICGLINK_UCSI_BUFFER_SIZE;
+    if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(ULONG)))
+    {
+        RtlCopyMemory(&requestedLength, InputBuffer, sizeof(requestedLength));
+    }
+
+    return requestedLength;
+}
+
+static VOID
+PmicGlinkBuildOfflineUcsiResponse(
+    _Out_writes_bytes_(PMICGLINK_UCSI_BUFFER_SIZE) UCHAR* OutputBuffer
+    )
+{
+    PUSHORT words;
+
+    if (OutputBuffer == NULL)
+    {
+        return;
+    }
+
+    RtlZeroMemory(OutputBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
+    words = (PUSHORT)OutputBuffer;
+    words[0] = 0x0100;
+    words[3] = 0x0800;
+}
+
+static VOID
+PmicGlinkUpdateOfflineUcsiCommandState(
+    _In_reads_bytes_opt_(OutputSize) const UCHAR* OutputBuffer,
+    _In_ SIZE_T OutputSize
+    )
+{
+    if ((OutputBuffer != NULL)
+        && (OutputSize >= (sizeof(USHORT) * 4u))
+        && ((((const PUSHORT)OutputBuffer)[3] & (USHORT)0xA000u) != 0u))
+    {
+        *(ULONGLONG*)&gLatestUcsiCmd.data[8] = 0ull;
+    }
+}
+
 static NTSTATUS
 PmicGlinkUCSIWriteBuffer(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
@@ -6424,9 +6498,10 @@ PmicGlinkUCSIWriteBuffer(
     _Out_ SIZE_T* BytesReturned
     )
 {
+    SIZE_T cachedCopySize;
+
     UNREFERENCED_PARAMETER(OutputBuffer);
     UNREFERENCED_PARAMETER(OutputBufferSize);
-    UNREFERENCED_PARAMETER(InputBufferSize);
 
     if (BytesReturned == NULL)
     {
@@ -6435,7 +6510,7 @@ PmicGlinkUCSIWriteBuffer(
 
     if (InputBuffer != NULL)
     {
-        if (Context->GlinkChannelConnected)
+        if ((Context != NULL) && Context->GlinkChannelConnected)
         {
             (VOID)PmicGlink_SyncSendReceive(
                 Context,
@@ -6445,7 +6520,17 @@ PmicGlinkUCSIWriteBuffer(
         }
         else
         {
-            RtlCopyMemory(gLatestUcsiCmd.data, InputBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
+            cachedCopySize = InputBufferSize;
+            if (cachedCopySize > PMICGLINK_UCSI_BUFFER_SIZE)
+            {
+                cachedCopySize = PMICGLINK_UCSI_BUFFER_SIZE;
+            }
+
+            RtlZeroMemory(gLatestUcsiCmd.data, PMICGLINK_UCSI_BUFFER_SIZE);
+            if (cachedCopySize > 0u)
+            {
+                RtlCopyMemory(gLatestUcsiCmd.data, InputBuffer, cachedCopySize);
+            }
         }
     }
 
@@ -6465,20 +6550,24 @@ PmicGlinkUCSIReadBuffer(
 {
     NTSTATUS status;
     ULONG requestedLength;
-    SIZE_T copyLength;
-    USHORT* words;
-    UNREFERENCED_PARAMETER(OutputBufferSize);
+    SIZE_T returnedCopySize;
+    SIZE_T outputCapacity;
 
     status = STATUS_SUCCESS;
     requestedLength = PMICGLINK_UCSI_BUFFER_SIZE;
-    copyLength = 0;
+    returnedCopySize = 0u;
+    outputCapacity = OutputBufferSize;
 
-    if ((OutputBuffer == NULL) || (BytesReturned == NULL))
+    if ((Context == NULL) || (OutputBuffer == NULL) || (BytesReturned == NULL))
     {
         return STATUS_INVALID_PARAMETER;
     }
 
     *BytesReturned = 0;
+    if (outputCapacity > 0u)
+    {
+        RtlZeroMemory(OutputBuffer, outputCapacity);
+    }
 
     if (Context->GlinkChannelConnected)
     {
@@ -6488,40 +6577,34 @@ PmicGlinkUCSIReadBuffer(
             InputBuffer,
             InputBufferSize);
 
-        if ((InputBuffer != NULL) && (InputBufferSize >= sizeof(ULONG)))
-        {
-            requestedLength = *(ULONG*)InputBuffer;
-        }
+        requestedLength = PmicGlinkGetUcsiRequestedLength(InputBuffer, InputBufferSize);
 
-        if (requestedLength < PMICGLINK_UCSI_BUFFER_SIZE)
-        {
-            copyLength = (SIZE_T)requestedLength;
-            if (copyLength > 0)
-            {
-                RtlZeroMemory(OutputBuffer, copyLength);
-            }
-        }
-        else
+        if ((requestedLength >= PMICGLINK_UCSI_BUFFER_SIZE)
+            && (outputCapacity >= PMICGLINK_UCSI_BUFFER_SIZE))
         {
             RtlCopyMemory(OutputBuffer, Context->UCSIDataBuffer, PMICGLINK_UCSI_BUFFER_SIZE);
+            returnedCopySize = PMICGLINK_UCSI_BUFFER_SIZE;
+        }
+        else if ((requestedLength > 0u) && (outputCapacity > 0u))
+        {
+            returnedCopySize = requestedLength;
+            if (returnedCopySize > outputCapacity)
+            {
+                returnedCopySize = outputCapacity;
+            }
         }
 
         *BytesReturned = requestedLength;
     }
-    else if (*(ULONGLONG*)&gLatestUcsiCmd.data[8] == 1ull)
+    else if ((*(ULONGLONG*)&gLatestUcsiCmd.data[8] == 1ull)
+        && (outputCapacity >= PMICGLINK_UCSI_BUFFER_SIZE))
     {
-        words = (USHORT*)OutputBuffer;
-        ((ULONG*)OutputBuffer)[1] = 0;
-        words[0] = 0x0100;
-        words[3] = 0x0800;
-
+        PmicGlinkBuildOfflineUcsiResponse((UCHAR*)OutputBuffer);
+        returnedCopySize = PMICGLINK_UCSI_BUFFER_SIZE;
         *BytesReturned = PMICGLINK_UCSI_BUFFER_SIZE;
     }
 
-    if (((USHORT*)OutputBuffer)[3] & (USHORT)0xA000u)
-    {
-        *(ULONGLONG*)&gLatestUcsiCmd.data[8] = 0;
-    }
+    PmicGlinkUpdateOfflineUcsiCommandState((const UCHAR*)OutputBuffer, returnedCopySize);
 
     return status;
 }
@@ -6639,9 +6722,11 @@ PmicGlinkWriteOemBuffer(
         return status;
     }
 
-    payloadSize = (InputBuffer[1] <= PMICGLINK_OEM_BUFFER_SIZE)
-        ? (SIZE_T)(InputBuffer[1] + 2u)
-        : PMICGLINK_OEM_SEND_BUFFER_SIZE;
+    payloadSize = PmicGlinkGetBoundedOemPayloadSize(InputBuffer, InputBufferSize);
+    if (payloadSize == 0u)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
 
     if (isOemCmd)
     {
