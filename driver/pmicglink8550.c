@@ -1457,6 +1457,7 @@ PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(
 {
     PPMIC_GLINK_DEVICE_CONTEXT context;
     PPMICGLINK_DEVICE_DDIINTERFACE_TYPE exposedDdi;
+    PFN_PMICGLINK_UCSI_ALERT_CALLBACK ucsiAlertCallback;
 
     UNREFERENCED_PARAMETER(InterfaceType);
     UNREFERENCED_PARAMETER(ExposedInterfaceSpecificData);
@@ -1473,12 +1474,15 @@ PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(
     }
 
     exposedDdi = (PPMICGLINK_DEVICE_DDIINTERFACE_TYPE)ExposedInterface;
-    if (exposedDdi->PmicGlinkUCSIAlertCallback == NULL)
+    ucsiAlertCallback = exposedDdi->PmicGlinkUCSIAlertCallback;
+    *exposedDdi = context->DdiInterface;
+
+    if (ucsiAlertCallback == NULL)
     {
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_UNSUCCESSFUL;
     }
 
-    context->DdiInterface.PmicGlinkUCSIAlertCallback = exposedDdi->PmicGlinkUCSIAlertCallback;
+    context->DdiInterface.PmicGlinkUCSIAlertCallback = ucsiAlertCallback;
     *exposedDdi = context->DdiInterface;
 
     return STATUS_SUCCESS;
@@ -3635,10 +3639,6 @@ PmicGlinkPlatformQcmb_PreShutdown_Cmd(
 
     WdfSpinLockAcquire(Context->StateLock);
     Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x2u;
-    if ((CmdBitMask & 0x3u) != 0)
-    {
-        Context->ModernStandbyState = ((CmdBitMask & 0x2u) != 0) ? 1u : 0u;
-    }
     WdfSpinLockRelease(Context->StateLock);
 
     status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
