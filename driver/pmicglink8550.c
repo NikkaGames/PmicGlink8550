@@ -350,6 +350,13 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_LKMDTEL_MAX_REPORT_MB 200u
 #define PMICGLINK_LKMDTEL_SECONDARY_OVERHEAD_BYTES 262192u
 #define PMICGLINK_QUEUE_TIMER_PERIOD_MS 10000u
+#define PMICGLINK_USBC_NOTIFY_PAN_ACK 240u
+#define PMICGLINK_USBC_NOTIFY_PAN_ACK_CONNECTOR 241u
+#define PMICGLINK_USBC_NOTIFY_READ_SEL_BASE 244u
+#define PMICGLINK_USBC_NOTIFY_READ_SEL_LAST 247u
+#define PMICGLINK_USBC_CMD_PAN_ACK 17u
+#define PMICGLINK_USBC_CMD_PAN_ACK_CONNECTOR 19u
+#define PMICGLINK_USBC_CMD_READ_SELECTION 20u
 
 typedef struct _PMICGLINK_ABD_CONNECTION_ENTRY
 {
@@ -452,6 +459,9 @@ static NTSTATUS PmicGlinkCreateDeviceWorkItem(_In_ PPMIC_GLINK_DEVICE_CONTEXT Co
 static NTSTATUS PmicGlinkPlatformUsbc_Request_Write(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const USBPD_DPM_USBC_WRITE_BUFFER* Request);
 static VOID PmicGlinkPlatformUsbc_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkPlatformSetState_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
+static NTSTATUS PmicGlinkPlatformUsbc_HandlePanAckNotification(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG NotifyValue);
+static NTSTATUS PmicGlinkPlatformUsbc_HandleReadSelectNotification(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG NotifyValue);
+static NTSTATUS PmicGlinkPlatformUsbc_HandleStateNotification(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG NotifyValue);
 static VOID PmicGlinkPlatformUsbc_AcpiNotificationHandler(_In_opt_ PVOID Context, _In_ ULONG NotifyValue);
 static NTSTATUS PmicGlinkEnsureBclCriticalCallback(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
@@ -6205,6 +6215,67 @@ PmicGlinkPlatformSetState_Request_Write_WorkItem(
     WdfObjectDelete(WorkItem);
 }
 
+static NTSTATUS
+PmicGlinkPlatformUsbc_HandlePanAckNotification(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG NotifyValue
+    )
+{
+    USBPD_DPM_USBC_WRITE_BUFFER request;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER_1;
+    }
+
+    if (gPmicGlinkPendingPan >= PMICGLINK_MAX_PORTS)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    RtlZeroMemory(&request, sizeof(request));
+    request.cmd_payload.pan_ack.port_index = gPmicGlinkPendingPan;
+    request.cmd_type = (NotifyValue == PMICGLINK_USBC_NOTIFY_PAN_ACK_CONNECTOR)
+        ? PMICGLINK_USBC_CMD_PAN_ACK_CONNECTOR
+        : PMICGLINK_USBC_CMD_PAN_ACK;
+
+    return PmicGlinkPlatformUsbc_Request_Write(Context, &request);
+}
+
+static NTSTATUS
+PmicGlinkPlatformUsbc_HandleReadSelectNotification(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG NotifyValue
+    )
+{
+    USBPD_DPM_USBC_WRITE_BUFFER request;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER_1;
+    }
+
+    RtlZeroMemory(&request, sizeof(request));
+    request.cmd_type = PMICGLINK_USBC_CMD_READ_SELECTION;
+    request.cmd_payload.read_sel = (ULONG)(UCHAR)(NotifyValue + 12u);
+    return PmicGlinkPlatformUsbc_Request_Write(Context, &request);
+}
+
+static NTSTATUS
+PmicGlinkPlatformUsbc_HandleStateNotification(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG NotifyValue
+    )
+{
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER_1;
+    }
+
+    gPmicGlinkPendingPlatformState = (UCHAR)NotifyValue;
+    return PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkPlatformSetState_Request_Write_WorkItem);
+}
+
 static VOID
 PmicGlinkPlatformUsbc_AcpiNotificationHandler(
     _In_opt_ PVOID Context,
@@ -6212,7 +6283,7 @@ PmicGlinkPlatformUsbc_AcpiNotificationHandler(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
-    USBPD_DPM_USBC_WRITE_BUFFER request;
+    NTSTATUS status;
 
     if (Context == NULL)
     {
@@ -6225,31 +6296,23 @@ PmicGlinkPlatformUsbc_AcpiNotificationHandler(
         return;
     }
 
-    RtlZeroMemory(&request, sizeof(request));
-
-    if ((NotifyValue == 240u) || (NotifyValue == 241u))
+    status = STATUS_SUCCESS;
+    if ((NotifyValue == PMICGLINK_USBC_NOTIFY_PAN_ACK)
+        || (NotifyValue == PMICGLINK_USBC_NOTIFY_PAN_ACK_CONNECTOR))
     {
-        if (gPmicGlinkPendingPan >= PMICGLINK_MAX_PORTS)
-        {
-            return;
-        }
-
-        request.cmd_payload.pan_ack.port_index = gPmicGlinkPendingPan;
-        request.cmd_type = (NotifyValue == 241u) ? 19u : 17u;
-        (VOID)PmicGlinkPlatformUsbc_Request_Write(deviceContext, &request);
-        return;
+        status = PmicGlinkPlatformUsbc_HandlePanAckNotification(deviceContext, NotifyValue);
+    }
+    else if ((NotifyValue >= PMICGLINK_USBC_NOTIFY_READ_SEL_BASE)
+        && (NotifyValue <= PMICGLINK_USBC_NOTIFY_READ_SEL_LAST))
+    {
+        status = PmicGlinkPlatformUsbc_HandleReadSelectNotification(deviceContext, NotifyValue);
+    }
+    else
+    {
+        status = PmicGlinkPlatformUsbc_HandleStateNotification(deviceContext, NotifyValue);
     }
 
-    if ((NotifyValue >= 244u) && (NotifyValue <= 247u))
-    {
-        request.cmd_type = 20u;
-        request.cmd_payload.read_sel = (ULONG)(UCHAR)(NotifyValue + 12u);
-        (VOID)PmicGlinkPlatformUsbc_Request_Write(deviceContext, &request);
-        return;
-    }
-
-    gPmicGlinkPendingPlatformState = (UCHAR)NotifyValue;
-    (VOID)PmicGlinkCreateDeviceWorkItem(deviceContext, PmicGlinkPlatformSetState_Request_Write_WorkItem);
+    UNREFERENCED_PARAMETER(status);
 }
 
 static NTSTATUS
