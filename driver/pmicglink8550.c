@@ -2661,10 +2661,7 @@ PmicGlinkStateNotificationCb(
     case PmicGlinkChannelRemoteDisconnected:
         if (gPmicGlinkMainChannelHandle != NULL)
         {
-            if (gPmicGlinkApiInterface.GLinkClose != NULL)
-            {
-                (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
-            }
+            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
 
             gPmicGlinkMainChannelHandle = NULL;
             Context->GlinkChannelConnected = FALSE;
@@ -9093,10 +9090,7 @@ PmicGlinkUlogStateNotificationCb(
     case PmicGlinkChannelRemoteDisconnected:
         if (gPmicGlinkUlogChannelHandle != NULL)
         {
-            if (gPmicGlinkApiInterface.GLinkClose != NULL)
-            {
-                (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
-            }
+            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
 
             gPmicGlinkUlogChannelHandle = NULL;
             deviceContext->GlinkChannelUlogConnected = FALSE;
