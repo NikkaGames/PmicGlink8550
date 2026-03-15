@@ -1263,7 +1263,7 @@ PmicGlinkEvtD0Exit(
         (VOID)WdfTimerStop(context->UlogTimer, TRUE);
     }
 
-    PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
+    PmicGlinkStateNotificationCb(gPmicGlinkMainChannelHandle, context, PmicGlinkChannelLocalDisconnected);
     if ((gPmicGlinkMainChannelHandle != NULL)
         && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
