@@ -1198,7 +1198,6 @@ PmicGlinkEvtReleaseHardware(
     {
         driverContext->BattMngrDevice = NULL;
     }
-    context->DriverContext = NULL;
 
     for (opCode = 0; opCode < PMICGLINK_COMM_DATA_SLOTS; opCode++)
     {
@@ -1208,11 +1207,7 @@ PmicGlinkEvtReleaseHardware(
         if (slot->Memory != NULL)
         {
             WdfObjectDelete(slot->Memory);
-            slot->Memory = NULL;
         }
-
-        slot->Buffer = NULL;
-        slot->Size = 0u;
     }
 
     return STATUS_SUCCESS;
