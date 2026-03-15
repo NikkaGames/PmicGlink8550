@@ -1115,15 +1115,13 @@ PmicGlinkEvtReleaseHardware(
         gPmicGlinkLinkStateHandle = NULL;
     }
 
-    if ((gPmicGlinkMainChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.GLinkClose != NULL))
+    if (gPmicGlinkMainChannelHandle != NULL)
     {
         (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
         gPmicGlinkMainChannelHandle = NULL;
     }
 
-    if ((gPmicGlinkUlogChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.GLinkClose != NULL))
+    if (gPmicGlinkUlogChannelHandle != NULL)
     {
         (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
         gPmicGlinkUlogChannelHandle = NULL;
@@ -1192,15 +1190,13 @@ PmicGlinkEvtD0Exit(
     }
 
     PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
-    if ((gPmicGlinkMainChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.GLinkClose != NULL))
+    if (gPmicGlinkMainChannelHandle != NULL)
     {
         (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
         gPmicGlinkMainChannelHandle = NULL;
     }
 
-    if ((gPmicGlinkUlogChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.GLinkClose != NULL))
+    if (gPmicGlinkUlogChannelHandle != NULL)
     {
         (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
         gPmicGlinkUlogChannelHandle = NULL;
@@ -1601,19 +1597,16 @@ PmicGlinkInterfaceNotificationCallback(
         }
         else
         {
-            if (gPmicGlinkApiInterface.GLinkClose != NULL)
+            if (gPmicGlinkMainChannelHandle != NULL)
             {
-                if (gPmicGlinkMainChannelHandle != NULL)
-                {
-                    (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
-                    gPmicGlinkMainChannelHandle = NULL;
-                }
+                (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
+                gPmicGlinkMainChannelHandle = NULL;
+            }
 
-                if (gPmicGlinkUlogChannelHandle != NULL)
-                {
-                    (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
-                    gPmicGlinkUlogChannelHandle = NULL;
-                }
+            if (gPmicGlinkUlogChannelHandle != NULL)
+            {
+                (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
+                gPmicGlinkUlogChannelHandle = NULL;
             }
 
             deviceContext->GlinkChannelConnected = FALSE;
