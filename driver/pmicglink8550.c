@@ -2725,7 +2725,7 @@ PmicGlink_SendData(
         return STATUS_RETRY;
     }
 
-    status = KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
+    (VOID)KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
 
     waitCount = 0;
     pollInterval.QuadPart = -20000ll;
@@ -2737,11 +2737,8 @@ PmicGlink_SendData(
             return STATUS_RETRY;
         }
 
-        KeReleaseMutex(&gPmicGlinkTxSync, FALSE);
         (VOID)KeDelayExecutionThread(KernelMode, FALSE, &pollInterval);
         waitCount++;
-
-        status = KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
     }
 
     (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 1);
