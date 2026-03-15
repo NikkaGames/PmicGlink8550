@@ -426,14 +426,23 @@ typedef struct _PMICGLINK_COMM_DATA
     USHORT Size;
 } PMICGLINK_COMM_DATA;
 
+typedef struct _PMIC_GLINK_DRIVER_CONTEXT
+{
+    WDFDEVICE BattMngrDevice;
+} PMIC_GLINK_DRIVER_CONTEXT, *PPMIC_GLINK_DRIVER_CONTEXT;
+
 typedef struct _PMIC_GLINK_DEVICE_CONTEXT
 {
     WDFDEVICE Device;
+    PPMIC_GLINK_DRIVER_CONTEXT DriverContext;
 
     BOOLEAN DeviceInterfacesRegistered;
     BOOLEAN AllReqIntfArrived;
     BOOLEAN GlinkDeviceLoaded;
     BOOLEAN ABDAttached;
+    ULONG InterruptResourceCount;
+    ULONG IOResourceCount;
+    LARGE_INTEGER GpioConnectionId[10];
     PMICGLINK_COMM_DATA CommData[PMICGLINK_COMM_DATA_SLOTS];
     BOOLEAN GlinkChannelConnected;
     BOOLEAN GlinkChannelRestart;
@@ -560,6 +569,7 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     WDFTIMER UlogTimer;
 } PMIC_GLINK_DEVICE_CONTEXT, *PPMIC_GLINK_DEVICE_CONTEXT;
 
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(PMIC_GLINK_DRIVER_CONTEXT, PmicGlinkGetDriverContext)
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(PMIC_GLINK_DEVICE_CONTEXT, PmicGlinkGetDeviceContext)
 
 EVT_WDF_DRIVER_DEVICE_ADD PmicGlinkEvtDeviceAdd;

@@ -532,6 +532,8 @@ static VOID CrashDump_BugCheckSecondaryDumpDataCallbackRingBuffer(_In_ KBUGCHECK
 static VOID CrashDump_BugCheckSecondaryDumpDataCallbackAdditional(_In_ KBUGCHECK_CALLBACK_REASON Reason, _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record, _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData, _In_ ULONG ReasonSpecificDataLength);
 static VOID CrashDump_BugCheckTriageDumpDataCallback(_In_ KBUGCHECK_CALLBACK_REASON Reason, _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record, _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData, _In_ ULONG ReasonSpecificDataLength);
 static VOID PmicGlinkEvtDmfDeviceModulesAdd(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request);
+static VOID PmicGlinkOnDriverCleanup(_In_ WDFOBJECT DriverObject);
+static VOID PmicGlinkOnDriverUnload(_In_ WDFDRIVER Driver);
 
 static NTSTATUS
 PmicGlink_SendData(
@@ -815,18 +817,38 @@ DriverEntry(
     )
 {
     NTSTATUS status;
+    WDFDRIVER driver;
+    WDF_OBJECT_ATTRIBUTES driverAttributes;
+    PPMIC_GLINK_DRIVER_CONTEXT driverContext;
     WDF_DRIVER_CONFIG config;
 
     WDF_DRIVER_CONFIG_INIT(&config, PmicGlinkEvtDeviceAdd);
+    config.EvtDriverUnload = PmicGlinkOnDriverUnload;
+    WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&driverAttributes, PMIC_GLINK_DRIVER_CONTEXT);
+    driverAttributes.EvtCleanupCallback = PmicGlinkOnDriverCleanup;
 
     status = WdfDriverCreate(
         DriverObject,
         RegistryPath,
-        WDF_NO_OBJECT_ATTRIBUTES,
+        &driverAttributes,
         &config,
-        WDF_NO_HANDLE);
+        &driver);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
 
-    return status;
+    driverContext = PmicGlinkGetDriverContext(driver);
+    if (driverContext == NULL)
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+    else
+    {
+        driverContext->BattMngrDevice = NULL;
+    }
+
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -841,8 +863,6 @@ PmicGlinkEvtDeviceAdd(
     WDF_FILEOBJECT_CONFIG fileObjectConfig;
     WDF_PNPPOWER_EVENT_CALLBACKS pnpCallbacks;
     PPMIC_GLINK_DEVICE_CONTEXT context;
-
-    UNREFERENCED_PARAMETER(Driver);
 
     WdfDeviceInitSetIoType(DeviceInit, WdfDeviceIoBuffered);
     WDF_FILEOBJECT_CONFIG_INIT(
@@ -881,6 +901,12 @@ PmicGlinkEvtDeviceAdd(
     if (!NT_SUCCESS(status))
     {
         return status;
+    }
+
+    context->DriverContext = PmicGlinkGetDriverContext(Driver);
+    if (context->DriverContext != NULL)
+    {
+        context->DriverContext->BattMngrDevice = device;
     }
 
     status = RegisterDeviceInterfaces(device, TRUE);
@@ -1054,11 +1080,49 @@ PmicGlinkEvtPrepareHardware(
 {
     NTSTATUS status;
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    ULONG descriptorCount;
+    ULONG descriptorIndex;
+    ULONG ioCount;
+    ULONG interruptCount;
 
     UNREFERENCED_PARAMETER(ResourcesRaw);
-    UNREFERENCED_PARAMETER(ResourcesTranslated);
 
     context = PmicGlinkGetDeviceContext(Device);
+    ioCount = 0;
+    interruptCount = 0;
+    RtlZeroMemory(context->GpioConnectionId, sizeof(context->GpioConnectionId));
+
+    descriptorCount = WdfCmResourceListGetCount(ResourcesTranslated);
+    for (descriptorIndex = 0; descriptorIndex < descriptorCount; descriptorIndex++)
+    {
+        PCM_PARTIAL_RESOURCE_DESCRIPTOR descriptor;
+
+        descriptor = WdfCmResourceListGetDescriptor(ResourcesTranslated, descriptorIndex);
+        if (descriptor == NULL)
+        {
+            return STATUS_NO_SUCH_DEVICE;
+        }
+
+        if (descriptor->Type == CmResourceTypePort)
+        {
+            if (ioCount < RTL_NUMBER_OF(context->GpioConnectionId))
+            {
+                RtlCopyMemory(
+                    &context->GpioConnectionId[ioCount],
+                    ((const UCHAR*)descriptor) + 8,
+                    sizeof(context->GpioConnectionId[ioCount]));
+            }
+            ioCount++;
+        }
+        else if (descriptor->Type == CmResourceTypeInterrupt)
+        {
+            interruptCount++;
+        }
+    }
+
+    context->IOResourceCount = ioCount;
+    context->InterruptResourceCount = interruptCount;
+
     RtlZeroMemory(&gPmicGlinkAcpiInterface, sizeof(gPmicGlinkAcpiInterface));
     status = WdfFdoQueryForInterface(
         Device,
@@ -1102,6 +1166,10 @@ PmicGlinkEvtReleaseHardware(
     UNREFERENCED_PARAMETER(ResourcesTranslated);
 
     context = PmicGlinkGetDeviceContext(Device);
+    if (context->DriverContext != NULL)
+    {
+        context->DriverContext->BattMngrDevice = NULL;
+    }
     context->GlinkDeviceLoaded = FALSE;
     if ((gPmicGlinkLinkStateHandle != NULL)
         && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
@@ -1914,6 +1982,9 @@ PmicGlinkDevice_InitContext(
     Context->AllReqIntfArrived = FALSE;
     Context->GlinkDeviceLoaded = FALSE;
     Context->ABDAttached = FALSE;
+    Context->InterruptResourceCount = 0;
+    Context->IOResourceCount = 0;
+    RtlZeroMemory(Context->GpioConnectionId, sizeof(Context->GpioConnectionId));
     Context->GlinkChannelConnected = FALSE;
     Context->GlinkChannelRestart = FALSE;
     Context->GlinkChannelFirstConnect = FALSE;
@@ -9564,18 +9635,18 @@ PmicGlinkQueueInitialize(
     return status;
 }
 
-VOID
+static VOID
 PmicGlinkOnDriverCleanup(
-    _In_ PDRIVER_OBJECT DriverObject
+    _In_ WDFOBJECT DriverObject
     )
 {
     UNREFERENCED_PARAMETER(DriverObject);
 }
 
-VOID
+static VOID
 PmicGlinkOnDriverUnload(
-    _In_ PDRIVER_OBJECT DriverObject
+    _In_ WDFDRIVER Driver
     )
 {
-    UNREFERENCED_PARAMETER(DriverObject);
+    UNREFERENCED_PARAMETER(Driver);
 }
