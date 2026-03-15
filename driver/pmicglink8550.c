@@ -2531,6 +2531,7 @@ PmicGlink_OpenGlinkChannel(
         return STATUS_SUCCESS;
     }
 
+    gPmicGlinkMainChannelHandle = NULL;
     channelHandle = NULL;
     RtlZeroMemory(&openConfig, sizeof(openConfig));
     openConfig.Transport = "SMEM";
@@ -9345,6 +9346,7 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
         return STATUS_SUCCESS;
     }
 
+    gPmicGlinkUlogChannelHandle = NULL;
     channelHandle = NULL;
     RtlZeroMemory(&openConfig, sizeof(openConfig));
     openConfig.Transport = "SMEM";
