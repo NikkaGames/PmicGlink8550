@@ -7022,7 +7022,7 @@ PmicGlink_RetrieveRxData(
 
         Context->LastRxOpcode = 0xFFFFFFFFu;
         Context->LastRxStatus = STATUS_SUCCESS;
-        Context->LastRxValid = TRUE;
+        Context->LastRxValid = FALSE;
         return STATUS_SUCCESS;
     }
 
@@ -7415,7 +7415,10 @@ PmicGlink_RetrieveRxData(
             RtlZeroMemory(Context->OemReceivedData, sizeof(Context->OemReceivedData));
             RtlCopyMemory(Context->OemReceivedData, Buffer, copySize);
         }
-        break;
+
+        Context->LastRxStatus = STATUS_SUCCESS;
+        Context->LastRxValid = FALSE;
+        return STATUS_SUCCESS;
     }
 
     Context->LastRxStatus = status;
@@ -8034,6 +8037,7 @@ PmicGlinkUlog_RetrieveRxData(
 {
     ULONG opCode;
     NTSTATUS status;
+    BOOLEAN responseMatched;
 
     if ((Context == NULL) || (Buffer == NULL) || (BufferSize < (sizeof(ULONGLONG) + sizeof(ULONG))))
     {
@@ -8041,6 +8045,7 @@ PmicGlinkUlog_RetrieveRxData(
     }
 
     status = STATUS_SUCCESS;
+    responseMatched = FALSE;
     Context->LastUlogRxOpcode = 0;
     Context->LastUlogRxStatus = STATUS_SUCCESS;
     Context->LastUlogRxValid = FALSE;
@@ -8114,6 +8119,7 @@ PmicGlinkUlog_RetrieveRxData(
         }
 
         status = STATUS_SUCCESS;
+        responseMatched = TRUE;
         break;
     }
 
@@ -8124,6 +8130,7 @@ PmicGlinkUlog_RetrieveRxData(
 
             statusCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG) + sizeof(ULONG));
             status = (statusCode == 0u) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+            responseMatched = TRUE;
         }
         else
         {
@@ -8137,7 +8144,7 @@ PmicGlinkUlog_RetrieveRxData(
     }
 
     Context->LastUlogRxStatus = status;
-    Context->LastUlogRxValid = TRUE;
+    Context->LastUlogRxValid = responseMatched;
     return status;
 }
 
