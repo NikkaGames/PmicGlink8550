@@ -1086,7 +1086,7 @@ PmicGlinkEvtPrepareHardware(
     }
 
     currentState = 1u;
-    PmicGlinkRpeADSPStateNotificationCallback(context, 0u, &currentState);
+    PmicGlinkRpeADSPStateNotificationCallback(Device, 0u, &currentState);
 
     status = CrashDump_RegisterGlobalCallbacks(context);
     if (!NT_SUCCESS(status))
@@ -1135,7 +1135,7 @@ PmicGlinkEvtReleaseHardware(
     }
 
     currentState = 0u;
-    PmicGlinkRpeADSPStateNotificationCallback(context, 0u, &currentState);
+    PmicGlinkRpeADSPStateNotificationCallback(Device, 0u, &currentState);
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     if (context->UlogTimer != NULL)
     {
@@ -8625,8 +8625,13 @@ PmicGlinkRpeADSPStateNotificationCallback(
 
     UNREFERENCED_PARAMETER(PreviousState);
 
-    deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
-    if ((deviceContext == NULL) || (CurrentState == NULL))
+    if ((Context == NULL) || (CurrentState == NULL))
+    {
+        return;
+    }
+
+    deviceContext = PmicGlinkGetDeviceContext((WDFDEVICE)Context);
+    if (deviceContext == NULL)
     {
         return;
     }
