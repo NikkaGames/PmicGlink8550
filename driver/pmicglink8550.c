@@ -628,6 +628,20 @@ PmicGlinkPlatformQcmb_GetStatus(
     );
 
 static VOID
+PmicGlinkPlatformQcmb_SetStatus(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG QcmbStatus
+    );
+
+static NTSTATUS
+PmicGlinkPlatformQcmb_SendMailboxCommand(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG QcmbStatus,
+    _In_ ULONG WaitInMs,
+    _Out_opt_ PULONG ObservedStatus
+    );
+
+static VOID
 PmicGlinkPlatformQcmb_WaitCmdStatus(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _In_ ULONG WaitInMs
@@ -4070,6 +4084,81 @@ PmicGlinkPlatformQcmb_GetStatus(
 }
 
 static VOID
+PmicGlinkPlatformQcmb_SetStatus(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG QcmbStatus
+    )
+{
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockAcquire(Context->StateLock);
+    }
+
+    Context->QcmbStatus = QcmbStatus;
+
+    if (Context->StateLock != NULL)
+    {
+        WdfSpinLockRelease(Context->StateLock);
+    }
+}
+
+static NTSTATUS
+PmicGlinkPlatformQcmb_SendMailboxCommand(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG QcmbStatus,
+    _In_ ULONG WaitInMs,
+    _Out_opt_ PULONG ObservedStatus
+    )
+{
+    NTSTATUS status;
+    UCHAR qcmbMessage[64];
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (ObservedStatus != NULL)
+    {
+        *ObservedStatus = 0u;
+    }
+
+    PmicGlinkPlatformQcmb_SetStatus(Context, QcmbStatus);
+
+    status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    status = PmicGlink_SendData(Context, 0x81u, qcmbMessage, sizeof(qcmbMessage), TRUE);
+    if (NT_SUCCESS(status) && (WaitInMs > 0u))
+    {
+        PmicGlinkPlatformQcmb_WaitCmdStatus(Context, WaitInMs);
+    }
+
+    if (ObservedStatus != NULL)
+    {
+        NTSTATUS statusRead;
+        ULONG qcmbStatusRead;
+
+        qcmbStatusRead = 0u;
+        statusRead = PmicGlinkPlatformQcmb_GetStatus(Context, &qcmbStatusRead);
+        if (NT_SUCCESS(statusRead))
+        {
+            *ObservedStatus = qcmbStatusRead;
+        }
+    }
+
+    return status;
+}
+
+static VOID
 PmicGlinkPlatformQcmb_WaitCmdStatus(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _In_ ULONG WaitInMs
@@ -4109,7 +4198,9 @@ PmicGlinkPlatformQcmb_PreShutdown_Cmd(
     )
 {
     NTSTATUS status;
-    UCHAR qcmbMessage[64];
+    ULONG qcmbStatus;
+    ULONG commandStatus;
+    ULONG secondaryStatus;
 
     if (Context == NULL)
     {
@@ -4121,33 +4212,18 @@ PmicGlinkPlatformQcmb_PreShutdown_Cmd(
         return STATUS_SUCCESS;
     }
 
-    WdfSpinLockAcquire(Context->StateLock);
-    Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x2u;
-    WdfSpinLockRelease(Context->StateLock);
-
-    status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    status = PmicGlink_SendData(Context, 0x81u, qcmbMessage, sizeof(qcmbMessage), TRUE);
-    if (NT_SUCCESS(status))
-    {
-        (VOID)PmicGlinkPlatformQcmb_WaitCmdStatus(Context, 100u);
-    }
-
-    WdfSpinLockAcquire(Context->StateLock);
-    Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x4u;
-    WdfSpinLockRelease(Context->StateLock);
+    commandStatus = (Context->QcmbConnected ? 1u : 0u) | 0x2u;
+    status = PmicGlinkPlatformQcmb_SendMailboxCommand(
+        Context,
+        commandStatus,
+        100u,
+        &qcmbStatus);
+    UNREFERENCED_PARAMETER(qcmbStatus);
 
     if ((CmdBitMask & 0xFFu) < 4u)
     {
-        status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
-        if (NT_SUCCESS(status))
-        {
-            (VOID)PmicGlink_SendData(Context, 0x81u, qcmbMessage, sizeof(qcmbMessage), TRUE);
-        }
+        secondaryStatus = (Context->QcmbConnected ? 1u : 0u) | 0x4u;
+        (VOID)PmicGlinkPlatformQcmb_SendMailboxCommand(Context, secondaryStatus, 0u, NULL);
     }
 
     return STATUS_SUCCESS;
@@ -4161,7 +4237,7 @@ PmicGlinkPlatformQcmb_GetChargerInfo_Cmd(
 {
     NTSTATUS status;
     ULONG qcmbStatus;
-    UCHAR qcmbMessage[64];
+    ULONG commandStatus;
 
     if (Context == NULL)
     {
@@ -4180,21 +4256,8 @@ PmicGlinkPlatformQcmb_GetChargerInfo_Cmd(
         return STATUS_SUCCESS;
     }
 
-    WdfSpinLockAcquire(Context->StateLock);
-    Context->QcmbStatus = (Context->QcmbConnected ? 1u : 0u) | 0x2u;
-    WdfSpinLockRelease(Context->StateLock);
-
-    status = PmicGlinkPlatformQcmb_WriteMBToBuffer(Context, qcmbMessage, sizeof(qcmbMessage));
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    status = PmicGlink_SendData(Context, 0x81u, qcmbMessage, sizeof(qcmbMessage), TRUE);
-    if (NT_SUCCESS(status))
-    {
-        (VOID)PmicGlinkPlatformQcmb_WaitCmdStatus(Context, 100u);
-    }
+    commandStatus = (Context->QcmbConnected ? 1u : 0u) | 0x2u;
+    (VOID)PmicGlinkPlatformQcmb_SendMailboxCommand(Context, commandStatus, 100u, NULL);
 
     status = PmicGlinkPlatformQcmb_GetStatus(Context, &qcmbStatus);
     if (!NT_SUCCESS(status))
