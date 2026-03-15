@@ -164,8 +164,12 @@ static LONG gPmicGlinkNotifyGo;
 static UCHAR gPmicGlinkCachedBatteryStatus;
 static KMUTEX gPmicGlinkTxSync;
 static LONG gPmicGlinkRxInProgress;
+static KEVENT gPmicGlinkTxNotificationEvent;
+static KEVENT gPmicGlinkRxNotificationEvent;
 static KMUTEX gPmicGlinkUlogTxSync;
 static LONG gPmicGlinkUlogRxInProgress;
+static KEVENT gPmicGlinkUlogTxNotificationEvent;
+static KEVENT gPmicGlinkUlogRxNotificationEvent;
 static LARGE_INTEGER gPmicGlinkLastUsbIoctlEvent;
 static ULONGLONG gPmicGlinkLastBattIdQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
@@ -1654,8 +1658,12 @@ PmicGlinkDevice_InitContext(
     Context->Hibernate = FALSE;
     KeInitializeMutex(&gPmicGlinkTxSync, 1);
     (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+    KeInitializeEvent(&gPmicGlinkTxNotificationEvent, NotificationEvent, FALSE);
+    KeInitializeEvent(&gPmicGlinkRxNotificationEvent, NotificationEvent, FALSE);
     KeInitializeMutex(&gPmicGlinkUlogTxSync, 1);
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
+    KeInitializeEvent(&gPmicGlinkUlogTxNotificationEvent, NotificationEvent, FALSE);
+    KeInitializeEvent(&gPmicGlinkUlogRxNotificationEvent, NotificationEvent, FALSE);
     Context->Notify = FALSE;
     Context->NotificationFlag = FALSE;
     Context->LastRxOpcode = 0;
@@ -7498,6 +7506,7 @@ PmicGlinkTxNotificationCb(
     if (deviceContext != NULL)
     {
         deviceContext->NotificationFlag = TRUE;
+        (VOID)KeSetEvent(&gPmicGlinkTxNotificationEvent, IO_NO_INCREMENT, FALSE);
     }
 }
 
@@ -7517,6 +7526,7 @@ PmicGlinkRxNotificationWorkItem(
             context,
             gPmicGlinkUsbcNotification.AsUINT8,
             sizeof(gPmicGlinkUsbcNotification.AsUINT8));
+        (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
     }
 
     WdfObjectDelete(WorkItem);
@@ -7592,6 +7602,7 @@ PmicGlinkUlogRxNotificationCb(
     {
         (VOID)PmicGlinkUlog_RetrieveRxData(deviceContext, (const CHAR*)Buffer, BufferSize);
         deviceContext->NotificationFlag = TRUE;
+        (VOID)KeSetEvent(&gPmicGlinkUlogRxNotificationEvent, IO_NO_INCREMENT, FALSE);
     }
 }
 
@@ -7620,6 +7631,7 @@ PmicGlinkUlogTxNotificationCb(
     if (deviceContext != NULL)
     {
         deviceContext->NotificationFlag = TRUE;
+        (VOID)KeSetEvent(&gPmicGlinkUlogTxNotificationEvent, IO_NO_INCREMENT, FALSE);
     }
 }
 
