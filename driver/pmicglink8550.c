@@ -2161,13 +2161,6 @@ PmicGlinkStateNotificationCb(
         Context->GlinkChannelRestart = FALSE;
         Context->GlinkLinkStateUp = TRUE;
         Context->GlinkRxIntent += 1;
-        if ((Context->UlogInitEn != 0) && !Context->GlinkChannelUlogConnected)
-        {
-            if (NT_SUCCESS(PmicGlinkUlog_OpenGlinkChannelUlog(Context)))
-            {
-                Context->GlinkChannelUlogRestart = FALSE;
-            }
-        }
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         break;
 
@@ -2217,7 +2210,9 @@ PmicGlink_SendData(
         return STATUS_RETRY;
     }
 
-    if (Context->GlinkChannelRestart || !Context->GlinkChannelConnected)
+    if (Context->GlinkChannelRestart
+        || !Context->GlinkChannelConnected
+        || !Context->GlinkDeviceLoaded)
     {
         return STATUS_RETRY;
     }
@@ -8213,7 +8208,9 @@ PmicGlinkUlog_SendData(
         return STATUS_UNSUCCESSFUL;
     }
 
-    if (Context->GlinkChannelUlogRestart || !Context->GlinkChannelUlogConnected)
+    if (Context->GlinkChannelUlogRestart
+        || !Context->GlinkChannelUlogConnected
+        || !Context->GlinkDeviceLoaded)
     {
         return STATUS_RETRY;
     }
