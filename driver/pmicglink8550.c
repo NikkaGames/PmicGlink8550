@@ -777,8 +777,8 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
 NTSTATUS
 PmicGlinkUlog_RetrieveRxData(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
-    _In_reads_bytes_(BufferSize) const CHAR* Buffer,
-    _In_ SIZE_T BufferSize
+    _In_ ULONG OpCode,
+    _Out_opt_ PBOOLEAN ExpectedReceived
     );
 
 NTSTATUS
@@ -8358,7 +8358,10 @@ PmicGlinkUlogRxNotificationCb(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
-    PUSHORT rxWords;
+    PMICGLINK_COMM_DATA* commSlot;
+    NTSTATUS status;
+    ULONG messageOp;
+    SIZE_T copySize;
 
     UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(PacketContext);
@@ -8366,11 +8369,45 @@ PmicGlinkUlogRxNotificationCb(
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if ((deviceContext != NULL) && (Buffer != NULL) && (BufferSize > 0))
     {
-        rxWords = (PUSHORT)Buffer;
-        rxWords[5] = 0u;
-        (VOID)PmicGlinkUlog_RetrieveRxData(deviceContext, (const CHAR*)Buffer, BufferSize);
-        deviceContext->NotificationFlag = TRUE;
-        (VOID)KeSetEvent(&gPmicGlinkUlogRxNotificationEvent, IO_NO_INCREMENT, FALSE);
+        messageOp = MAXULONG;
+        if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
+        {
+            ((PUSHORT)Buffer)[5] = 0u;
+            RtlCopyMemory(
+                &messageOp,
+                (const UCHAR*)Buffer + sizeof(ULONGLONG),
+                sizeof(messageOp));
+        }
+
+        if ((messageOp == PMICGLINK_ULOG_SET_PROPERTIES_OPCODE)
+            || (messageOp == PMICGLINK_ULOG_GET_LOG_BUFFER_OPCODE)
+            || (messageOp == PMICGLINK_ULOG_GET_BUFFER_OPCODE))
+        {
+            status = PmicGlinkEnsureCommDataBuffer(deviceContext, messageOp, BufferSize);
+            if (NT_SUCCESS(status))
+            {
+                commSlot = &deviceContext->CommData[messageOp];
+                copySize = BufferSize;
+                RtlZeroMemory(commSlot->Buffer, copySize);
+                RtlCopyMemory(commSlot->Buffer, Buffer, copySize);
+                if (copySize >= (sizeof(USHORT) * 6u))
+                {
+                    ((PUSHORT)commSlot->Buffer)[5] = 0u;
+                }
+
+                commSlot->Size = (copySize > 0xFFFFu) ? 0xFFFFu : (USHORT)copySize;
+                deviceContext->NotificationFlag = TRUE;
+                (VOID)KeSetEvent(&gPmicGlinkUlogRxNotificationEvent, IO_NO_INCREMENT, FALSE);
+            }
+        }
+    }
+
+    if (gPmicGlinkApiInterfaceValid
+        && (gPmicGlinkApiInterface.GLinkRxDone != NULL)
+        && (gPmicGlinkUlogChannelHandle != NULL)
+        && (Buffer != NULL))
+    {
+        (VOID)gPmicGlinkApiInterface.GLinkRxDone(gPmicGlinkUlogChannelHandle, Buffer, TRUE);
     }
 }
 
@@ -8952,34 +8989,52 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
 NTSTATUS
 PmicGlinkUlog_RetrieveRxData(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
-    _In_reads_bytes_(BufferSize) const CHAR* Buffer,
-    _In_ SIZE_T BufferSize
+    _In_ ULONG OpCode,
+    _Out_opt_ PBOOLEAN ExpectedReceived
     )
 {
+    PMICGLINK_COMM_DATA* slot;
+    const CHAR* Buffer;
+    SIZE_T BufferSize;
+    ULONG packetOpCode;
     ULONG opCode;
     NTSTATUS status;
     BOOLEAN responseMatched;
 
-    if ((Context == NULL) || (Buffer == NULL) || (BufferSize < (sizeof(ULONGLONG) + sizeof(ULONG))))
+    if (ExpectedReceived != NULL)
+    {
+        *ExpectedReceived = FALSE;
+    }
+
+    if ((Context == NULL) || (OpCode >= PMICGLINK_COMM_DATA_SLOTS))
     {
         return STATUS_INVALID_PARAMETER;
     }
 
+    slot = &Context->CommData[OpCode];
+    Buffer = (const CHAR*)slot->Buffer;
+    BufferSize = slot->Size;
+    if ((Buffer == NULL) || (BufferSize < (sizeof(ULONGLONG) + sizeof(ULONG))))
+    {
+        return STATUS_SUCCESS;
+    }
+
+    slot->Size = 0u;
     status = STATUS_SUCCESS;
     responseMatched = FALSE;
+    opCode = OpCode;
     Context->LastUlogRxOpcode = 0;
     Context->LastUlogRxStatus = STATUS_SUCCESS;
     Context->LastUlogRxValid = FALSE;
 
-    opCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
-    Context->LastUlogRxOpcode = opCode;
-    if (opCode > 0x105u)
+    packetOpCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
+    if (packetOpCode != OpCode)
     {
-        Context->LastUlogRxStatus = STATUS_INVALID_DEVICE_REQUEST;
         Context->LastUlogRxValid = FALSE;
-        return STATUS_INVALID_DEVICE_REQUEST;
+        return STATUS_SUCCESS;
     }
 
+    Context->LastUlogRxOpcode = opCode;
     switch (opCode)
     {
     case 24u:
@@ -9073,6 +9128,10 @@ PmicGlinkUlog_RetrieveRxData(
 
     Context->LastUlogRxStatus = status;
     Context->LastUlogRxValid = responseMatched;
+    if (ExpectedReceived != NULL)
+    {
+        *ExpectedReceived = responseMatched;
+    }
     return status;
 }
 
@@ -9206,6 +9265,11 @@ PmicGlinkUlog_SendData(
             }
         }
 
+        if ((waitStatus < (STATUS_WAIT_0 + waitObjectCount)) && (waitIndex == 1u))
+        {
+            (VOID)PmicGlinkUlog_RetrieveRxData(Context, opCode, NULL);
+        }
+
         if (Context->LastUlogRxValid)
         {
             if (Context->LastUlogRxOpcode == opCode)
@@ -9244,6 +9308,11 @@ PmicGlinkUlog_SendData(
                     waitCount++;
                     continue;
                 }
+            }
+
+            if ((waitStatus < (STATUS_WAIT_0 + waitObjectCount)) && (waitIndex == 1u))
+            {
+                (VOID)PmicGlinkUlog_RetrieveRxData(Context, opCode, NULL);
             }
 
             if (Context->LastUlogRxValid)
