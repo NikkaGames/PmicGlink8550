@@ -2722,6 +2722,12 @@ PmicGlink_SendData(
         return STATUS_RETRY;
     }
 
+    if ((gPmicGlinkMainChannelHandle == NULL)
+        || (gPmicGlinkApiInterface.GLinkTx == NULL))
+    {
+        return STATUS_RETRY;
+    }
+
     status = KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
 
     waitCount = 0;
@@ -2757,13 +2763,6 @@ PmicGlink_SendData(
     {
         Context->CommData[OpCode].Size = 0u;
     }
-    if ((gPmicGlinkMainChannelHandle == NULL)
-        || (gPmicGlinkApiInterface.GLinkTx == NULL))
-    {
-        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
-        return STATUS_RETRY;
-    }
-
     status = gPmicGlinkApiInterface.GLinkTx(
         gPmicGlinkMainChannelHandle,
         (PVOID)(ULONG_PTR)(ULONG)txCount,
@@ -9481,6 +9480,12 @@ PmicGlinkUlog_SendData(
         return STATUS_RETRY;
     }
 
+    if ((gPmicGlinkUlogChannelHandle == NULL)
+        || (gPmicGlinkApiInterface.GLinkTx == NULL))
+    {
+        return STATUS_RETRY;
+    }
+
     waitCount = 0;
     pollInterval.QuadPart = -20000ll;
     while (InterlockedCompareExchange(&gPmicGlinkUlogRxInProgress, 1, 1) == 1)
@@ -9509,13 +9514,6 @@ PmicGlinkUlog_SendData(
     Context->LastUlogRxValid = FALSE;
     (VOID)KeClearEvent(&gPmicGlinkUlogTxNotificationEvent);
     (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
-    if ((gPmicGlinkUlogChannelHandle == NULL)
-        || (gPmicGlinkApiInterface.GLinkTx == NULL))
-    {
-        (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
-        return STATUS_RETRY;
-    }
-
     status = gPmicGlinkApiInterface.GLinkTx(
         gPmicGlinkUlogChannelHandle,
         (PVOID)(ULONG_PTR)(ULONG)txCount,
