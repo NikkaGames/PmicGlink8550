@@ -7620,8 +7620,9 @@ PmicGlinkUlogTxNotificationCb(
 
     UNREFERENCED_PARAMETER(Handle);
     UNREFERENCED_PARAMETER(PacketContext);
+    UNREFERENCED_PARAMETER(BufferSize);
 
-    if ((Buffer != NULL) && (BufferSize >= (sizeof(USHORT) * 6u)))
+    if (Buffer != NULL)
     {
         txWords = (PUSHORT)Buffer;
         txWords[5] = 0u;
