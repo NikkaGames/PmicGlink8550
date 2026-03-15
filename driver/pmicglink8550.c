@@ -1280,7 +1280,7 @@ PmicGlinkEvtD0Entry(
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget == NULL)
     {
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_UNSUCCESSFUL;
     }
 
     (VOID)WdfIoTargetStart(ioTarget);
@@ -1380,7 +1380,7 @@ PmicGlinkEvtSelfManagedIoInit(
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget == NULL)
     {
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_UNSUCCESSFUL;
     }
 
     (VOID)WdfIoTargetStart(ioTarget);
@@ -1398,7 +1398,7 @@ PmicGlinkEvtSelfManagedIoRestart(
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget == NULL)
     {
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_UNSUCCESSFUL;
     }
 
     (VOID)WdfIoTargetStart(ioTarget);
@@ -1415,7 +1415,7 @@ PmicGlinkEvtSelfManagedIoSuspend(
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget == NULL)
     {
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_UNSUCCESSFUL;
     }
 
     WdfIoTargetStop(ioTarget, WdfIoTargetCancelSentIo);
@@ -9802,8 +9802,7 @@ PmicGlinkQueueInitialize(
     queueContext = PmicGlinkGetQueueContext(queue);
     if (queueContext == NULL)
     {
-        WdfObjectDelete(queue);
-        return STATUS_INVALID_DEVICE_STATE;
+        return status;
     }
 
     queueContext->Buffer = NULL;
@@ -9817,7 +9816,6 @@ PmicGlinkQueueInitialize(
     status = PmicGlinkQueueTimerCreate(&queueContext->Timer, timerPeriodMs, queue);
     if (!NT_SUCCESS(status))
     {
-        WdfObjectDelete(queue);
         return status;
     }
 
