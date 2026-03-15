@@ -9483,7 +9483,6 @@ PmicGlinkUlog_SendData(
     LONG txCount;
     ULONG opCode;
     BOOLEAN matchedResponse;
-    BOOLEAN waitForRx;
 
     if ((Buffer == NULL) || (BufferSize == 0))
     {
@@ -9536,9 +9535,6 @@ PmicGlinkUlog_SendData(
     {
         opCode = *(const ULONG*)((const UCHAR*)Buffer + sizeof(ULONGLONG));
     }
-    waitForRx = ((opCode == PMICGLINK_ULOG_SET_PROPERTIES_OPCODE)
-        || (opCode == PMICGLINK_ULOG_GET_LOG_BUFFER_OPCODE)
-        || (opCode == PMICGLINK_ULOG_GET_BUFFER_OPCODE));
 
     status = STATUS_SUCCESS;
     txCount = InterlockedIncrement(&gPmicGlinkUlogTxCount);
@@ -9588,8 +9584,7 @@ PmicGlinkUlog_SendData(
             (VOID)KeClearEvent((PKEVENT)waitObjects[waitIndex]);
             if (waitIndex == 0u)
             {
-                waitCount++;
-                continue;
+                break;
             }
         }
 
@@ -9613,7 +9608,7 @@ PmicGlinkUlog_SendData(
         waitCount++;
     }
 
-    if (!matchedResponse && waitForRx)
+    if (!matchedResponse)
     {
         waitCount = 0;
         while (waitCount < 50u)
@@ -9659,7 +9654,7 @@ PmicGlinkUlog_SendData(
         }
     }
 
-    if (!matchedResponse && waitForRx)
+    if (!matchedResponse)
     {
         status = STATUS_TIMEOUT;
     }
