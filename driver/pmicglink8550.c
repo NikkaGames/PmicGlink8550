@@ -1906,7 +1906,6 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         if (!NT_SUCCESS(status))
         {
             Context->GlinkNotificationEntry = NULL;
-            return status;
         }
     }
 
@@ -4292,10 +4291,7 @@ PmicGlinkAbdUpdateConnections(
             NULL,
             0,
             &bytesReturned);
-        if (!NT_SUCCESS(requestStatus) && NT_SUCCESS(status))
-        {
-            status = requestStatus;
-        }
+        status |= requestStatus;
     }
 
     return status;
