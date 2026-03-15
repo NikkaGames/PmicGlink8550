@@ -455,6 +455,7 @@ static VOID PmicGlinkDDI_InterfaceReference(_In_opt_ PVOID Context);
 static VOID PmicGlinkDDI_InterfaceDereference(_In_opt_ PVOID Context);
 static NTSTATUS PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(_In_ WDFDEVICE Device, _In_ const GUID* InterfaceType, _Inout_ PINTERFACE ExposedInterface, _In_opt_ PVOID ExposedInterfaceSpecificData);
 static VOID PmicGlinkDDI_NotifyUcsiAlert(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG EventCode, _In_ ULONG EventData);
+static VOID PmicGlinkSetUcsiAlertCallback(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ PFN_PMICGLINK_UCSI_ALERT_CALLBACK Callback);
 static NTSTATUS PmicGlinkCreateDeviceWorkItem(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PFN_WDF_WORKITEM WorkItemRoutine);
 static NTSTATUS PmicGlinkPlatformUsbc_Request_Write(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const USBPD_DPM_USBC_WRITE_BUFFER* Request);
 static VOID PmicGlinkPlatformUsbc_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
@@ -1464,7 +1465,7 @@ RegisterDeviceInterfaces(
                 (VOID)PmicGlinkAbdUpdateConnections(context, FALSE);
             }
 
-            context->DdiInterface.PmicGlinkUCSIAlertCallback = NULL;
+            PmicGlinkSetUcsiAlertCallback(context, NULL);
             context->DeviceInterfacesRegistered = FALSE;
         }
 
@@ -1573,13 +1574,47 @@ RegisterDeviceInterfaces(
 }
 
 static VOID
+PmicGlinkSetUcsiAlertCallback(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_opt_ PFN_PMICGLINK_UCSI_ALERT_CALLBACK Callback
+    )
+{
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    if (Context->DdiInterfaceLock != NULL)
+    {
+        WdfWaitLockAcquire(Context->DdiInterfaceLock, NULL);
+    }
+
+    Context->DdiInterface.PmicGlinkUCSIAlertCallback = Callback;
+
+    if (Context->DdiInterfaceLock != NULL)
+    {
+        WdfWaitLockRelease(Context->DdiInterfaceLock);
+    }
+}
+
+static VOID
 PmicGlinkDDI_InterfaceReference(
     _In_opt_ PVOID Context
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
 
+    if (Context == NULL)
+    {
+        return;
+    }
+
     deviceContext = PmicGlinkGetDeviceContext((WDFDEVICE)Context);
+    if ((deviceContext == NULL) || (deviceContext->DdiInterfaceLock == NULL))
+    {
+        return;
+    }
+
     WdfWaitLockAcquire(deviceContext->DdiInterfaceLock, NULL);
     deviceContext->DdiInterfaceRefCount += 1;
     WdfWaitLockRelease(deviceContext->DdiInterfaceLock);
@@ -1592,9 +1627,22 @@ PmicGlinkDDI_InterfaceDereference(
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
 
+    if (Context == NULL)
+    {
+        return;
+    }
+
     deviceContext = PmicGlinkGetDeviceContext((WDFDEVICE)Context);
+    if ((deviceContext == NULL) || (deviceContext->DdiInterfaceLock == NULL))
+    {
+        return;
+    }
+
     WdfWaitLockAcquire(deviceContext->DdiInterfaceLock, NULL);
-    deviceContext->DdiInterfaceRefCount -= 1;
+    if (deviceContext->DdiInterfaceRefCount > 0)
+    {
+        deviceContext->DdiInterfaceRefCount -= 1;
+    }
     WdfWaitLockRelease(deviceContext->DdiInterfaceLock);
 }
 
@@ -1613,7 +1661,16 @@ PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(
     UNREFERENCED_PARAMETER(InterfaceType);
     UNREFERENCED_PARAMETER(ExposedInterfaceSpecificData);
 
+    if (ExposedInterface == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     context = PmicGlinkGetDeviceContext(Device);
+    if (context == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
 
     exposedDdi = (PPMICGLINK_DEVICE_DDIINTERFACE_TYPE)ExposedInterface;
     ucsiAlertCallback = exposedDdi->PmicGlinkUCSIAlertCallback;
@@ -1624,7 +1681,7 @@ PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(
         return STATUS_UNSUCCESSFUL;
     }
 
-    context->DdiInterface.PmicGlinkUCSIAlertCallback = ucsiAlertCallback;
+    PmicGlinkSetUcsiAlertCallback(context, ucsiAlertCallback);
     exposedDdi->PmicGlinkUCSIAlertCallback = ucsiAlertCallback;
 
     return STATUS_SUCCESS;
@@ -1639,10 +1696,23 @@ PmicGlinkDDI_NotifyUcsiAlert(
 {
     PFN_PMICGLINK_UCSI_ALERT_CALLBACK callback;
 
+    if (Context == NULL)
+    {
+        return;
+    }
+
     callback = NULL;
-    WdfWaitLockAcquire(Context->DdiInterfaceLock, NULL);
+    if (Context->DdiInterfaceLock != NULL)
+    {
+        WdfWaitLockAcquire(Context->DdiInterfaceLock, NULL);
+    }
+
     callback = Context->DdiInterface.PmicGlinkUCSIAlertCallback;
-    WdfWaitLockRelease(Context->DdiInterfaceLock);
+
+    if (Context->DdiInterfaceLock != NULL)
+    {
+        WdfWaitLockRelease(Context->DdiInterfaceLock);
+    }
 
     if (callback != NULL)
     {
@@ -1954,12 +2024,6 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         status = STATUS_SUCCESS;
 
         PmicGlinkResetApiInterface();
-
-        PmicGlinkClearAbdAttachment(Context, TRUE);
-        PmicGlinkClearBattMiniAttachment(Context);
-        Context->GlinkDeviceLoaded = FALSE;
-        Context->GlinkLinkStateUp = FALSE;
-        Context->AllReqIntfArrived = FALSE;
 
         unregisterStatus = PmicGlinkUnregisterPnPNotificationEntry(&Context->GlinkNotificationEntry);
         if (!NT_SUCCESS(unregisterStatus))
