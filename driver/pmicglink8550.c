@@ -581,7 +581,7 @@ PmicGlinkPlatformQcmb_GetStatus(
     _Out_ PULONG QcmbStatus
     );
 
-static NTSTATUS
+static VOID
 PmicGlinkPlatformQcmb_WaitCmdStatus(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _In_ ULONG WaitInMs
@@ -3583,7 +3583,7 @@ PmicGlinkPlatformQcmb_GetStatus(
     return status;
 }
 
-static NTSTATUS
+static VOID
 PmicGlinkPlatformQcmb_WaitCmdStatus(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _In_ ULONG WaitInMs
@@ -3594,7 +3594,7 @@ PmicGlinkPlatformQcmb_WaitCmdStatus(
 
     if (Context == NULL)
     {
-        return STATUS_INVALID_PARAMETER;
+        return;
     }
 
     status = PmicGlinkPlatformQcmb_GetStatus(Context, &qcmbStatus);
@@ -3614,7 +3614,6 @@ PmicGlinkPlatformQcmb_WaitCmdStatus(
         status = PmicGlinkPlatformQcmb_GetStatus(Context, &qcmbStatus);
     }
 
-    return status;
 }
 
 static NTSTATUS
