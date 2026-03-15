@@ -1159,7 +1159,8 @@ PmicGlinkEvtD0Entry(
         return STATUS_UNSUCCESSFUL;
     }
 
-    return WdfIoTargetStart(ioTarget);
+    (VOID)WdfIoTargetStart(ioTarget);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -1248,7 +1249,8 @@ PmicGlinkEvtSelfManagedIoInit(
         return STATUS_UNSUCCESSFUL;
     }
 
-    return WdfIoTargetStart(ioTarget);
+    (VOID)WdfIoTargetStart(ioTarget);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -1264,7 +1266,8 @@ PmicGlinkEvtSelfManagedIoRestart(
         return STATUS_UNSUCCESSFUL;
     }
 
-    return WdfIoTargetStart(ioTarget);
+    (VOID)WdfIoTargetStart(ioTarget);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
