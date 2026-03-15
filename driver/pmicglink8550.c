@@ -6829,19 +6829,13 @@ PmicGlinkNotify_Interface_Free(
     if (Context->BattMiniNotifyLock != NULL)
     {
         WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-        if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+        if (Context->BattMiniDeviceLoaded)
         {
             WdfIoTargetClose(Context->BattMiniIoTarget);
         }
 
         Context->BattMiniDeviceLoaded = FALSE;
-        Context->NotificationFlag = FALSE;
         WdfWaitLockRelease(Context->BattMiniNotifyLock);
-    }
-    else
-    {
-        Context->NotificationFlag = FALSE;
-        Context->BattMiniDeviceLoaded = FALSE;
     }
 
     return STATUS_SUCCESS;
