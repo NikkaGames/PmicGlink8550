@@ -339,6 +339,7 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_ULOG_DEFAULT_CATEGORIES 0x0000000E00008000ull
 #define PMICGLINK_ULOG_DEFAULT_TIMER_DUE_TIME_100NS (-20000000ll)
 #define PMICGLINK_100NS_PER_SECOND 10000000ll
+#define PMICGLINK_RPE_STATE_ID_PDR_READY_FOR_COMMANDS 0xCu
 #define PMICGLINK_ULOG_BUFFER_CAPACITY 8192u
 #define PMICGLINK_ULOG_LINE_CHUNK_WITH_TERM 251u
 #define PMICGLINK_ULOG_LINE_PRINT_BUFFER 256u
@@ -8593,7 +8594,7 @@ PmicGlinkRpeADSPStateNotificationCallback(
         return;
     }
 
-    if (*CurrentState != 0)
+    if (*CurrentState == PMICGLINK_RPE_STATE_ID_PDR_READY_FOR_COMMANDS)
     {
         status = PmicGlinkEnsureApiInterface(deviceContext);
         if (NT_SUCCESS(status))
