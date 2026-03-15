@@ -2709,7 +2709,7 @@ PmicGlink_SendData(
         return STATUS_UNSUCCESSFUL;
     }
 
-    txCount = InterlockedIncrement(&gPmicGlinkTxCount);
+    txCount = ++gPmicGlinkTxCount;
 
     if (Context == NULL)
     {
@@ -9468,7 +9468,7 @@ PmicGlinkUlog_SendData(
         return STATUS_UNSUCCESSFUL;
     }
 
-    txCount = InterlockedIncrement(&gPmicGlinkUlogTxCount);
+    txCount = ++gPmicGlinkUlogTxCount;
 
     if (Context == NULL)
     {
