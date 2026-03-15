@@ -1370,6 +1370,18 @@ RegisterDeviceInterfaces(
             WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_BATT_MNGR, NULL, FALSE);
             WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL, FALSE);
 
+            if (context->ModernStandbyCallbackHandle != NULL)
+            {
+                ExUnregisterCallback(context->ModernStandbyCallbackHandle);
+                context->ModernStandbyCallbackHandle = NULL;
+            }
+
+            if (context->ModernStandbyCallbackObject != NULL)
+            {
+                ObDereferenceObject(context->ModernStandbyCallbackObject);
+                context->ModernStandbyCallbackObject = NULL;
+            }
+
             if (context->ABDAttached && (context->AbdIoTarget != NULL))
             {
                 (VOID)PmicGlinkAbdUpdateConnections(context, FALSE);
