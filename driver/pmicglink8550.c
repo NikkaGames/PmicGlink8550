@@ -2725,10 +2725,6 @@ PmicGlink_SendData(
     }
 
     status = KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
 
     waitCount = 0;
     pollInterval.QuadPart = -20000ll;
@@ -2745,10 +2741,6 @@ PmicGlink_SendData(
         waitCount++;
 
         status = KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
-        if (!NT_SUCCESS(status))
-        {
-            return status;
-        }
     }
 
     (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 1);
@@ -9492,10 +9484,6 @@ PmicGlinkUlog_SendData(
     }
 
     status = KeWaitForSingleObject(&gPmicGlinkUlogTxSync, Executive, KernelMode, FALSE, NULL);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
 
     waitCount = 0;
     pollInterval.QuadPart = -20000ll;
@@ -9512,10 +9500,6 @@ PmicGlinkUlog_SendData(
         waitCount++;
 
         status = KeWaitForSingleObject(&gPmicGlinkUlogTxSync, Executive, KernelMode, FALSE, NULL);
-        if (!NT_SUCCESS(status))
-        {
-            return status;
-        }
     }
 
     (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 1);
