@@ -1264,19 +1264,25 @@ PmicGlinkEvtD0Exit(
     }
 
     PmicGlinkStateNotificationCb(gPmicGlinkMainChannelHandle, context, PmicGlinkChannelLocalDisconnected);
-    if ((gPmicGlinkMainChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
-        && (gPmicGlinkApiInterface.GLinkClose != NULL))
+    if (gPmicGlinkMainChannelHandle != NULL)
     {
-        (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
+        if ((gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+            && (gPmicGlinkApiInterface.GLinkClose != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
+        }
+
         gPmicGlinkMainChannelHandle = NULL;
     }
 
-    if ((gPmicGlinkUlogChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
-        && (gPmicGlinkApiInterface.GLinkClose != NULL))
+    if (gPmicGlinkUlogChannelHandle != NULL)
     {
-        (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
+        if ((gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL)
+            && (gPmicGlinkApiInterface.GLinkClose != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
+        }
+
         gPmicGlinkUlogChannelHandle = NULL;
     }
 
