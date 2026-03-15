@@ -532,6 +532,8 @@ static VOID CrashDump_BugCheckSecondaryDumpDataCallbackRingBuffer(_In_ KBUGCHECK
 static VOID CrashDump_BugCheckSecondaryDumpDataCallbackAdditional(_In_ KBUGCHECK_CALLBACK_REASON Reason, _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record, _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData, _In_ ULONG ReasonSpecificDataLength);
 static VOID CrashDump_BugCheckTriageDumpDataCallback(_In_ KBUGCHECK_CALLBACK_REASON Reason, _In_ PKBUGCHECK_REASON_CALLBACK_RECORD Record, _Inout_updates_bytes_opt_(ReasonSpecificDataLength) PVOID ReasonSpecificData, _In_ ULONG ReasonSpecificDataLength);
 static VOID PmicGlinkEvtDmfDeviceModulesAdd(_In_ WDFQUEUE Queue, _In_ WDFREQUEST Request);
+static NTSTATUS PmicGlinkDeviceCreate(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceInit);
+static NTSTATUS PmicGlinkOnDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_INIT DeviceInit);
 static VOID PmicGlinkOnDriverCleanup(_In_ WDFOBJECT DriverObject);
 static VOID PmicGlinkOnDriverUnload(_In_ WDFDRIVER Driver);
 
@@ -822,7 +824,7 @@ DriverEntry(
     PPMIC_GLINK_DRIVER_CONTEXT driverContext;
     WDF_DRIVER_CONFIG config;
 
-    WDF_DRIVER_CONFIG_INIT(&config, PmicGlinkEvtDeviceAdd);
+    WDF_DRIVER_CONFIG_INIT(&config, PmicGlinkOnDeviceAdd);
     config.EvtDriverUnload = PmicGlinkOnDriverUnload;
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&driverAttributes, PMIC_GLINK_DRIVER_CONTEXT);
     driverAttributes.EvtCleanupCallback = PmicGlinkOnDriverCleanup;
@@ -909,7 +911,7 @@ PmicGlinkEvtDeviceAdd(
         context->DriverContext->BattMngrDevice = device;
     }
 
-    status = RegisterDeviceInterfaces(device, TRUE);
+    status = PmicGlinkQueueInitialize(device);
     if (!NT_SUCCESS(status))
     {
         return status;
@@ -927,7 +929,13 @@ PmicGlinkEvtDeviceAdd(
         return status;
     }
 
-    return PmicGlinkQueueInitialize(device);
+    status = RegisterDeviceInterfaces(device, TRUE);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    return STATUS_SUCCESS;
 }
 
 VOID
@@ -9594,7 +9602,7 @@ PmicGlinkUlog_SendData(
     return status;
 }
 
-NTSTATUS
+static NTSTATUS
 PmicGlinkDeviceCreate(
     _In_ WDFDRIVER Driver,
     _Inout_ PWDFDEVICE_INIT DeviceInit
@@ -9603,7 +9611,7 @@ PmicGlinkDeviceCreate(
     return PmicGlinkEvtDeviceAdd(Driver, DeviceInit);
 }
 
-NTSTATUS
+static NTSTATUS
 PmicGlinkOnDeviceAdd(
     _In_ WDFDRIVER Driver,
     _Inout_ PWDFDEVICE_INIT DeviceInit
