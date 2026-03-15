@@ -7499,14 +7499,15 @@ PmicGlinkRpeADSPStateNotificationCallback(
     if (*CurrentState != 0)
     {
         deviceContext->GlinkLinkStateUp = TRUE;
-        if (!deviceContext->GlinkChannelConnected)
+        if (NT_SUCCESS(PmicGlink_OpenGlinkChannel(deviceContext)))
         {
-            (VOID)PmicGlink_OpenGlinkChannel(deviceContext);
+            deviceContext->GlinkChannelRestart = FALSE;
         }
 
-        if ((deviceContext->UlogInitEn != 0) && !deviceContext->GlinkChannelUlogConnected)
+        if ((deviceContext->UlogInitEn != 0)
+            && NT_SUCCESS(PmicGlinkUlog_OpenGlinkChannelUlog(deviceContext)))
         {
-            (VOID)PmicGlinkUlog_OpenGlinkChannelUlog(deviceContext);
+            deviceContext->GlinkChannelUlogRestart = FALSE;
         }
     }
     else
