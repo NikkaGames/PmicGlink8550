@@ -6811,11 +6811,6 @@ PmicGlinkNotify_Interface_Free(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
-    if (Context == NULL)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
     if (Context->BattMiniDeviceLoaded)
     {
