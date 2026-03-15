@@ -2707,6 +2707,7 @@ PmicGlink_SendData(
     KWAIT_BLOCK waitBlocks[7];
     LONG txCount;
     BOOLEAN matchedResponse;
+    BOOLEAN sawTxNotification;
 
     if ((Buffer == NULL) || (BufferLen == 0))
     {
@@ -2787,12 +2788,6 @@ PmicGlink_SendData(
         return STATUS_UNSUCCESSFUL;
     }
 
-    if (!WaitForRx)
-    {
-        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
-        return status;
-    }
-
     waitObjects[0] = &gPmicGlinkConnectedEvent;
     waitObjects[1] = &gPmicGlinkLocalDisconnectedEvent;
     waitObjects[2] = &gPmicGlinkRemoteDisconnectedEvent;
@@ -2803,6 +2798,7 @@ PmicGlink_SendData(
     waitObjectCount = RTL_NUMBER_OF(waitObjects);
 
     matchedResponse = FALSE;
+    sawTxNotification = FALSE;
     waitCount = 0;
     pollInterval.QuadPart = -200000ll;
     while (waitCount < 5u)
@@ -2823,6 +2819,12 @@ PmicGlink_SendData(
             if ((waitIndex == 1u) || (waitIndex == 2u))
             {
                 status = STATUS_RETRY;
+                break;
+            }
+
+            if (waitIndex == 3u)
+            {
+                sawTxNotification = TRUE;
                 break;
             }
 
@@ -2848,6 +2850,24 @@ PmicGlink_SendData(
         }
 
         waitCount++;
+    }
+
+    if (!NT_SUCCESS(status))
+    {
+        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+        return status;
+    }
+
+    if (!matchedResponse && !sawTxNotification)
+    {
+        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+        return STATUS_TIMEOUT;
+    }
+
+    if (!WaitForRx)
+    {
+        (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
+        return status;
     }
 
     if (!matchedResponse && WaitForRx)
