@@ -2719,14 +2719,7 @@ PmicGlink_SendData(
     }
 
     if (Context->GlinkChannelRestart
-        || !Context->GlinkChannelConnected
-        || !Context->GlinkDeviceLoaded)
-    {
-        return STATUS_RETRY;
-    }
-
-    if ((KeReadStateEvent(&gPmicGlinkLocalDisconnectedEvent) != 0)
-        || (KeReadStateEvent(&gPmicGlinkRemoteDisconnectedEvent) != 0))
+        || !Context->GlinkChannelConnected)
     {
         return STATUS_RETRY;
     }
@@ -9483,8 +9476,7 @@ PmicGlinkUlog_SendData(
     }
 
     if (Context->GlinkChannelUlogRestart
-        || !Context->GlinkChannelUlogConnected
-        || !Context->GlinkDeviceLoaded)
+        || !Context->GlinkChannelUlogConnected)
     {
         return STATUS_RETRY;
     }
