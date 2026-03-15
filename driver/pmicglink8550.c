@@ -473,7 +473,7 @@ static BOOLEAN PmicGlinkNotifyRxIntentReqCb(_In_opt_ PVOID Handle, _In_opt_ PVOI
 static VOID PmicGlinkNotifyRxIntentCb(_In_opt_ PVOID Handle, _In_opt_ PVOID Context, _In_ SIZE_T Size);
 static VOID PmicGlinkTxNotificationCb(_In_opt_ PVOID Handle, _In_opt_ const VOID* Context, _In_opt_ const VOID* PacketContext, _In_opt_ const VOID* Buffer, _In_ SIZE_T BufferSize);
 static VOID PmicGlinkRxNotificationWorkItem(_In_ WDFWORKITEM WorkItem);
-static NTSTATUS PmicGlink_RetrieveRxData(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_reads_bytes_(BufferSize) const UCHAR* Buffer, _In_ SIZE_T BufferSize);
+static NTSTATUS PmicGlink_RetrieveRxData(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode, _Out_opt_ PBOOLEAN ExpectedReceived);
 static VOID PmicGLinkRegisterLinkStateCb(_In_opt_ PMIC_GLINK_LINK_INFO* LinkInfo, _In_opt_ PVOID Context);
 static VOID PmicGlinkStateNotificationCb(_In_opt_ PVOID Handle, _In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PMICGLINK_CHANNEL_EVENT Event);
 static VOID PmicGlinkRpeADSPStateNotificationCallback(_In_opt_ PVOID Context, _In_ ULONG PreviousState, _In_opt_ PULONG CurrentState);
@@ -2416,7 +2416,7 @@ PmicGlinkConsumeCommDataPacket(
     )
 {
     PMICGLINK_COMM_DATA* slot;
-    SIZE_T packetLength;
+    BOOLEAN expectedReceived;
 
     if ((Context == NULL) || (OpCode >= PMICGLINK_COMM_DATA_SLOTS))
     {
@@ -2429,9 +2429,9 @@ PmicGlinkConsumeCommDataPacket(
         return FALSE;
     }
 
-    packetLength = slot->Size;
+    expectedReceived = FALSE;
+    (VOID)PmicGlink_RetrieveRxData(Context, OpCode, &expectedReceived);
     slot->Size = 0u;
-    (VOID)PmicGlink_RetrieveRxData(Context, slot->Buffer, packetLength);
     return TRUE;
 }
 
@@ -7560,19 +7560,37 @@ PmicGlink_ANSIToUniString(
 NTSTATUS
 PmicGlink_RetrieveRxData(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
-    _In_reads_bytes_(BufferSize) const UCHAR* Buffer,
-    _In_ SIZE_T BufferSize
+    _In_ ULONG OpCode,
+    _Out_opt_ PBOOLEAN ExpectedReceived
     )
 {
+    PMICGLINK_COMM_DATA* slot;
+    const UCHAR* Buffer;
+    SIZE_T BufferSize;
+    ULONG packetOpCode;
     ULONG opCode;
     NTSTATUS status;
 
-    if ((Context == NULL) || (Buffer == NULL) || (BufferSize == 0))
+    if (ExpectedReceived != NULL)
+    {
+        *ExpectedReceived = FALSE;
+    }
+
+    if ((Context == NULL) || (OpCode >= PMICGLINK_COMM_DATA_SLOTS))
     {
         return STATUS_INVALID_PARAMETER;
     }
 
+    slot = &Context->CommData[OpCode];
+    Buffer = slot->Buffer;
+    BufferSize = slot->Size;
+    if ((Buffer == NULL) || (BufferSize == 0u))
+    {
+        return STATUS_SUCCESS;
+    }
+
     status = STATUS_SUCCESS;
+    opCode = OpCode;
     Context->LastRxOpcode = 0;
     Context->LastRxStatus = STATUS_SUCCESS;
     Context->LastRxValid = FALSE;
@@ -7604,15 +7622,15 @@ PmicGlink_RetrieveRxData(
         return STATUS_SUCCESS;
     }
 
-    RtlCopyMemory(&opCode, Buffer + sizeof(ULONGLONG), sizeof(opCode));
-    Context->LastRxOpcode = opCode;
-    if (opCode > 0x105u)
+    packetOpCode = 0xFFFFFFFFu;
+    RtlCopyMemory(&packetOpCode, Buffer + sizeof(ULONGLONG), sizeof(packetOpCode));
+    if (packetOpCode != OpCode)
     {
-        Context->LastRxStatus = STATUS_INVALID_DEVICE_REQUEST;
         Context->LastRxValid = FALSE;
-        return STATUS_INVALID_DEVICE_REQUEST;
+        return STATUS_SUCCESS;
     }
 
+    Context->LastRxOpcode = opCode;
     switch (opCode)
     {
     case 0u:
@@ -8003,11 +8021,19 @@ PmicGlink_RetrieveRxData(
 
         Context->LastRxStatus = STATUS_SUCCESS;
         Context->LastRxValid = FALSE;
+        if (ExpectedReceived != NULL)
+        {
+            *ExpectedReceived = FALSE;
+        }
         return STATUS_SUCCESS;
     }
 
     Context->LastRxStatus = status;
     Context->LastRxValid = TRUE;
+    if (ExpectedReceived != NULL)
+    {
+        *ExpectedReceived = TRUE;
+    }
     return status;
 }
 
