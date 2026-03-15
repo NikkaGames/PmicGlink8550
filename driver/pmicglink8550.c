@@ -9544,20 +9544,23 @@ PmicGlinkUlog_SendData(
     Context->LastUlogRxValid = FALSE;
     (VOID)KeClearEvent(&gPmicGlinkUlogTxNotificationEvent);
     (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
-    if ((gPmicGlinkUlogChannelHandle != NULL)
-        && (gPmicGlinkApiInterface.GLinkTx != NULL))
+    if ((gPmicGlinkUlogChannelHandle == NULL)
+        || (gPmicGlinkApiInterface.GLinkTx == NULL))
     {
-        status = gPmicGlinkApiInterface.GLinkTx(
-            gPmicGlinkUlogChannelHandle,
-            (PVOID)(ULONG_PTR)(ULONG)txCount,
-            Buffer,
-            BufferSize,
-            1u);
-        if (status != STATUS_SUCCESS)
-        {
-            (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
-            return STATUS_UNSUCCESSFUL;
-        }
+        (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
+        return STATUS_RETRY;
+    }
+
+    status = gPmicGlinkApiInterface.GLinkTx(
+        gPmicGlinkUlogChannelHandle,
+        (PVOID)(ULONG_PTR)(ULONG)txCount,
+        Buffer,
+        BufferSize,
+        1u);
+    if (status != STATUS_SUCCESS)
+    {
+        (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
+        return STATUS_UNSUCCESSFUL;
     }
 
     waitObjects[0] = &gPmicGlinkUlogTxNotificationEvent;
