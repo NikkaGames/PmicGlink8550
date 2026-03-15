@@ -1641,7 +1641,6 @@ PmicGlinkInterfaceNotificationCallback(
 
             deviceContext->GlinkChannelConnected = FALSE;
             deviceContext->GlinkChannelUlogConnected = FALSE;
-            (VOID)KeClearEvent(&gPmicGlinkConnectedEvent);
         }
 
         return STATUS_SUCCESS;
