@@ -1774,6 +1774,7 @@ PmicGlinkDevice_RegisterForPnPNotifications(
     )
 {
     NTSTATUS status;
+    NTSTATUS unregisterStatus;
     PDRIVER_OBJECT driverObject;
     UNICODE_STRING callbackName;
     OBJECT_ATTRIBUTES callbackAttributes;
@@ -1785,15 +1786,25 @@ PmicGlinkDevice_RegisterForPnPNotifications(
 
     if (!Register)
     {
+        status = STATUS_SUCCESS;
+
         if (Context->GlinkNotificationEntry != NULL)
         {
-            (VOID)IoUnregisterPlugPlayNotification(Context->GlinkNotificationEntry);
+            unregisterStatus = IoUnregisterPlugPlayNotification(Context->GlinkNotificationEntry);
+            if (!NT_SUCCESS(unregisterStatus) && NT_SUCCESS(status))
+            {
+                status = unregisterStatus;
+            }
             Context->GlinkNotificationEntry = NULL;
         }
 
         if (Context->AbdNotificationEntry != NULL)
         {
-            (VOID)IoUnregisterPlugPlayNotification(Context->AbdNotificationEntry);
+            unregisterStatus = IoUnregisterPlugPlayNotification(Context->AbdNotificationEntry);
+            if (!NT_SUCCESS(unregisterStatus) && NT_SUCCESS(status))
+            {
+                status = unregisterStatus;
+            }
             Context->AbdNotificationEntry = NULL;
         }
 
@@ -1806,7 +1817,11 @@ PmicGlinkDevice_RegisterForPnPNotifications(
 
         if (Context->BattMiniNotificationEntry != NULL)
         {
-            (VOID)IoUnregisterPlugPlayNotification(Context->BattMiniNotificationEntry);
+            unregisterStatus = IoUnregisterPlugPlayNotification(Context->BattMiniNotificationEntry);
+            if (!NT_SUCCESS(unregisterStatus) && NT_SUCCESS(status))
+            {
+                status = unregisterStatus;
+            }
             Context->BattMiniNotificationEntry = NULL;
         }
 
@@ -1875,7 +1890,7 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         Context->GlinkChannelRestart = FALSE;
         Context->GlinkChannelUlogConnected = FALSE;
         Context->GlinkChannelUlogRestart = FALSE;
-        return STATUS_SUCCESS;
+        return status;
     }
 
     if (Context->Device == NULL)
