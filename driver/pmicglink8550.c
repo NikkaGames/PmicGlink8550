@@ -1095,6 +1095,7 @@ PmicGlinkEvtReleaseHardware(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    ULONG opCode;
 
     UNREFERENCED_PARAMETER(ResourcesTranslated);
 
@@ -1132,6 +1133,21 @@ PmicGlinkEvtReleaseHardware(
     if (gCrashDumpContext == context)
     {
         gCrashDumpContext = NULL;
+    }
+
+    for (opCode = 0; opCode < PMICGLINK_COMM_DATA_SLOTS; opCode++)
+    {
+        PMICGLINK_COMM_DATA* slot;
+
+        slot = &context->CommData[opCode];
+        if (slot->Memory != NULL)
+        {
+            WdfObjectDelete(slot->Memory);
+            slot->Memory = NULL;
+        }
+
+        slot->Buffer = NULL;
+        slot->Size = 0u;
     }
 
     return STATUS_SUCCESS;
