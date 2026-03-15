@@ -7517,11 +7517,14 @@ PmicGlinkRxNotificationWorkItem(
 {
     WDFOBJECT parentObject;
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    PUSHORT rxWords;
 
     parentObject = WdfWorkItemGetParentObject(WorkItem);
     context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
     if (context != NULL)
     {
+        rxWords = (PUSHORT)gPmicGlinkUsbcNotification.AsUINT8;
+        rxWords[5] = 0u;
         (VOID)PmicGlink_RetrieveRxData(
             context,
             gPmicGlinkUsbcNotification.AsUINT8,
