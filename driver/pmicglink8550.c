@@ -2482,7 +2482,7 @@ PmicGlink_OpenGlinkChannel(
 
     if (gPmicGlinkApiInterface.GLinkOpen == NULL)
     {
-        return STATUS_NOT_SUPPORTED;
+        return STATUS_SUCCESS;
     }
 
     channelHandle = NULL;
@@ -9271,7 +9271,7 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
 
     if (gPmicGlinkApiInterface.GLinkOpen == NULL)
     {
-        return STATUS_NOT_SUPPORTED;
+        return STATUS_SUCCESS;
     }
 
     channelHandle = NULL;
