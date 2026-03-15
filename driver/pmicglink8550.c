@@ -1608,6 +1608,8 @@ PmicGlinkInterfaceNotificationCallback(
                 gPmicGlinkUlogChannelHandle = NULL;
             }
 
+            RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+
             deviceContext->GlinkChannelConnected = FALSE;
             deviceContext->GlinkChannelRestart = TRUE;
             deviceContext->GlinkChannelUlogConnected = FALSE;
