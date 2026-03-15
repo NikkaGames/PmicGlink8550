@@ -2820,6 +2820,11 @@ PmicGlink_SendData(
         return STATUS_RETRY;
     }
 
+    if (gPmicGlinkApiInterface.GLinkTx == NULL)
+    {
+        return STATUS_RETRY;
+    }
+
     channelHandle = gPmicGlinkMainChannelHandle;
     if (channelHandle == NULL)
     {
@@ -9551,6 +9556,11 @@ PmicGlinkUlog_SendData(
     }
 
     if (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL)
+    {
+        return STATUS_RETRY;
+    }
+
+    if (gPmicGlinkApiInterface.GLinkTx == NULL)
     {
         return STATUS_RETRY;
     }
