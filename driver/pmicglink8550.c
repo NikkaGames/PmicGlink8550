@@ -1103,7 +1103,6 @@ PmicGlinkEvtReleaseHardware(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT context;
-    ULONG currentState;
 
     UNREFERENCED_PARAMETER(ResourcesTranslated);
 
@@ -1131,8 +1130,6 @@ PmicGlinkEvtReleaseHardware(
 
     RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
 
-    currentState = 0u;
-    PmicGlinkRpeADSPStateNotificationCallback(Device, 0u, &currentState);
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
     if (context->UlogTimer != NULL)
     {
