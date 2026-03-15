@@ -1126,6 +1126,8 @@ PmicGlinkEvtReleaseHardware(
         gPmicGlinkUlogChannelHandle = NULL;
     }
 
+    RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+
     currentState = 0u;
     PmicGlinkRpeADSPStateNotificationCallback(Device, 0u, &currentState);
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
