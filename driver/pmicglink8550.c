@@ -2707,6 +2707,11 @@ PmicGlink_SendData(
         return STATUS_RETRY;
     }
 
+    if (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL)
+    {
+        return STATUS_RETRY;
+    }
+
     (VOID)KeWaitForSingleObject(&gPmicGlinkTxSync, Executive, KernelMode, FALSE, NULL);
 
     waitCount = 0;
@@ -9419,6 +9424,11 @@ PmicGlinkUlog_SendData(
 
     if (Context->GlinkChannelUlogRestart
         || !Context->GlinkChannelUlogConnected)
+    {
+        return STATUS_RETRY;
+    }
+
+    if (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL)
     {
         return STATUS_RETRY;
     }
