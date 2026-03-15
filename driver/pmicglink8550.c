@@ -1114,13 +1114,15 @@ PmicGlinkEvtReleaseHardware(
         gPmicGlinkLinkStateHandle = NULL;
     }
 
-    if (gPmicGlinkMainChannelHandle != NULL)
+    if ((gPmicGlinkMainChannelHandle != NULL)
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
         gPmicGlinkMainChannelHandle = NULL;
     }
 
-    if (gPmicGlinkUlogChannelHandle != NULL)
+    if ((gPmicGlinkUlogChannelHandle != NULL)
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
         gPmicGlinkUlogChannelHandle = NULL;
@@ -1191,13 +1193,15 @@ PmicGlinkEvtD0Exit(
     }
 
     PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
-    if (gPmicGlinkMainChannelHandle != NULL)
+    if ((gPmicGlinkMainChannelHandle != NULL)
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
         gPmicGlinkMainChannelHandle = NULL;
     }
 
-    if (gPmicGlinkUlogChannelHandle != NULL)
+    if ((gPmicGlinkUlogChannelHandle != NULL)
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
         gPmicGlinkUlogChannelHandle = NULL;
@@ -1598,13 +1602,15 @@ PmicGlinkInterfaceNotificationCallback(
         }
         else
         {
-            if (gPmicGlinkMainChannelHandle != NULL)
+            if ((gPmicGlinkMainChannelHandle != NULL)
+                && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
             {
                 (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
                 gPmicGlinkMainChannelHandle = NULL;
             }
 
-            if (gPmicGlinkUlogChannelHandle != NULL)
+            if ((gPmicGlinkUlogChannelHandle != NULL)
+                && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
             {
                 (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
                 gPmicGlinkUlogChannelHandle = NULL;
@@ -2630,7 +2636,8 @@ PmicGlinkStateNotificationCb(
         (VOID)KeClearEvent(&gPmicGlinkLocalDisconnectedEvent);
         (VOID)KeClearEvent(&gPmicGlinkRemoteDisconnectedEvent);
         (VOID)KeSetEvent(&gPmicGlinkConnectedEvent, IO_NO_INCREMENT, FALSE);
-        if (gPmicGlinkMainChannelHandle != NULL)
+        if ((gPmicGlinkMainChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
         {
             (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(gPmicGlinkMainChannelHandle, Context, 4096u);
         }
@@ -2649,7 +2656,8 @@ PmicGlinkStateNotificationCb(
         break;
 
     case PmicGlinkChannelRemoteDisconnected:
-        if (gPmicGlinkMainChannelHandle != NULL)
+        if ((gPmicGlinkMainChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
         {
             (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
 
@@ -8395,7 +8403,8 @@ PmicGlinkRxNotificationCb(
         }
     }
 
-    if (gPmicGlinkMainChannelHandle != NULL)
+    if ((gPmicGlinkMainChannelHandle != NULL)
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkRxDone(gPmicGlinkMainChannelHandle, Buffer, TRUE);
     }
@@ -8692,7 +8701,8 @@ PmicGlinkUlogRxNotificationCb(
         }
     }
 
-    if (gPmicGlinkUlogChannelHandle != NULL)
+    if ((gPmicGlinkUlogChannelHandle != NULL)
+        && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
         (VOID)gPmicGlinkApiInterface.GLinkRxDone(gPmicGlinkUlogChannelHandle, Buffer, TRUE);
     }
@@ -9054,7 +9064,8 @@ PmicGlinkUlogStateNotificationCb(
         deviceContext->GlinkChannelUlogFirstConnect = TRUE;
         deviceContext->GlinkChannelUlogConnected = TRUE;
         deviceContext->GlinkChannelUlogRestart = FALSE;
-        if (gPmicGlinkUlogChannelHandle != NULL)
+        if ((gPmicGlinkUlogChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
         {
             (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(gPmicGlinkUlogChannelHandle, deviceContext, 12288u);
         }
@@ -9072,7 +9083,8 @@ PmicGlinkUlogStateNotificationCb(
         break;
 
     case PmicGlinkChannelRemoteDisconnected:
-        if (gPmicGlinkUlogChannelHandle != NULL)
+        if ((gPmicGlinkUlogChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
         {
             (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
 
