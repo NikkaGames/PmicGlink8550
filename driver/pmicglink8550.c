@@ -468,6 +468,10 @@ static NTSTATUS PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEX
 static VOID PmicGlinkNotifyBattMiniStatusFromGlink(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG NotificationData);
 static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
+static VOID PmicGlinkCloseIoTargetIfOpen(_Inout_ WDFIOTARGET* IoTarget);
+static VOID PmicGlinkClearAbdAttachment(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN UnregisterConnections);
+static VOID PmicGlinkClearBattMiniAttachment(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static NTSTATUS PmicGlinkUnregisterPnPNotificationEntry(_Inout_ PVOID* Entry);
 static NTSTATUS PmicGlinkAbdUpdateConnections(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN Register);
 static VOID PmicGlinkInitAbdConnections(VOID);
 static NTSTATUS PmicGlinkEvaluateAbdConnectionCount(_In_ WDFDEVICE Device);
@@ -1455,10 +1459,8 @@ RegisterDeviceInterfaces(
             WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_BATT_MNGR, NULL, FALSE);
             WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL, FALSE);
 
-            if (context->ABDAttached && (context->AbdIoTarget != NULL))
-            {
-                (VOID)PmicGlinkAbdUpdateConnections(context, FALSE);
-            }
+            PmicGlinkClearAbdAttachment(context, TRUE);
+            PmicGlinkClearBattMiniAttachment(context);
 
             context->DdiInterface.PmicGlinkUCSIAlertCallback = NULL;
             context->DeviceInterfacesRegistered = FALSE;
@@ -1681,6 +1683,77 @@ PmicGlinkEnsureBclCriticalCallback(
     return status;
 }
 
+static VOID
+PmicGlinkCloseIoTargetIfOpen(
+    _Inout_ WDFIOTARGET* IoTarget
+    )
+{
+    if ((IoTarget != NULL) && (*IoTarget != NULL))
+    {
+        WdfIoTargetClose(*IoTarget);
+    }
+}
+
+static VOID
+PmicGlinkClearAbdAttachment(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ BOOLEAN UnregisterConnections
+    )
+{
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    if (UnregisterConnections && Context->ABDAttached && (Context->AbdIoTarget != NULL))
+    {
+        (VOID)PmicGlinkAbdUpdateConnections(Context, FALSE);
+    }
+
+    PmicGlinkCloseIoTargetIfOpen(&Context->AbdIoTarget);
+
+    Context->ABDAttached = FALSE;
+    Context->AllReqIntfArrived = FALSE;
+    Context->BclCriticalCallbackEnabled = FALSE;
+}
+
+static VOID
+PmicGlinkClearBattMiniAttachment(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    if ((Context == NULL) || (Context->BattMiniNotifyLock == NULL))
+    {
+        return;
+    }
+
+    WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+    if (Context->BattMiniDeviceLoaded)
+    {
+        PmicGlinkCloseIoTargetIfOpen(&Context->BattMiniIoTarget);
+    }
+    Context->BattMiniDeviceLoaded = FALSE;
+    Context->NotificationFlag = FALSE;
+    WdfWaitLockRelease(Context->BattMiniNotifyLock);
+}
+
+static NTSTATUS
+PmicGlinkUnregisterPnPNotificationEntry(
+    _Inout_ PVOID* Entry
+    )
+{
+    NTSTATUS status;
+
+    if ((Entry == NULL) || (*Entry == NULL))
+    {
+        return STATUS_SUCCESS;
+    }
+
+    status = IoUnregisterPlugPlayNotification(*Entry);
+    *Entry = NULL;
+    return status;
+}
+
 static NTSTATUS
 PmicGlinkInterfaceNotificationCallback(
     _In_ PVOID NotificationStructure,
@@ -1797,12 +1870,7 @@ PmicGlinkInterfaceNotificationCallback(
         }
         else
         {
-            if (deviceContext->AbdIoTarget != NULL)
-            {
-                WdfIoTargetClose(deviceContext->AbdIoTarget);
-            }
-
-            deviceContext->ABDAttached = FALSE;
+            PmicGlinkClearAbdAttachment(deviceContext, FALSE);
         }
 
         deviceContext->AllReqIntfArrived = (deviceContext->GlinkDeviceLoaded && deviceContext->ABDAttached) ? TRUE : FALSE;
@@ -1885,37 +1953,42 @@ PmicGlinkDevice_RegisterForPnPNotifications(
 
         PmicGlinkResetApiInterface();
 
-        if (Context->GlinkNotificationEntry != NULL)
+        PmicGlinkClearAbdAttachment(Context, TRUE);
+        PmicGlinkClearBattMiniAttachment(Context);
+        Context->GlinkDeviceLoaded = FALSE;
+        Context->GlinkLinkStateUp = FALSE;
+        Context->AllReqIntfArrived = FALSE;
+
+        unregisterStatus = PmicGlinkUnregisterPnPNotificationEntry(&Context->GlinkNotificationEntry);
+        if (!NT_SUCCESS(unregisterStatus))
         {
-            unregisterStatus = IoUnregisterPlugPlayNotification(Context->GlinkNotificationEntry);
-            Context->GlinkNotificationEntry = NULL;
-            if (!NT_SUCCESS(unregisterStatus))
-            {
-                return unregisterStatus;
-            }
+            return unregisterStatus;
         }
 
-        if (Context->AbdNotificationEntry != NULL)
+        unregisterStatus = PmicGlinkUnregisterPnPNotificationEntry(&Context->AbdNotificationEntry);
+        if (!NT_SUCCESS(unregisterStatus))
         {
-            unregisterStatus = IoUnregisterPlugPlayNotification(Context->AbdNotificationEntry);
-            Context->AbdNotificationEntry = NULL;
-            if (!NT_SUCCESS(unregisterStatus))
-            {
-                return unregisterStatus;
-            }
+            return unregisterStatus;
         }
 
-        WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-        if (Context->BattMiniNotificationEntry != NULL)
+        if (Context->BattMiniNotifyLock != NULL)
         {
-            unregisterStatus = IoUnregisterPlugPlayNotification(Context->BattMiniNotificationEntry);
+            WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+            unregisterStatus = PmicGlinkUnregisterPnPNotificationEntry(&Context->BattMiniNotificationEntry);
             if (!NT_SUCCESS(unregisterStatus) && NT_SUCCESS(status))
             {
                 status = unregisterStatus;
             }
-            Context->BattMiniNotificationEntry = NULL;
+            WdfWaitLockRelease(Context->BattMiniNotifyLock);
         }
-        WdfWaitLockRelease(Context->BattMiniNotifyLock);
+        else
+        {
+            unregisterStatus = PmicGlinkUnregisterPnPNotificationEntry(&Context->BattMiniNotificationEntry);
+            if (!NT_SUCCESS(unregisterStatus) && NT_SUCCESS(status))
+            {
+                status = unregisterStatus;
+            }
+        }
 
         return status;
     }
@@ -7198,14 +7271,7 @@ PmicGlinkNotify_Interface_Free(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
-    WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-    if (Context->BattMiniDeviceLoaded)
-    {
-        WdfIoTargetClose(Context->BattMiniIoTarget);
-    }
-    Context->BattMiniDeviceLoaded = FALSE;
-    WdfWaitLockRelease(Context->BattMiniNotifyLock);
-
+    PmicGlinkClearBattMiniAttachment(Context);
     return STATUS_SUCCESS;
 }
 
