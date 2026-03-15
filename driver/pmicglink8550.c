@@ -936,11 +936,6 @@ PmicGlinkEvtD0Entry(
     context = PmicGlinkGetDeviceContext(Device);
     context->Hibernate = FALSE;
 
-    if (!context->GlinkChannelConnected)
-    {
-        (VOID)PmicGlink_OpenGlinkChannel(context);
-    }
-
     return STATUS_SUCCESS;
 }
 
@@ -954,9 +949,13 @@ PmicGlinkEvtD0Exit(
 
     context = PmicGlinkGetDeviceContext(Device);
 
-    if (TargetState == WdfPowerDeviceD3Final)
+    if (TargetState == WdfPowerDeviceD3)
     {
         context->Hibernate = TRUE;
+    }
+    else if (TargetState != WdfPowerDeviceD3Final)
+    {
+        return STATUS_SUCCESS;
     }
 
     PmicGlinkStateNotificationCb(NULL, context, PmicGlinkChannelLocalDisconnected);
@@ -7598,7 +7597,9 @@ PmicGlinkAppStateNotificationCallback(
     _In_opt_ PULONG CurrentState
     )
 {
-    PmicGlinkRpeADSPStateNotificationCallback(Context, PreviousState, CurrentState);
+    UNREFERENCED_PARAMETER(Context);
+    UNREFERENCED_PARAMETER(PreviousState);
+    UNREFERENCED_PARAMETER(CurrentState);
 }
 
 VOID
