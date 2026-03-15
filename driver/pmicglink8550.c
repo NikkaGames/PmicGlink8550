@@ -1,6 +1,7 @@
 #include "pmicglink8550.h"
 
 #include <initguid.h>
+#include <wdmguid.h>
 #include <acpiioct.h>
 
 DEFINE_GUID(
@@ -183,6 +184,7 @@ static CHAR gPmicGlinkUlogInitData[8192];
 static ULONG gPmicGlinkUlogDataLength;
 static ULONG gPmicGlinkUlogInitDataLength;
 static UCHAR gPmicGlinkUlogInitPrinted;
+static ACPI_INTERFACE_STANDARD2 gPmicGlinkAcpiInterface;
 static PPMIC_GLINK_DEVICE_CONTEXT gCrashDumpContext;
 static UCHAR gCrashDumpBugCheckComponent[] = "PmicGlinkCrashDump";
 static PVOID gKeInitializeTriageDumpDataArray;
@@ -883,6 +885,31 @@ PmicGlinkEvtPrepareHardware(
     context = PmicGlinkGetDeviceContext(Device);
     context->GlinkDeviceLoaded = TRUE;
     context->AllReqIntfArrived = TRUE;
+    RtlZeroMemory(&gPmicGlinkAcpiInterface, sizeof(gPmicGlinkAcpiInterface));
+    status = WdfFdoQueryForInterface(
+        Device,
+        &GUID_ACPI_INTERFACE_STANDARD2,
+        (PINTERFACE)&gPmicGlinkAcpiInterface,
+        sizeof(gPmicGlinkAcpiInterface),
+        1,
+        NULL);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    if (gPmicGlinkAcpiInterface.RegisterForDeviceNotifications != NULL)
+    {
+        status = gPmicGlinkAcpiInterface.RegisterForDeviceNotifications(
+            gPmicGlinkAcpiInterface.Context,
+            PmicGlinkPlatformUsbc_AcpiNotificationHandler,
+            context);
+        if (!NT_SUCCESS(status))
+        {
+            return status;
+        }
+    }
+
     currentState = 1u;
     PmicGlinkRpeADSPStateNotificationCallback(context, 0u, &currentState);
 
