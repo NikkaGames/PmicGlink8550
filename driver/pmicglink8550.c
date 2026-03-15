@@ -1785,21 +1785,21 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         if (Context->GlinkNotificationEntry != NULL)
         {
             unregisterStatus = IoUnregisterPlugPlayNotification(Context->GlinkNotificationEntry);
-            if (!NT_SUCCESS(unregisterStatus) && NT_SUCCESS(status))
-            {
-                status = unregisterStatus;
-            }
             Context->GlinkNotificationEntry = NULL;
+            if (!NT_SUCCESS(unregisterStatus))
+            {
+                return unregisterStatus;
+            }
         }
 
         if (Context->AbdNotificationEntry != NULL)
         {
             unregisterStatus = IoUnregisterPlugPlayNotification(Context->AbdNotificationEntry);
-            if (!NT_SUCCESS(unregisterStatus) && NT_SUCCESS(status))
-            {
-                status = unregisterStatus;
-            }
             Context->AbdNotificationEntry = NULL;
+            if (!NT_SUCCESS(unregisterStatus))
+            {
+                return unregisterStatus;
+            }
         }
 
         if (Context->ABDAttached && (Context->AbdIoTarget != NULL))
@@ -8317,8 +8317,7 @@ PmicGlink_RetrieveRxData(
                 Context->EventID = notificationData;
                 if ((notificationData >> 16) == 1u)
                 {
-                    if (Context->BclCriticalCallbackEnabled
-                        && (Context->BclCriticalCallbackObject != NULL))
+                    if (Context->BclCriticalCallbackObject != NULL)
                     {
                         ULONG bclArgument;
 
