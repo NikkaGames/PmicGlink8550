@@ -9571,6 +9571,11 @@ PmicGlinkUlog_SendData(
         waitCount++;
     }
 
+    if (!matchedResponse && (waitCount >= 50u))
+    {
+        gPmicGlinkUlogRxInProgress = 0;
+    }
+
     if (!matchedResponse)
     {
         waitCount = 0;
