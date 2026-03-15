@@ -2630,7 +2630,7 @@ PmicGlink_SendData(
         Buffer,
         Buffer,
         BufferLen,
-        0u);
+        1u);
     if (!NT_SUCCESS(status))
     {
         (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
@@ -7921,6 +7921,8 @@ PmicGlinkNotifyRxIntentReqCb(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+    NTSTATUS status;
+    SIZE_T intentSize;
 
     UNREFERENCED_PARAMETER(Handle);
 
@@ -7932,7 +7934,11 @@ PmicGlinkNotifyRxIntentReqCb(
 
     if (RequestedSize == 0u)
     {
-        return FALSE;
+        intentSize = 4096u;
+    }
+    else
+    {
+        intentSize = RequestedSize;
     }
 
     if (deviceContext->GlinkChannelRestart || !deviceContext->GlinkChannelConnected)
@@ -7940,7 +7946,18 @@ PmicGlinkNotifyRxIntentReqCb(
         return FALSE;
     }
 
-    return TRUE;
+    if (!gPmicGlinkApiInterfaceValid
+        || (gPmicGlinkMainChannelHandle == NULL)
+        || (gPmicGlinkApiInterface.GLinkQueueRxIntent == NULL))
+    {
+        return FALSE;
+    }
+
+    status = gPmicGlinkApiInterface.GLinkQueueRxIntent(
+        gPmicGlinkMainChannelHandle,
+        deviceContext,
+        intentSize);
+    return NT_SUCCESS(status) ? TRUE : FALSE;
 }
 
 VOID
@@ -8554,6 +8571,8 @@ PmicGlinkUlogNotifyRxIntentReqCb(
     )
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
+    NTSTATUS status;
+    SIZE_T intentSize;
 
     UNREFERENCED_PARAMETER(Handle);
     
@@ -8565,7 +8584,11 @@ PmicGlinkUlogNotifyRxIntentReqCb(
 
     if (RequestedSize == 0u)
     {
-        return FALSE;
+        intentSize = 12288u;
+    }
+    else
+    {
+        intentSize = RequestedSize;
     }
 
     if (deviceContext->GlinkChannelUlogRestart || !deviceContext->GlinkChannelUlogConnected)
@@ -8573,7 +8596,18 @@ PmicGlinkUlogNotifyRxIntentReqCb(
         return FALSE;
     }
 
-    return TRUE;
+    if (!gPmicGlinkApiInterfaceValid
+        || (gPmicGlinkUlogChannelHandle == NULL)
+        || (gPmicGlinkApiInterface.GLinkQueueRxIntent == NULL))
+    {
+        return FALSE;
+    }
+
+    status = gPmicGlinkApiInterface.GLinkQueueRxIntent(
+        gPmicGlinkUlogChannelHandle,
+        deviceContext,
+        intentSize);
+    return NT_SUCCESS(status) ? TRUE : FALSE;
 }
 
 VOID
@@ -8928,7 +8962,7 @@ PmicGlinkUlog_SendData(
             Buffer,
             Buffer,
             BufferSize,
-            0u);
+            1u);
         if (!NT_SUCCESS(status))
         {
             (VOID)InterlockedExchange(&gPmicGlinkUlogRxInProgress, 0);
