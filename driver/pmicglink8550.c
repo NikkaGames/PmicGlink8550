@@ -2259,6 +2259,8 @@ PmicGlink_SendData(
     Context->LastRxOpcode = 0;
     Context->LastRxStatus = STATUS_SUCCESS;
     Context->LastRxValid = FALSE;
+    (VOID)KeClearEvent(&gPmicGlinkTxNotificationEvent);
+    (VOID)KeClearEvent(&gPmicGlinkRxNotificationEvent);
 
     if (!WaitForRx)
     {
@@ -8277,6 +8279,8 @@ PmicGlinkUlog_SendData(
     Context->LastUlogRxOpcode = 0;
     Context->LastUlogRxStatus = STATUS_SUCCESS;
     Context->LastUlogRxValid = FALSE;
+    (VOID)KeClearEvent(&gPmicGlinkUlogTxNotificationEvent);
+    (VOID)KeClearEvent(&gPmicGlinkUlogRxNotificationEvent);
 
     matchedResponse = FALSE;
     waitCount = 0;
