@@ -1305,7 +1305,7 @@ PmicGlinkEvtSelfManagedIoSuspend(
     ioTarget = WdfDeviceGetIoTarget(Device);
     if (ioTarget == NULL)
     {
-        return STATUS_UNSUCCESSFUL;
+        return STATUS_INVALID_PARAMETER;
     }
 
     WdfIoTargetStop(ioTarget, WdfIoTargetCancelSentIo);
@@ -1789,10 +1789,7 @@ PmicGlinkInterfaceNotificationCallback(
     if (RtlCompareMemory(&notification->InterfaceClassGuid, &GUID_DEVINTERFACE_PMIC_BATT_MINI, sizeof(GUID)) == sizeof(GUID))
     {
         status = STATUS_SUCCESS;
-        if (deviceContext->BattMiniNotifyLock != NULL)
-        {
-            WdfWaitLockAcquire(deviceContext->BattMiniNotifyLock, NULL);
-        }
+        WdfWaitLockAcquire(deviceContext->BattMiniNotifyLock, NULL);
 
         if (arrival)
         {
@@ -1837,10 +1834,7 @@ PmicGlinkInterfaceNotificationCallback(
             deviceContext->BclCriticalCallbackEnabled = FALSE;
         }
 
-        if (deviceContext->BattMiniNotifyLock != NULL)
-        {
-            WdfWaitLockRelease(deviceContext->BattMiniNotifyLock);
-        }
+        WdfWaitLockRelease(deviceContext->BattMiniNotifyLock);
 
         return status;
     }
@@ -1904,18 +1898,15 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             Context->BattMiniNotificationEntry = NULL;
         }
 
-        if (Context->BattMiniNotifyLock != NULL)
+        WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+        if (Context->BattMiniDeviceLoaded)
         {
-            WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-            if (Context->BattMiniDeviceLoaded)
-            {
-                WdfIoTargetClose(Context->BattMiniIoTarget);
-            }
-
-            Context->BattMiniDeviceLoaded = FALSE;
-            Context->NotificationFlag = FALSE;
-            WdfWaitLockRelease(Context->BattMiniNotifyLock);
+            WdfIoTargetClose(Context->BattMiniIoTarget);
         }
+
+        Context->BattMiniDeviceLoaded = FALSE;
+        Context->NotificationFlag = FALSE;
+        WdfWaitLockRelease(Context->BattMiniNotifyLock);
 
         if ((gPmicGlinkLinkStateHandle != NULL)
             && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
@@ -3861,10 +3852,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         return;
     }
 
-    if (Context->BattMiniNotifyLock != NULL)
-    {
-        WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-    }
+    WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
 
     if (Context->BattMiniDeviceLoaded)
     {
@@ -3907,10 +3895,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         }
     }
 
-    if (Context->BattMiniNotifyLock != NULL)
-    {
-        WdfWaitLockRelease(Context->BattMiniNotifyLock);
-    }
+    WdfWaitLockRelease(Context->BattMiniNotifyLock);
 }
 
 static VOID
@@ -7223,10 +7208,7 @@ HandleLegacyBattMngrRequest(
         PmicGlinkNotify_PingBattMiniClass(Context);
         if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) != 0)
         {
-            if (Context->BattMiniNotifyLock != NULL)
-            {
-                WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-            }
+            WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
 
             if (Context->BattMiniDeviceLoaded)
             {
@@ -7250,10 +7232,7 @@ HandleLegacyBattMngrRequest(
                 }
             }
 
-            if (Context->BattMiniNotifyLock != NULL)
-            {
-                WdfWaitLockRelease(Context->BattMiniNotifyLock);
-            }
+            WdfWaitLockRelease(Context->BattMiniNotifyLock);
         }
 
         if ((Context->LegacyStatusCriteria.batt_notify_criteria.high_capacity & 0xFFu) == 0x83u)
@@ -7264,10 +7243,7 @@ HandleLegacyBattMngrRequest(
             PmicGlinkNotify_PingBattMiniClass(Context);
             if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) != 0)
             {
-                if (Context->BattMiniNotifyLock != NULL)
-                {
-                    WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-                }
+                WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
 
                 if (Context->BattMiniDeviceLoaded)
                 {
@@ -7291,10 +7267,7 @@ HandleLegacyBattMngrRequest(
                     }
                 }
 
-                if (Context->BattMiniNotifyLock != NULL)
-                {
-                    WdfWaitLockRelease(Context->BattMiniNotifyLock);
-                }
+                WdfWaitLockRelease(Context->BattMiniNotifyLock);
             }
         }
 
