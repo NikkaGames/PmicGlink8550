@@ -1204,7 +1204,8 @@ PmicGlinkEvtD0Exit(
     context->GlinkChannelUlogConnected = FALSE;
     context->GlinkChannelUlogRestart = FALSE;
 
-    if ((gPmicGlinkLinkStateHandle != NULL)
+    if (context->RpeInitialized
+        && (gPmicGlinkLinkStateHandle != NULL)
         && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
     {
         status = gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
@@ -1212,6 +1213,10 @@ PmicGlinkEvtD0Exit(
         {
             gPmicGlinkLinkStateHandle = NULL;
             context->RpeInitialized = FALSE;
+            if (!context->Hibernate)
+            {
+                RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+            }
         }
     }
 
