@@ -924,18 +924,8 @@ PmicGlinkEvtDeviceAdd(
     }
 
     status = PmicGlinkDevice_RegisterForPnPNotifications(context, TRUE);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    status = RegisterDeviceInterfaces(device, TRUE);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    return STATUS_SUCCESS;
+    (VOID)RegisterDeviceInterfaces(device, TRUE);
+    return status;
 }
 
 VOID
