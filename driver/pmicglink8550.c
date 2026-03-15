@@ -1638,9 +1638,6 @@ PmicGlinkInterfaceNotificationCallback(
             }
 
             RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
-
-            deviceContext->GlinkChannelConnected = FALSE;
-            deviceContext->GlinkChannelUlogConnected = FALSE;
         }
 
         return STATUS_SUCCESS;
