@@ -8383,55 +8383,58 @@ PmicGlinkRxNotificationCb(
     UNREFERENCED_PARAMETER(IntentUsed);
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
-    if ((deviceContext == NULL) || (Buffer == NULL) || (BufferSize == 0u))
+    if (deviceContext == NULL)
     {
         return;
     }
 
     messageOp = MAXULONG;
     queueWorkItem = FALSE;
-    if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
+    if ((Buffer != NULL) && (BufferSize > 0u))
     {
-        RtlCopyMemory(
-            &messageOp,
-            (const UCHAR*)Buffer + sizeof(ULONGLONG),
-            sizeof(messageOp));
-    }
-
-    if (messageOp < PMICGLINK_COMM_DATA_SLOTS)
-    {
-        status = PmicGlinkEnsureCommDataBuffer(deviceContext, messageOp, BufferSize);
-        if (NT_SUCCESS(status))
+        if (BufferSize >= (sizeof(ULONGLONG) + sizeof(ULONG)))
         {
-            commSlot = &deviceContext->CommData[messageOp];
-            if (deviceContext->StateLock != NULL)
-            {
-                WdfSpinLockAcquire(deviceContext->StateLock);
-            }
+            RtlCopyMemory(
+                &messageOp,
+                (const UCHAR*)Buffer + sizeof(ULONGLONG),
+                sizeof(messageOp));
+        }
 
-            copySize = BufferSize;
-            RtlZeroMemory(commSlot->Buffer, copySize);
-            RtlCopyMemory(commSlot->Buffer, Buffer, copySize);
-            if (copySize >= (sizeof(USHORT) * 6u))
+        if (messageOp < PMICGLINK_COMM_DATA_SLOTS)
+        {
+            status = PmicGlinkEnsureCommDataBuffer(deviceContext, messageOp, BufferSize);
+            if (NT_SUCCESS(status))
             {
-                ((PUSHORT)commSlot->Buffer)[5] = 0u;
-            }
+                commSlot = &deviceContext->CommData[messageOp];
+                if (deviceContext->StateLock != NULL)
+                {
+                    WdfSpinLockAcquire(deviceContext->StateLock);
+                }
 
-            commSlot->Size = (copySize > 0xFFFFu) ? 0xFFFFu : (USHORT)copySize;
-            queueWorkItem = ((messageOp == 7u)
-                || (messageOp == 19u)
-                || (messageOp == 22u)
-                || (messageOp == 130u)
-                || (messageOp == 259u));
+                copySize = BufferSize;
+                RtlZeroMemory(commSlot->Buffer, copySize);
+                RtlCopyMemory(commSlot->Buffer, Buffer, copySize);
+                if (copySize >= (sizeof(USHORT) * 6u))
+                {
+                    ((PUSHORT)commSlot->Buffer)[5] = 0u;
+                }
 
-            if (deviceContext->StateLock != NULL)
-            {
-                WdfSpinLockRelease(deviceContext->StateLock);
-            }
+                commSlot->Size = (copySize > 0xFFFFu) ? 0xFFFFu : (USHORT)copySize;
+                queueWorkItem = ((messageOp == 7u)
+                    || (messageOp == 19u)
+                    || (messageOp == 22u)
+                    || (messageOp == 130u)
+                    || (messageOp == 259u));
 
-            if (!queueWorkItem)
-            {
-                (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
+                if (deviceContext->StateLock != NULL)
+                {
+                    WdfSpinLockRelease(deviceContext->StateLock);
+                }
+
+                if (!queueWorkItem)
+                {
+                    (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
+                }
             }
         }
     }
