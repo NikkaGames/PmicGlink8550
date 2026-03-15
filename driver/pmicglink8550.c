@@ -7964,11 +7964,25 @@ PmicGlinkRxNotificationCb(
             : sizeof(gPmicGlinkMainRxPacket);
         RtlZeroMemory(gPmicGlinkMainRxPacket, sizeof(gPmicGlinkMainRxPacket));
         RtlCopyMemory(gPmicGlinkMainRxPacket, Buffer, copySize);
+        if (copySize >= (sizeof(USHORT) * 6u))
+        {
+            ((PUSHORT)gPmicGlinkMainRxPacket)[5] = 0u;
+        }
         gPmicGlinkMainRxPacketLength = copySize;
     }
     else
     {
-        (VOID)PmicGlink_RetrieveRxData(deviceContext, (const UCHAR*)Buffer, BufferSize);
+        copySize = (BufferSize < sizeof(gPmicGlinkMainRxPacket))
+            ? BufferSize
+            : sizeof(gPmicGlinkMainRxPacket);
+        RtlZeroMemory(gPmicGlinkMainRxPacket, sizeof(gPmicGlinkMainRxPacket));
+        RtlCopyMemory(gPmicGlinkMainRxPacket, Buffer, copySize);
+        if (copySize >= (sizeof(USHORT) * 6u))
+        {
+            ((PUSHORT)gPmicGlinkMainRxPacket)[5] = 0u;
+        }
+
+        (VOID)PmicGlink_RetrieveRxData(deviceContext, gPmicGlinkMainRxPacket, copySize);
         (VOID)KeSetEvent(&gPmicGlinkRxNotificationEvent, IO_NO_INCREMENT, FALSE);
     }
 
