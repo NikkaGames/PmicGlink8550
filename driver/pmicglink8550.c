@@ -1360,6 +1360,8 @@ RegisterDeviceInterfaces(
     NTSTATUS status;
     WDF_QUERY_INTERFACE_CONFIG queryInterfaceConfig;
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    UNICODE_STRING callbackName;
+    OBJECT_ATTRIBUTES callbackAttributes;
 
     context = PmicGlinkGetDeviceContext(Device);
 
@@ -1442,6 +1444,41 @@ RegisterDeviceInterfaces(
 
     WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_BATT_MNGR, NULL, TRUE);
     WdfDeviceSetDeviceInterfaceState(Device, &GUID_DEVINTERFACE_PMICGLINK, NULL, TRUE);
+
+    if (context->ModernStandbyCallbackHandle == NULL)
+    {
+        RtlInitUnicodeString(&callbackName, L"\\Callback\\QcModernStandby");
+        InitializeObjectAttributes(
+            &callbackAttributes,
+            &callbackName,
+            OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+            NULL,
+            NULL);
+
+        status = ExCreateCallback(
+            &context->ModernStandbyCallbackObject,
+            &callbackAttributes,
+            TRUE,
+            TRUE);
+        if (!NT_SUCCESS(status))
+        {
+            context->ModernStandbyCallbackObject = NULL;
+            return status;
+        }
+
+        context->ModernStandbyCallbackHandle = ExRegisterCallback(
+            context->ModernStandbyCallbackObject,
+            PmicGlinkPower_ModernStandby_Callback,
+            context);
+        if (context->ModernStandbyCallbackHandle == NULL)
+        {
+            ObDereferenceObject(context->ModernStandbyCallbackObject);
+            context->ModernStandbyCallbackObject = NULL;
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        context->ModernStandbyState = 0;
+    }
 
     context->DeviceInterfacesRegistered = TRUE;
 
@@ -1819,8 +1856,6 @@ PmicGlinkDevice_RegisterForPnPNotifications(
     NTSTATUS status;
     NTSTATUS unregisterStatus;
     PDRIVER_OBJECT driverObject;
-    UNICODE_STRING callbackName;
-    OBJECT_ATTRIBUTES callbackAttributes;
 
     if (Context == NULL)
     {
@@ -1879,18 +1914,6 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             Context->BattMiniDeviceLoaded = FALSE;
             Context->NotificationFlag = FALSE;
             WdfWaitLockRelease(Context->BattMiniNotifyLock);
-        }
-
-        if (Context->ModernStandbyCallbackHandle != NULL)
-        {
-            ExUnregisterCallback(Context->ModernStandbyCallbackHandle);
-            Context->ModernStandbyCallbackHandle = NULL;
-        }
-
-        if (Context->ModernStandbyCallbackObject != NULL)
-        {
-            ObDereferenceObject(Context->ModernStandbyCallbackObject);
-            Context->ModernStandbyCallbackObject = NULL;
         }
 
         if (Context->BclCriticalCallbackObject != NULL)
@@ -1995,41 +2018,6 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             Context->BattMiniNotificationEntry = NULL;
             return status;
         }
-    }
-
-    if (Context->ModernStandbyCallbackHandle == NULL)
-    {
-        RtlInitUnicodeString(&callbackName, L"\\Callback\\QcModernStandby");
-        InitializeObjectAttributes(
-            &callbackAttributes,
-            &callbackName,
-            OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
-            NULL,
-            NULL);
-
-        status = ExCreateCallback(
-            &Context->ModernStandbyCallbackObject,
-            &callbackAttributes,
-            TRUE,
-            TRUE);
-        if (!NT_SUCCESS(status))
-        {
-            Context->ModernStandbyCallbackObject = NULL;
-            return status;
-        }
-
-        Context->ModernStandbyCallbackHandle = ExRegisterCallback(
-            Context->ModernStandbyCallbackObject,
-            PmicGlinkPower_ModernStandby_Callback,
-            Context);
-        if (Context->ModernStandbyCallbackHandle == NULL)
-        {
-            ObDereferenceObject(Context->ModernStandbyCallbackObject);
-            Context->ModernStandbyCallbackObject = NULL;
-            return STATUS_UNSUCCESSFUL;
-        }
-
-        Context->ModernStandbyState = 0;
     }
 
     return STATUS_SUCCESS;
