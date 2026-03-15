@@ -2020,12 +2020,6 @@ PmicGlink_Init(
         WdfRegistryClose(regKey);
     }
 
-    status = PmicGlink_OpenGlinkChannel(Context);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
     return STATUS_SUCCESS;
 }
 
