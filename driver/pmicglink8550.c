@@ -2481,7 +2481,7 @@ PmicGlink_OpenGlinkChannel(
     openConfig.NotifyRxIntent = PmicGlinkNotifyRxIntentShim;
 
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
-    if ((status != STATUS_SUCCESS) || (channelHandle == NULL))
+    if (status != STATUS_SUCCESS)
     {
         return STATUS_UNSUCCESSFUL;
     }
@@ -9238,7 +9238,7 @@ PmicGlinkUlog_OpenGlinkChannelUlog(
     openConfig.NotifyRxIntent = PmicGlinkUlogNotifyRxIntentShim;
 
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
-    if ((status != STATUS_SUCCESS) || (channelHandle == NULL))
+    if (status != STATUS_SUCCESS)
     {
         return STATUS_UNSUCCESSFUL;
     }
