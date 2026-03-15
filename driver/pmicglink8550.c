@@ -8458,14 +8458,7 @@ PmicGlinkNotifyRxIntentReqCb(
         return FALSE;
     }
 
-    if (RequestedSize == 0u)
-    {
-        intentSize = 4096u;
-    }
-    else
-    {
-        intentSize = RequestedSize;
-    }
+    intentSize = RequestedSize;
 
     if (!gPmicGlinkApiInterfaceValid
         || (gPmicGlinkMainChannelHandle == NULL)
@@ -9152,14 +9145,7 @@ PmicGlinkUlogNotifyRxIntentReqCb(
         return FALSE;
     }
 
-    if (RequestedSize == 0u)
-    {
-        intentSize = 12288u;
-    }
-    else
-    {
-        intentSize = RequestedSize;
-    }
+    intentSize = RequestedSize;
 
     if (!gPmicGlinkApiInterfaceValid
         || (gPmicGlinkUlogChannelHandle == NULL)
