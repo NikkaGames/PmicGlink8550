@@ -2775,8 +2775,7 @@ PmicGlink_SendData(
     {
         Context->CommData[OpCode].Size = 0u;
     }
-    if (!gPmicGlinkApiInterfaceValid
-        || (gPmicGlinkMainChannelHandle == NULL)
+    if ((gPmicGlinkMainChannelHandle == NULL)
         || (gPmicGlinkApiInterface.GLinkTx == NULL))
     {
         (VOID)InterlockedExchange(&gPmicGlinkRxInProgress, 0);
