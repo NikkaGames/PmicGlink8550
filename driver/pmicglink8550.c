@@ -1842,11 +1842,39 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         }
         Context->BclCriticalCallbackEnabled = FALSE;
 
+        if ((gPmicGlinkLinkStateHandle != NULL)
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkDeregisterLinkStateCb(gPmicGlinkLinkStateHandle);
+            gPmicGlinkLinkStateHandle = NULL;
+        }
+
+        if ((gPmicGlinkMainChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkMainChannelHandle);
+            gPmicGlinkMainChannelHandle = NULL;
+        }
+
+        if ((gPmicGlinkUlogChannelHandle != NULL)
+            && (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference != NULL))
+        {
+            (VOID)gPmicGlinkApiInterface.GLinkClose(gPmicGlinkUlogChannelHandle);
+            gPmicGlinkUlogChannelHandle = NULL;
+        }
+
+        RtlZeroMemory(&gPmicGlinkApiInterface, sizeof(gPmicGlinkApiInterface));
+        Context->RpeInitialized = FALSE;
+        Context->GlinkLinkStateUp = FALSE;
+
         Context->AllReqIntfArrived = FALSE;
         Context->ABDAttached = FALSE;
         Context->GlinkDeviceLoaded = FALSE;
         Context->NotificationFlag = FALSE;
         Context->GlinkChannelConnected = FALSE;
+        Context->GlinkChannelRestart = FALSE;
+        Context->GlinkChannelUlogConnected = FALSE;
+        Context->GlinkChannelUlogRestart = FALSE;
         return STATUS_SUCCESS;
     }
 
