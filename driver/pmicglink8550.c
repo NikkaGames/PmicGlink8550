@@ -8532,9 +8532,7 @@ PmicGLinkRegisterLinkStateCb(
     }
 
     linkMatches = FALSE;
-    if ((LinkInfo->Xport != NULL)
-        && (LinkInfo->RemoteSs != NULL)
-        && (RtlCompareMemory(LinkInfo->Xport, "SMEM", 4) == 4)
+    if ((RtlCompareMemory(LinkInfo->Xport, "SMEM", 4) == 4)
         && (LinkInfo->Xport[4] == '\0')
         && (RtlCompareMemory(LinkInfo->RemoteSs, "lpass", 5) == 5)
         && (LinkInfo->RemoteSs[5] == '\0'))
