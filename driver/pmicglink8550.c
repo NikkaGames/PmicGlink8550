@@ -8425,6 +8425,11 @@ PmicGlinkNotifyRxIntentReqCb(
         return FALSE;
     }
 
+    if (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL)
+    {
+        return FALSE;
+    }
+
     intentSize = RequestedSize;
 
     status = gPmicGlinkApiInterface.GLinkQueueRxIntent(
@@ -9097,6 +9102,11 @@ PmicGlinkUlogNotifyRxIntentReqCb(
     
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     if (deviceContext == NULL)
+    {
+        return FALSE;
+    }
+
+    if (gPmicGlinkApiInterface.InterfaceHeader.InterfaceReference == NULL)
     {
         return FALSE;
     }
