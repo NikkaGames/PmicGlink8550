@@ -2458,7 +2458,7 @@ PmicGlinkConsumeCommDataPacket(
     expectedReceived = FALSE;
     (VOID)PmicGlink_RetrieveRxData(Context, OpCode, &expectedReceived);
     slot->Size = 0u;
-    return TRUE;
+    return (expectedReceived != FALSE) ? TRUE : FALSE;
 }
 
 static NTSTATUS
