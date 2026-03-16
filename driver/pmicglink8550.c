@@ -301,6 +301,7 @@ static LARGE_INTEGER gPmicGlinkLastUsbIoctlEvent;
 static ULONGLONG gPmicGlinkLastBattIdQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
 static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
+static ULONGLONG gPmicGlinkLastChargeStatusTraceMsec;
 static USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA gPmicGlinkUsbcNotification;
 static UCHAR gPmicGlinkPendingPan = PMICGLINK_MAX_PORTS;
 static UCHAR gPmicGlinkPendingPlatformState;
@@ -7705,6 +7706,9 @@ HandleLegacyBattMngrRequest(
     case IOCTL_BATTMNGR_GET_CHARGER_STATUS:
     {
         BATT_MNGR_CHG_STATUS_OUT* outChgStatus;
+        BOOLEAN usbPowerPresent;
+        ULONG portIndex;
+        UCHAR usbStatusQueryPort;
         ULONGLONG nowMsec;
 
         if ((OutputBuffer == NULL) || (OutputBufferSize != sizeof(*outChgStatus)))
@@ -7734,6 +7738,57 @@ HandleLegacyBattMngrRequest(
         outChgStatus = (BATT_MNGR_CHG_STATUS_OUT*)OutputBuffer;
         *outChgStatus = Context->LegacyChargeStatus;
         outChgStatus->charging_source = 2u;
+
+        usbStatusQueryPort = 0u;
+        if ((PmicGlinkQuerySystemTime().QuadPart - gPmicGlinkLastUsbIoctlEvent.QuadPart) > 10000000ll)
+        {
+            (VOID)PmicGlink_SyncSendReceive(
+                Context,
+                IOCTL_PMICGLINK_GET_USB_CHG_STATUS,
+                &usbStatusQueryPort,
+                sizeof(usbStatusQueryPort));
+            gPmicGlinkLastUsbIoctlEvent = PmicGlinkQuerySystemTime();
+        }
+
+        usbPowerPresent = FALSE;
+        for (portIndex = 0u; portIndex < PMICGLINK_MAX_PORTS; portIndex++)
+        {
+            if (Context->UsbinPower[portIndex] > 0)
+            {
+                usbPowerPresent = TRUE;
+                break;
+            }
+        }
+
+        if (!usbPowerPresent)
+        {
+            outChgStatus->power_state &= ~(1u | 4u);
+            outChgStatus->power_state |= 2u;
+            if (outChgStatus->rate > 0)
+            {
+                outChgStatus->rate = -outChgStatus->rate;
+            }
+        }
+
+        if ((gPmicGlinkLastChargeStatusTraceMsec == 0)
+            || (nowMsec < gPmicGlinkLastChargeStatusTraceMsec)
+            || ((nowMsec - gPmicGlinkLastChargeStatusTraceMsec) >= 2000))
+        {
+            gPmicGlinkLastChargeStatusTraceMsec = nowMsec;
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                DPFLTR_INFO_LEVEL,
+                "pmicglink: qstatus ps=0x%08lx cap=%lu volt=%lu rate=%ld usb=[%ld,%ld,%ld,%ld]\n",
+                outChgStatus->power_state,
+                outChgStatus->capacity,
+                outChgStatus->voltage,
+                outChgStatus->rate,
+                Context->UsbinPower[0],
+                Context->UsbinPower[1],
+                Context->UsbinPower[2],
+                Context->UsbinPower[3]);
+        }
+
         *BytesReturned = sizeof(*outChgStatus);
 
         if (Context->LegacyBattId.batt_id == 0)
