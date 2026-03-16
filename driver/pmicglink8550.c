@@ -4805,9 +4805,18 @@ PmicGlinkTryAttachBattMiniNoPnp(
     )
 {
     NTSTATUS status;
+    NTSTATUS openStatus;
     PWSTR interfaceList;
+    PWSTR currentInterface;
     UNICODE_STRING targetName;
     WDF_IO_TARGET_OPEN_PARAMS openParams;
+    ULONG interfaceFlags;
+    ULONG interfaceIndex;
+    BOOLEAN attached;
+
+#ifndef DEVICE_INTERFACE_INCLUDE_NONACTIVE
+#define DEVICE_INTERFACE_INCLUDE_NONACTIVE 0x00000001ul
+#endif
 
     if ((Context == NULL) || (Context->Device == NULL))
     {
@@ -4819,57 +4828,111 @@ PmicGlinkTryAttachBattMiniNoPnp(
         return STATUS_SUCCESS;
     }
 
-    interfaceList = NULL;
-    status = IoGetDeviceInterfaces(
-        (LPGUID)&GUID_DEVINTERFACE_PMIC_BATT_MINI,
-        NULL,
-        0ul,
-        &interfaceList);
-    if (!NT_SUCCESS(status))
+    attached = FALSE;
+    status = STATUS_NOT_FOUND;
+    openStatus = STATUS_NOT_FOUND;
+
+    for (interfaceFlags = 0ul; interfaceFlags <= DEVICE_INTERFACE_INCLUDE_NONACTIVE; interfaceFlags = DEVICE_INTERFACE_INCLUDE_NONACTIVE)
+    {
+        interfaceList = NULL;
+        status = IoGetDeviceInterfaces(
+            (LPGUID)&GUID_DEVINTERFACE_PMIC_BATT_MINI,
+            NULL,
+            interfaceFlags,
+            &interfaceList);
+        if (!NT_SUCCESS(status))
+        {
+            continue;
+        }
+
+        if ((interfaceList == NULL) || (interfaceList[0] == L'\0'))
+        {
+            if (interfaceList != NULL)
+            {
+                ExFreePool(interfaceList);
+            }
+            continue;
+        }
+
+        interfaceIndex = 0ul;
+        currentInterface = interfaceList;
+        while (currentInterface[0] != L'\0')
+        {
+            if (Context->BattMiniIoTarget == NULL)
+            {
+                status = WdfIoTargetCreate(
+                    Context->Device,
+                    WDF_NO_OBJECT_ATTRIBUTES,
+                    &Context->BattMiniIoTarget);
+                if (!NT_SUCCESS(status))
+                {
+                    DbgPrintEx(
+                        DPFLTR_IHVDRIVER_ID,
+                        PMICGLINK_TRACE_LEVEL,
+                        "pmicglink: battmini attach create target failed status=0x%08lx\n",
+                        (ULONG)status);
+                    break;
+                }
+            }
+
+            RtlInitUnicodeString(&targetName, currentInterface);
+            WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
+                &openParams,
+                &targetName,
+                PMICGLINK_GLINK_QUERY_ACCESS_MASK);
+            openParams.ShareAccess = FILE_SHARE_READ;
+            openStatus = WdfIoTargetOpen(Context->BattMiniIoTarget, &openParams);
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: battmini attach try[%lu] flags=0x%lx status=0x%08lx name=%ws\n",
+                interfaceIndex,
+                interfaceFlags,
+                (ULONG)openStatus,
+                currentInterface);
+            if (NT_SUCCESS(openStatus))
+            {
+                attached = TRUE;
+                status = STATUS_SUCCESS;
+                break;
+            }
+
+            PmicGlinkCloseIoTargetIfOpen(&Context->BattMiniIoTarget);
+            currentInterface += wcslen(currentInterface) + 1;
+            interfaceIndex++;
+        }
+
+        ExFreePool(interfaceList);
+        if (attached)
+        {
+            break;
+        }
+    }
+
+    if (attached)
+    {
+        Context->BattMiniDeviceLoaded = TRUE;
+        Context->NotificationFlag = TRUE;
+        (VOID)PmicGlinkEnsureBclCriticalCallback(Context);
+        return STATUS_SUCCESS;
+    }
+
+    if (Context->BattMiniIoTarget != NULL)
+    {
+        PmicGlinkCloseIoTargetIfOpen(&Context->BattMiniIoTarget);
+    }
+
+    if (!NT_SUCCESS(status) && NT_SUCCESS(openStatus))
     {
         return status;
     }
 
-    if ((interfaceList == NULL) || (interfaceList[0] == L'\0'))
+    if (!NT_SUCCESS(openStatus))
     {
-        if (interfaceList != NULL)
-        {
-            ExFreePool(interfaceList);
-        }
-        return STATUS_NOT_FOUND;
+        return openStatus;
     }
 
-    if (Context->BattMiniIoTarget == NULL)
-    {
-        status = WdfIoTargetCreate(
-            Context->Device,
-            WDF_NO_OBJECT_ATTRIBUTES,
-            &Context->BattMiniIoTarget);
-    }
-
-    if (NT_SUCCESS(status) && (Context->BattMiniIoTarget != NULL))
-    {
-        RtlInitUnicodeString(&targetName, interfaceList);
-        WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
-            &openParams,
-            &targetName,
-            PMICGLINK_GLINK_QUERY_ACCESS_MASK);
-        openParams.ShareAccess = FILE_SHARE_READ;
-        status = WdfIoTargetOpen(Context->BattMiniIoTarget, &openParams);
-        if (NT_SUCCESS(status))
-        {
-            Context->BattMiniDeviceLoaded = TRUE;
-            Context->NotificationFlag = TRUE;
-            (VOID)PmicGlinkEnsureBclCriticalCallback(Context);
-        }
-        else
-        {
-            PmicGlinkCloseIoTargetIfOpen(&Context->BattMiniIoTarget);
-        }
-    }
-
-    ExFreePool(interfaceList);
-    return status;
+    return STATUS_NOT_FOUND;
 }
 
 static VOID
