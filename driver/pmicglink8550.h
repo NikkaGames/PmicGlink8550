@@ -434,6 +434,8 @@ typedef struct _PMIC_GLINK_DRIVER_CONTEXT
 typedef struct _PMIC_GLINK_DEVICE_CONTEXT
 {
     WDFDEVICE Device;
+    WDFMEMORY GlinkApiMemory;
+    PVOID GlinkApiInterfaceBuffer;
     PPMIC_GLINK_DRIVER_CONTEXT DriverContext;
 
     BOOLEAN DeviceInterfacesRegistered;
