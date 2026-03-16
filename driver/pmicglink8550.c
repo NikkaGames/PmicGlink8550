@@ -350,6 +350,9 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE 0x800A2008u
 #define PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS 0x800A0FB0u
 #define PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS (-100000000ll)
+#define PMICGLINK_USBN_NOTIFY_IOCTL 0x0032C004u
+#define PMICGLINK_USBN_NOTIFY_SIG_IN 0x4E42535549696541ull
+#define PMICGLINK_USBN_NOTIFY_SIG_OUT 0x426F6541u
 #define PMICGLINK_TRACE_LEVEL 31
 #define PMICGLINK_ABD_IOCTL_REGISTER_CONNECTION 0xC3502FA4u
 #define PMICGLINK_ABD_IOCTL_UNREGISTER_CONNECTION 0xC3502FA8u
@@ -506,6 +509,7 @@ static NTSTATUS PmicGlinkEvaluateAbdConnectionCount(_In_ WDFDEVICE Device);
 static NTSTATUS PmicGlinkNotifyLinkStateAcpi(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG LinkState);
 static NTSTATUS PmicGlinkEvaluateAcpiMethodInteger(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_reads_(4) const CHAR MethodName[4], _In_ ULONG Value);
 static NTSTATUS PmicGlinkEvaluateAcpiMethodBuffer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_reads_(4) const CHAR MethodName[4], _In_reads_bytes_(DataSize) const VOID* Data, _In_ ULONG DataSize);
+static NTSTATUS PmicGlinkNotifyUsbnIoctl(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkRegistryQuery(_In_ WDFKEY RegKey, _In_ PCUNICODE_STRING RegName, _Out_ PULONG ReadData);
 static VOID PmicGlinkLoadPlatformConfig(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static BOOLEAN PmicGlinkGuidEquals(_In_ const GUID* Left, _In_ const GUID* Right);
@@ -912,6 +916,11 @@ DriverEntry(
     config.EvtDriverUnload = PmicGlinkOnDriverUnload;
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&driverAttributes, PMIC_GLINK_DRIVER_CONTEXT);
     driverAttributes.EvtCleanupCallback = PmicGlinkOnDriverCleanup;
+
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: build tag 2026-03-16 commit 765c408+usbnioctl\n");
 
     status = WdfDriverCreate(
         DriverObject,
@@ -5356,6 +5365,72 @@ PmicGlinkEvaluateAcpiMethodBuffer(
         &outputDescriptor,
         NULL,
         &bytesReturned);
+
+    return status;
+}
+
+static NTSTATUS
+PmicGlinkNotifyUsbnIoctl(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    NTSTATUS status;
+    WDFIOTARGET ioTarget;
+    ULONG_PTR bytesReturned;
+    UCHAR inputBuffer[12];
+    ULONG outputBuffer[5];
+    ULONGLONG inputSignature;
+    ULONG inputValue;
+    WDF_MEMORY_DESCRIPTOR inputDescriptor;
+    WDF_MEMORY_DESCRIPTOR outputDescriptor;
+
+    if ((Context == NULL) || (Context->Device == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ioTarget = WdfDeviceGetIoTarget(Context->Device);
+    if (ioTarget == NULL)
+    {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    inputSignature = PMICGLINK_USBN_NOTIFY_SIG_IN;
+    inputValue = 0x80u;
+    RtlZeroMemory(inputBuffer, sizeof(inputBuffer));
+    RtlCopyMemory(inputBuffer, &inputSignature, sizeof(inputSignature));
+    RtlCopyMemory(inputBuffer + sizeof(inputSignature), &inputValue, sizeof(inputValue));
+
+    outputBuffer[0] = PMICGLINK_USBN_NOTIFY_SIG_OUT;
+    outputBuffer[1] = 0u;
+    outputBuffer[2] = 0u;
+    outputBuffer[3] = 0u;
+    outputBuffer[4] = 0u;
+
+    bytesReturned = 0;
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputDescriptor, inputBuffer, sizeof(inputBuffer));
+    WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&outputDescriptor, outputBuffer, sizeof(outputBuffer));
+
+    status = WdfIoTargetSendIoctlSynchronously(
+        ioTarget,
+        NULL,
+        PMICGLINK_USBN_NOTIFY_IOCTL,
+        &inputDescriptor,
+        &outputDescriptor,
+        NULL,
+        &bytesReturned);
+
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: usbn_notify ioctl status=0x%08lx bytes=%Iu out=[0x%08lx,0x%08lx,0x%08lx,0x%08lx,0x%08lx]\n",
+        (ULONG)status,
+        (SIZE_T)bytesReturned,
+        outputBuffer[0],
+        outputBuffer[1],
+        outputBuffer[2],
+        outputBuffer[3],
+        outputBuffer[4]);
 
     return status;
 }
@@ -9906,6 +9981,7 @@ PmicGlink_RetrieveRxData(
                 {
                     (VOID)PmicGlinkEvaluateAcpiMethodInteger(Context, "USBN", notificationData);
                     PmicGlinkDDI_NotifyUcsiAlert(Context, notificationId, notificationData);
+                    (VOID)PmicGlinkNotifyUsbnIoctl(Context);
                     gPmicGlinkLastChargeStatusQueryMsec = 0;
                     gPmicGlinkLastBattInfoQueryMsec = 0;
                 }
