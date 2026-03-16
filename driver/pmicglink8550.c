@@ -614,6 +614,18 @@ static NTSTATUS PmicGlinkOnDeviceAdd(_In_ WDFDRIVER Driver, _Inout_ PWDFDEVICE_I
 static VOID PmicGlinkOnDriverCleanup(_In_ WDFOBJECT DriverObject);
 static VOID PmicGlinkOnDriverUnload(_In_ WDFDRIVER Driver);
 
+static ULONG
+PmicGlinkGetLegacyReportedFullCapacity(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG RawCapacityHint
+    );
+
+static UCHAR
+PmicGlinkComputeLegacyBattPercentage(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG RawCapacity
+    );
+
 static NTSTATUS
 PmicGlink_SendData(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
@@ -8853,6 +8865,7 @@ HandleLegacyBattMngrRequest(
         DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_BATT_INFO\n");
         const BATT_MNGR_GET_BATT_INFO* request;
         BATT_MNGR_GET_BATT_INFO_OUT* outBattInfo;
+        ULONG reportedFullCapacity;
         ULONGLONG nowMsec;
 
         if ((OutputBuffer == NULL) || (OutputBufferSize != PMICGLINK_BATTMNGR_BATT_INFO_OUT_SIZE))
@@ -8893,16 +8906,20 @@ HandleLegacyBattMngrRequest(
 
         outBattInfo = (BATT_MNGR_GET_BATT_INFO_OUT*)OutputBuffer;
         RtlZeroMemory(outBattInfo, sizeof(*outBattInfo));
+        reportedFullCapacity = PmicGlinkGetLegacyReportedFullCapacity(
+            Context,
+            Context->LegacyChargeStatus.capacity);
 
         switch (request->batt_info_type)
         {
         case 0:
             outBattInfo->batt_info = Context->LegacyBattInfo;
+            outBattInfo->batt_info.full_charged_capacity = reportedFullCapacity;
             break;
 
         case 1:
             ((ULONG*)outBattInfo)[0] = Context->LegacyReportingScale[0].granularity;
-            ((ULONG*)outBattInfo)[1] = Context->LegacyBattInfo.full_charged_capacity;
+            ((ULONG*)outBattInfo)[1] = reportedFullCapacity;
             break;
 
         case 2:
@@ -8959,7 +8976,7 @@ HandleLegacyBattMngrRequest(
             Context->LegacyBattTemperature,
             Context->LegacyBattEstimatedTime,
             Context->LegacyBattInfo.designed_capacity,
-            Context->LegacyBattInfo.full_charged_capacity,
+            reportedFullCapacity,
             Context->LegacyBattInfo.cycle_count);
         return status;
     }
@@ -9549,6 +9566,39 @@ PmicGlink_ANSIToUniString(
 }
 
 static
+ULONG
+PmicGlinkGetLegacyReportedFullCapacity(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG RawCapacityHint
+    )
+{
+    ULONG fullCapacity;
+    ULONG designedCapacity;
+
+    if (Context == NULL)
+    {
+        return 0u;
+    }
+
+    fullCapacity = Context->LegacyBattInfo.full_charged_capacity;
+    if ((fullCapacity == 0u) || (fullCapacity == 0xFFFFFFFFu))
+    {
+        return Context->LegacyBattInfo.designed_capacity;
+    }
+
+    designedCapacity = Context->LegacyBattInfo.designed_capacity;
+    if ((designedCapacity != 0u)
+        && (designedCapacity != 0xFFFFFFFFu)
+        && (designedCapacity > fullCapacity))
+    {
+        UNREFERENCED_PARAMETER(RawCapacityHint);
+        fullCapacity = designedCapacity;
+    }
+
+    return fullCapacity;
+}
+
+static
 UCHAR
 PmicGlinkComputeLegacyBattPercentage(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
@@ -9573,23 +9623,7 @@ PmicGlinkComputeLegacyBattPercentage(
         return (UCHAR)RawCapacity;
     }
 
-    fullCapacity = Context->LegacyBattInfo.full_charged_capacity;
-    if ((fullCapacity == 0u) || (fullCapacity == 0xFFFFFFFFu))
-    {
-        fullCapacity = Context->LegacyBattInfo.designed_capacity;
-    }
-    else
-    {
-        ULONG designedCapacity;
-
-        designedCapacity = Context->LegacyBattInfo.designed_capacity;
-        if ((designedCapacity != 0u)
-            && (designedCapacity != 0xFFFFFFFFu)
-            && (designedCapacity > fullCapacity))
-        {
-            fullCapacity = designedCapacity;
-        }
-    }
+    fullCapacity = PmicGlinkGetLegacyReportedFullCapacity(Context, RawCapacity);
 
     if ((fullCapacity != 0u) && (fullCapacity != 0xFFFFFFFFu))
     {
