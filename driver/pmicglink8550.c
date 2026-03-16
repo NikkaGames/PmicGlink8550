@@ -1086,6 +1086,23 @@ PmicGlinkEvtIoDeviceControl(
     WdfRequestCompleteWithInformation(Request, status, NT_SUCCESS(status) ? bytesReturned : 0);
 }
 
+VOID
+PmicGlinkEvtIoInternalDeviceControl(
+    _In_ WDFQUEUE Queue,
+    _In_ WDFREQUEST Request,
+    _In_ size_t OutputBufferLength,
+    _In_ size_t InputBufferLength,
+    _In_ ULONG IoControlCode
+    )
+{
+    PmicGlinkEvtIoDeviceControl(
+        Queue,
+        Request,
+        OutputBufferLength,
+        InputBufferLength,
+        IoControlCode);
+}
+
 static VOID
 PmicGlinkEvtFileClose(
     _In_ WDFFILEOBJECT FileObject
@@ -10480,6 +10497,7 @@ PmicGlinkQueueInitialize(
 
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig, WdfIoQueueDispatchSequential);
     queueConfig.EvtIoDeviceControl = PmicGlinkEvtIoDeviceControl;
+    queueConfig.EvtIoInternalDeviceControl = PmicGlinkEvtIoInternalDeviceControl;
     queueConfig.EvtIoDefault = PmicGlinkEvtDmfDeviceModulesAdd;
 
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&queueAttributes, PMICGLINK_QUEUE_CONTEXT);
