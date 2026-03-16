@@ -3,6 +3,7 @@
 #include <initguid.h>
 #include <wdmguid.h>
 #include <acpiioct.h>
+#include <poclass.h>
 
 typedef struct _GLINK_CHANNEL_CTX GLINK_CHANNEL_CTX;
 
@@ -319,6 +320,7 @@ static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
 static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusTraceMsec;
 static ULONGLONG gPmicGlinkLastChannelRecoverAttemptMsec;
+static ULONGLONG gPmicGlinkLastBattMiniAttachAttemptMsec;
 static UNICODE_STRING gPmicGlinkApiInterfaceSymbolicLinkName;
 static PWSTR gPmicGlinkApiInterfaceSymbolicLinkBuffer;
 static USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA gPmicGlinkUsbcNotification;
@@ -495,6 +497,7 @@ static NTSTATUS PmicGlinkEnsureBclCriticalCallback(_In_ PPMIC_GLINK_DEVICE_CONTE
 static NTSTATUS PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkNotifyBattMiniStatusFromGlink(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG NotificationData);
 static NTSTATUS PmicGlinkTryAttachBattMiniNoPnp(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static VOID PmicGlinkTryAttachBattMiniFromIoctl(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PCSTR Reason);
 static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkSendDriverRequestAsync(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize);
@@ -920,7 +923,7 @@ DriverEntry(
     DbgPrintEx(
         DPFLTR_IHVDRIVER_ID,
         PMICGLINK_TRACE_LEVEL,
-        "pmicglink: build tag 2026-03-16 commit 765c408+usbnioctl\n");
+        "pmicglink: build tag 2026-03-16 commit decomp-criteria-fallback\n");
 
     status = WdfDriverCreate(
         DriverObject,
@@ -2097,6 +2100,14 @@ PmicGlinkInterfaceNotificationCallback(
     {
         status = STATUS_SUCCESS;
         WdfWaitLockAcquire(deviceContext->BattMiniNotifyLock, NULL);
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: battmini iface event=%s loaded=%u target=%p nameLen=%hu\n",
+            arrival ? "arrival" : "removal",
+            deviceContext->BattMiniDeviceLoaded ? 1u : 0u,
+            deviceContext->BattMiniIoTarget,
+            ((symbolicLinkName != NULL) ? symbolicLinkName->Length : 0u));
 
         if (arrival)
         {
@@ -2129,7 +2140,20 @@ PmicGlinkInterfaceNotificationCallback(
                     if (NT_SUCCESS(status))
                     {
                         deviceContext->BattMiniDeviceLoaded = TRUE;
+                        DbgPrintEx(
+                            DPFLTR_IHVDRIVER_ID,
+                            PMICGLINK_TRACE_LEVEL,
+                            "pmicglink: battmini iface open ok target=%p\n",
+                            deviceContext->BattMiniIoTarget);
                         status = PmicGlinkEnsureBclCriticalCallback(deviceContext);
+                    }
+                    else
+                    {
+                        DbgPrintEx(
+                            DPFLTR_IHVDRIVER_ID,
+                            PMICGLINK_TRACE_LEVEL,
+                            "pmicglink: battmini iface open failed status=0x%08lx\n",
+                            (ULONG)status);
                     }
                 }
             }
@@ -2145,6 +2169,11 @@ PmicGlinkInterfaceNotificationCallback(
 
             deviceContext->BattMiniDeviceLoaded = FALSE;
             deviceContext->NotificationFlag = FALSE;
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: battmini iface removed target=%p\n",
+                deviceContext->BattMiniIoTarget);
         }
 
 BattMiniExit:
@@ -2262,6 +2291,13 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             Context->BattMiniNotificationEntry = NULL;
             return status;
         }
+
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: battmini iface notify registered entry=%p status=0x%08lx\n",
+            Context->BattMiniNotificationEntry,
+            (ULONG)status);
     }
 
     return STATUS_SUCCESS;
@@ -4822,7 +4858,14 @@ PmicGlinkTryAttachBattMiniNoPnp(
     WDF_IO_TARGET_OPEN_PARAMS openParams;
     ULONG interfaceFlags;
     ULONG interfaceIndex;
+    ULONG flagPass;
+    ULONG guidIndex;
     BOOLEAN attached;
+    BOOLEAN notifyCapable;
+    NTSTATUS probeStatus;
+    SIZE_T probeBytesReturned;
+    const GUID* interfaceGuids[2];
+    const CHAR* interfaceNames[2];
 
 #ifndef DEVICE_INTERFACE_INCLUDE_NONACTIVE
 #define DEVICE_INTERFACE_INCLUDE_NONACTIVE 0x00000001ul
@@ -4842,77 +4885,131 @@ PmicGlinkTryAttachBattMiniNoPnp(
     status = STATUS_NOT_FOUND;
     openStatus = STATUS_NOT_FOUND;
 
-    for (interfaceFlags = 0ul; interfaceFlags <= DEVICE_INTERFACE_INCLUDE_NONACTIVE; interfaceFlags = DEVICE_INTERFACE_INCLUDE_NONACTIVE)
+    interfaceGuids[0] = &GUID_DEVINTERFACE_PMIC_BATT_MINI;
+    interfaceNames[0] = "pmic_batt_mini";
+    interfaceGuids[1] = &GUID_DEVICE_BATTERY;
+    interfaceNames[1] = "device_battery";
+
+    for (guidIndex = 0ul; guidIndex < RTL_NUMBER_OF(interfaceGuids); guidIndex++)
     {
-        interfaceList = NULL;
-        status = IoGetDeviceInterfaces(
-            (LPGUID)&GUID_DEVINTERFACE_PMIC_BATT_MINI,
-            NULL,
-            interfaceFlags,
-            &interfaceList);
-        if (!NT_SUCCESS(status))
+        for (flagPass = 0ul; flagPass < 2ul; flagPass++)
         {
-            continue;
-        }
-
-        if ((interfaceList == NULL) || (interfaceList[0] == L'\0'))
-        {
-            if (interfaceList != NULL)
+            interfaceFlags = (flagPass == 0ul) ? 0ul : DEVICE_INTERFACE_INCLUDE_NONACTIVE;
+            interfaceList = NULL;
+            status = IoGetDeviceInterfaces(
+                (LPGUID)interfaceGuids[guidIndex],
+                NULL,
+                interfaceFlags,
+                &interfaceList);
+            if (!NT_SUCCESS(status))
             {
-                ExFreePool(interfaceList);
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    PMICGLINK_TRACE_LEVEL,
+                    "pmicglink: battmini attach query guid=%s flags=0x%lx failed status=0x%08lx\n",
+                    interfaceNames[guidIndex],
+                    interfaceFlags,
+                    (ULONG)status);
+                continue;
             }
-            continue;
-        }
 
-        interfaceIndex = 0ul;
-        currentInterface = interfaceList;
-        while (currentInterface[0] != L'\0')
-        {
-            if (Context->BattMiniIoTarget == NULL)
+            if ((interfaceList == NULL) || (interfaceList[0] == L'\0'))
             {
-                status = WdfIoTargetCreate(
-                    Context->Device,
-                    WDF_NO_OBJECT_ATTRIBUTES,
-                    &Context->BattMiniIoTarget);
-                if (!NT_SUCCESS(status))
+                if (interfaceList != NULL)
                 {
+                    ExFreePool(interfaceList);
+                }
+                continue;
+            }
+
+            interfaceIndex = 0ul;
+            currentInterface = interfaceList;
+            while (currentInterface[0] != L'\0')
+            {
+                if (Context->BattMiniIoTarget == NULL)
+                {
+                    status = WdfIoTargetCreate(
+                        Context->Device,
+                        WDF_NO_OBJECT_ATTRIBUTES,
+                        &Context->BattMiniIoTarget);
+                    if (!NT_SUCCESS(status))
+                    {
+                        DbgPrintEx(
+                            DPFLTR_IHVDRIVER_ID,
+                            PMICGLINK_TRACE_LEVEL,
+                            "pmicglink: battmini attach create target failed status=0x%08lx\n",
+                            (ULONG)status);
+                        break;
+                    }
+                }
+
+                RtlInitUnicodeString(&targetName, currentInterface);
+                WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
+                    &openParams,
+                    &targetName,
+                    PMICGLINK_GLINK_QUERY_ACCESS_MASK);
+                openParams.ShareAccess = FILE_SHARE_READ;
+                openStatus = WdfIoTargetOpen(Context->BattMiniIoTarget, &openParams);
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    PMICGLINK_TRACE_LEVEL,
+                    "pmicglink: battmini attach try guid=%s[%lu] flags=0x%lx status=0x%08lx name=%ws\n",
+                    interfaceNames[guidIndex],
+                    interfaceIndex,
+                    interfaceFlags,
+                    (ULONG)openStatus,
+                    currentInterface);
+                if (NT_SUCCESS(openStatus))
+                {
+                    probeBytesReturned = 0u;
+                    probeStatus = PmicGlinkSendDriverRequestWithTimeout(
+                        Context->BattMiniIoTarget,
+                        PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE,
+                        NULL,
+                        0u,
+                        NULL,
+                        0u,
+                        -1000000ll,
+                        &probeBytesReturned);
                     DbgPrintEx(
                         DPFLTR_IHVDRIVER_ID,
                         PMICGLINK_TRACE_LEVEL,
-                        "pmicglink: battmini attach create target failed status=0x%08lx\n",
-                        (ULONG)status);
-                    break;
+                        "pmicglink: battmini attach probe guid=%s[%lu] status=0x%08lx bytes=%Iu\n",
+                        interfaceNames[guidIndex],
+                        interfaceIndex,
+                        (ULONG)probeStatus,
+                        probeBytesReturned);
+
+                    notifyCapable = NT_SUCCESS(probeStatus) ? TRUE : FALSE;
+
+                    if (notifyCapable)
+                    {
+                        attached = TRUE;
+                        status = STATUS_SUCCESS;
+                        break;
+                    }
+
+                    DbgPrintEx(
+                        DPFLTR_IHVDRIVER_ID,
+                        PMICGLINK_TRACE_LEVEL,
+                        "pmicglink: battmini attach reject guid=%s[%lu] status=0x%08lx\n",
+                        interfaceNames[guidIndex],
+                        interfaceIndex,
+                        (ULONG)probeStatus);
                 }
+
+                PmicGlinkCloseIoTargetIfOpen(&Context->BattMiniIoTarget);
+                currentInterface += wcslen(currentInterface) + 1;
+                interfaceIndex++;
             }
 
-            RtlInitUnicodeString(&targetName, currentInterface);
-            WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
-                &openParams,
-                &targetName,
-                PMICGLINK_GLINK_QUERY_ACCESS_MASK);
-            openParams.ShareAccess = FILE_SHARE_READ;
-            openStatus = WdfIoTargetOpen(Context->BattMiniIoTarget, &openParams);
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: battmini attach try[%lu] flags=0x%lx status=0x%08lx name=%ws\n",
-                interfaceIndex,
-                interfaceFlags,
-                (ULONG)openStatus,
-                currentInterface);
-            if (NT_SUCCESS(openStatus))
+            ExFreePool(interfaceList);
+            if (attached)
             {
-                attached = TRUE;
-                status = STATUS_SUCCESS;
                 break;
             }
-
-            PmicGlinkCloseIoTargetIfOpen(&Context->BattMiniIoTarget);
-            currentInterface += wcslen(currentInterface) + 1;
-            interfaceIndex++;
         }
 
-        ExFreePool(interfaceList);
         if (attached)
         {
             break;
@@ -4943,6 +5040,39 @@ PmicGlinkTryAttachBattMiniNoPnp(
     }
 
     return STATUS_NOT_FOUND;
+}
+
+static VOID
+PmicGlinkTryAttachBattMiniFromIoctl(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ PCSTR Reason
+    )
+{
+    NTSTATUS attachStatus;
+    ULONGLONG nowMsec;
+
+    if ((Context == NULL) || Context->BattMiniDeviceLoaded)
+    {
+        return;
+    }
+
+    nowMsec = PmicGlink_Helper_get_rel_time_msec();
+    if ((nowMsec >= gPmicGlinkLastBattMiniAttachAttemptMsec)
+        && ((nowMsec - gPmicGlinkLastBattMiniAttachAttemptMsec) < 2000ull))
+    {
+        return;
+    }
+    gPmicGlinkLastBattMiniAttachAttemptMsec = nowMsec;
+
+    attachStatus = PmicGlinkTryAttachBattMiniNoPnp(Context);
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: battmini ioctl-attach reason=%s status=0x%08lx loaded=%u target=%p\n",
+        (Reason != NULL) ? Reason : "unknown",
+        (ULONG)attachStatus,
+        Context->BattMiniDeviceLoaded ? 1u : 0u,
+        Context->BattMiniIoTarget);
 }
 
 static VOID
@@ -4995,16 +5125,15 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
 
     if (!Context->BattMiniDeviceLoaded)
     {
-        NTSTATUS attachStatus;
-
-        attachStatus = PmicGlinkTryAttachBattMiniNoPnp(Context);
+        Context->LegacyStatusNotificationPending = TRUE;
+        Context->LegacyStateChangePending = TRUE;
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
             PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini on-demand attach status=0x%08lx loaded=%u target=%p\n",
-            (ULONG)attachStatus,
-            Context->BattMiniDeviceLoaded ? 1u : 0u,
+            "pmicglink: battmini notify defer attach notif=0x%08lx loaded=0 target=%p\n",
+            NotificationData,
             Context->BattMiniIoTarget);
+        return;
     }
 
     battMiniLoaded = Context->BattMiniDeviceLoaded ? TRUE : FALSE;
@@ -5028,24 +5157,25 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
             "pmicglink: battmini notify_presence status=0x%08lx notif=0x%08lx\n",
             (ULONG)notifyStatus,
             NotificationData);
+        if ((notifyStatus == STATUS_NOT_SUPPORTED)
+            || (notifyStatus == STATUS_INVALID_DEVICE_REQUEST))
+        {
+            PmicGlinkClearBattMiniAttachment(Context);
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: battmini notify_presence detach unsupported status=0x%08lx\n",
+                (ULONG)notifyStatus);
+        }
         if (NT_SUCCESS(notifyStatus))
         {
             Context->LegacyStatusNotificationPending = TRUE;
             Context->LegacyStateChangePending = TRUE;
         }
 
-        if (((NotificationData & 0xFFu) == 0x83u)
-            || (NotificationData == 0x80u)
-            || (NotificationData == 0x32u))
+        if ((NotificationData & 0xFFu) == 0x83u)
         {
-            if ((NotificationData & 0xFFu) == 0x83u)
-            {
-                battMiniNotifyArgument = (NotificationData >> 8);
-            }
-            else
-            {
-                battMiniNotifyArgument = NotificationData;
-            }
+            battMiniNotifyArgument = (NotificationData >> 8);
             notifyStatus = PmicGlinkSendDriverRequestAsync(
                 battMiniTarget,
                 PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
@@ -5059,6 +5189,16 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
                 (ULONG)notifyStatus,
                 battMiniNotifyArgument,
                 NotificationData);
+            if ((notifyStatus == STATUS_NOT_SUPPORTED)
+                || (notifyStatus == STATUS_INVALID_DEVICE_REQUEST))
+            {
+                PmicGlinkClearBattMiniAttachment(Context);
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    PMICGLINK_TRACE_LEVEL,
+                    "pmicglink: battmini notify_status detach unsupported status=0x%08lx\n",
+                    (ULONG)notifyStatus);
+            }
             if (NT_SUCCESS(notifyStatus))
             {
                 Context->LegacyStatusNotificationPending = TRUE;
@@ -5450,6 +5590,7 @@ PmicGlinkSendDriverRequest(
     WDF_MEMORY_DESCRIPTOR outputDescriptor;
     PWDF_MEMORY_DESCRIPTOR pInputDescriptor;
     PWDF_MEMORY_DESCRIPTOR pOutputDescriptor;
+    NTSTATUS status;
 
     if (IoTarget == NULL)
     {
@@ -5470,7 +5611,7 @@ PmicGlinkSendDriverRequest(
         pOutputDescriptor = &outputDescriptor;
     }
 
-    return WdfIoTargetSendIoctlSynchronously(
+    status = WdfIoTargetSendIoctlSynchronously(
         IoTarget,
         NULL,
         IoControlCode,
@@ -5478,6 +5619,34 @@ PmicGlinkSendDriverRequest(
         pOutputDescriptor,
         NULL,
         (PULONG_PTR)BytesReturned);
+
+    if ((status == STATUS_INVALID_DEVICE_REQUEST)
+        || (status == STATUS_NOT_SUPPORTED)
+        || (status == STATUS_NOT_IMPLEMENTED))
+    {
+        NTSTATUS fallbackStatus;
+
+        fallbackStatus = WdfIoTargetSendInternalIoctlSynchronously(
+            IoTarget,
+            NULL,
+            IoControlCode,
+            pInputDescriptor,
+            pOutputDescriptor,
+            NULL,
+            (PULONG_PTR)BytesReturned);
+
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: sendreq fallback internal ioctl=0x%08lx status=0x%08lx->0x%08lx\n",
+            IoControlCode,
+            (ULONG)status,
+            (ULONG)fallbackStatus);
+
+        status = fallbackStatus;
+    }
+
+    return status;
 }
 
 static NTSTATUS
@@ -5497,6 +5666,7 @@ PmicGlinkSendDriverRequestWithTimeout(
     PWDF_MEMORY_DESCRIPTOR pInputDescriptor;
     PWDF_MEMORY_DESCRIPTOR pOutputDescriptor;
     WDF_REQUEST_SEND_OPTIONS requestOptions;
+    NTSTATUS status;
 
     if (IoTarget == NULL)
     {
@@ -5520,7 +5690,7 @@ PmicGlinkSendDriverRequestWithTimeout(
     WDF_REQUEST_SEND_OPTIONS_INIT(&requestOptions, WDF_REQUEST_SEND_OPTION_TIMEOUT);
     requestOptions.Timeout = Timeout100ns;
 
-    return WdfIoTargetSendIoctlSynchronously(
+    status = WdfIoTargetSendIoctlSynchronously(
         IoTarget,
         NULL,
         IoControlCode,
@@ -5528,6 +5698,34 @@ PmicGlinkSendDriverRequestWithTimeout(
         pOutputDescriptor,
         &requestOptions,
         (PULONG_PTR)BytesReturned);
+
+    if ((status == STATUS_INVALID_DEVICE_REQUEST)
+        || (status == STATUS_NOT_SUPPORTED)
+        || (status == STATUS_NOT_IMPLEMENTED))
+    {
+        NTSTATUS fallbackStatus;
+
+        fallbackStatus = WdfIoTargetSendInternalIoctlSynchronously(
+            IoTarget,
+            NULL,
+            IoControlCode,
+            pInputDescriptor,
+            pOutputDescriptor,
+            &requestOptions,
+            (PULONG_PTR)BytesReturned);
+
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: sendreq_timeout fallback internal ioctl=0x%08lx status=0x%08lx->0x%08lx\n",
+            IoControlCode,
+            (ULONG)status,
+            (ULONG)fallbackStatus);
+
+        status = fallbackStatus;
+    }
+
+    return status;
 }
 
 static NTSTATUS
@@ -5538,87 +5736,15 @@ PmicGlinkSendDriverRequestAsync(
     _In_ ULONG InputBufferSize
     )
 {
-    NTSTATUS status;
-    WDFREQUEST request;
-    WDF_OBJECT_ATTRIBUTES attributes;
-    WDF_OBJECT_ATTRIBUTES memoryAttributes;
-    WDFMEMORY inputMemory;
-    PVOID inputMemoryBuffer;
-    WDF_REQUEST_SEND_OPTIONS requestOptions;
-
-    if (IoTarget == NULL)
-    {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
-    attributes.ParentObject = IoTarget;
-    status = WdfRequestCreate(&attributes, IoTarget, &request);
-    if (!NT_SUCCESS(status))
-    {
-        return status;
-    }
-
-    inputMemory = NULL;
-    inputMemoryBuffer = NULL;
-    if ((InputBuffer != NULL) && (InputBufferSize != 0))
-    {
-        WDF_OBJECT_ATTRIBUTES_INIT(&memoryAttributes);
-        memoryAttributes.ParentObject = request;
-        status = WdfMemoryCreate(
-            &memoryAttributes,
-            NonPagedPoolNx,
-            PMICGLINK_POOLTAG_COMMDATA,
-            InputBufferSize,
-            &inputMemory,
-            &inputMemoryBuffer);
-        if (!NT_SUCCESS(status))
-        {
-            WdfObjectDelete(request);
-            return status;
-        }
-
-        RtlCopyMemory(inputMemoryBuffer, InputBuffer, InputBufferSize);
-
-        status = WdfIoTargetFormatRequestForIoctl(
-            IoTarget,
-            request,
-            IoControlCode,
-            inputMemory,
-            NULL,
-            NULL,
-            NULL);
-    }
-    else
-    {
-        status = WdfIoTargetFormatRequestForIoctl(
-            IoTarget,
-            request,
-            IoControlCode,
-            NULL,
-            NULL,
-            NULL,
-            NULL);
-    }
-
-    if (!NT_SUCCESS(status))
-    {
-        WdfObjectDelete(request);
-        return status;
-    }
-
-    WDF_REQUEST_SEND_OPTIONS_INIT(
-        &requestOptions,
-        WDF_REQUEST_SEND_OPTION_SEND_AND_FORGET);
-
-    if (!WdfRequestSend(request, IoTarget, &requestOptions))
-    {
-        status = WdfRequestGetStatus(request);
-        WdfObjectDelete(request);
-        return status;
-    }
-
-    return STATUS_SUCCESS;
+    return PmicGlinkSendDriverRequestWithTimeout(
+        IoTarget,
+        IoControlCode,
+        InputBuffer,
+        InputBufferSize,
+        NULL,
+        0u,
+        -100000000ll,
+        NULL);
 }
 
 static NTSTATUS
@@ -8587,6 +8713,7 @@ HandleLegacyBattMngrRequest(
         outBattId = (BATT_MNGR_GET_BATT_ID_OUT*)OutputBuffer;
         outBattId->batt_id = 0;
         *BytesReturned = sizeof(*outBattId);
+        PmicGlinkTryAttachBattMiniFromIoctl(Context, "GET_BATT_ID");
 
         if (Context->GlinkChannelRestart || !Context->GlinkChannelConnected)
         {
@@ -8666,6 +8793,7 @@ HandleLegacyBattMngrRequest(
             return STATUS_INVALID_PARAMETER;
         }
 
+        PmicGlinkTryAttachBattMiniFromIoctl(Context, "GET_CHARGER_STATUS");
         status = STATUS_SUCCESS;
         nowMsec = PmicGlink_Helper_get_rel_time_msec();
         if ((gPmicGlinkLastChargeStatusQueryMsec == 0)
@@ -8852,12 +8980,42 @@ HandleLegacyBattMngrRequest(
             BytesReturned);
 
     case IOCTL_BATTMNGR_SET_STATUS_CRITERIA:
+    {
+        const BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA* request;
+
         DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case SET_STATUS_CRITERIA\n");
-        return PmicGlink_SyncSendReceive(
-            Context,
-            IOCTL_BATTMNGR_SET_STATUS_CRITERIA,
-            (PUCHAR)InputBuffer,
-            InputBufferSize);
+        PmicGlinkTryAttachBattMiniFromIoctl(Context, "SET_STATUS_CRITERIA");
+
+        if ((InputBuffer == NULL) || (InputBufferSize < sizeof(*request)))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        request = (const BATT_MNGR_SET_STATUS_NOTIFICATION_CRITERIA*)InputBuffer;
+        if (!Context->Notify
+            || (Context->LegacyStatusCriteria.batt_notify_criteria.power_state
+                != request->batt_notify_criteria.power_state)
+            || (Context->LegacyStatusCriteria.batt_notify_criteria.low_capacity
+                != request->batt_notify_criteria.low_capacity)
+            || (Context->LegacyStatusCriteria.batt_notify_criteria.high_capacity
+                != request->batt_notify_criteria.high_capacity))
+        {
+            status = PmicGlink_SyncSendReceive(
+                Context,
+                IOCTL_BATTMNGR_SET_STATUS_CRITERIA,
+                (PUCHAR)InputBuffer,
+                InputBufferSize);
+            if (NT_SUCCESS(status))
+            {
+                Context->LegacyStatusCriteria = *request;
+                Context->Notify = TRUE;
+            }
+
+            return status;
+        }
+
+        return STATUS_SUCCESS;
+    }
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT:
         DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_BATT_PRESENT\n");
@@ -9969,6 +10127,9 @@ PmicGlink_RetrieveRxData(
             case 0x800Au:
                 gPmicGlinkLastChargeStatusQueryMsec = 0;
                 gPmicGlinkLastBattInfoQueryMsec = 0;
+                Context->Notify = TRUE;
+                Context->LegacyStatusNotificationPending = TRUE;
+                Context->LegacyStateChangePending = TRUE;
                 DbgPrintEx(
                     DPFLTR_IHVDRIVER_ID,
                     PMICGLINK_TRACE_LEVEL,
