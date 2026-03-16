@@ -493,6 +493,7 @@ static NTSTATUS PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEX
 static VOID PmicGlinkNotifyBattMiniStatusFromGlink(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG NotificationData);
 static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
+static NTSTATUS PmicGlinkSendInternalDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
 static VOID PmicGlinkCloseIoTargetIfOpen(_Inout_ WDFIOTARGET* IoTarget);
 static VOID PmicGlinkClearGlinkAttachment(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkClearAbdAttachment(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN UnregisterConnections);
@@ -4819,7 +4820,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     if (Context->BattMiniDeviceLoaded)
     {
         notifyBytesReturned = 0u;
-        notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
+        notifyStatus = PmicGlinkSendInternalDriverRequestWithTimeout(
             Context->BattMiniIoTarget,
             PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE,
             NULL,
@@ -4845,7 +4846,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
             ? (NotificationData >> 8)
             : NotificationData;
         notifyBytesReturned = 0u;
-        notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
+        notifyStatus = PmicGlinkSendInternalDriverRequestWithTimeout(
             Context->BattMiniIoTarget,
             PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
             &battMiniNotifyArgument,
@@ -5227,6 +5228,56 @@ PmicGlinkSendDriverRequestWithTimeout(
     requestOptions.Timeout = Timeout100ns;
 
     return WdfIoTargetSendIoctlSynchronously(
+        IoTarget,
+        NULL,
+        IoControlCode,
+        pInputDescriptor,
+        pOutputDescriptor,
+        &requestOptions,
+        (PULONG_PTR)BytesReturned);
+}
+
+static NTSTATUS
+PmicGlinkSendInternalDriverRequestWithTimeout(
+    _In_ WDFIOTARGET IoTarget,
+    _In_ ULONG IoControlCode,
+    _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer,
+    _In_ ULONG InputBufferSize,
+    _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer,
+    _In_ ULONG OutputBufferSize,
+    _In_ LONGLONG Timeout100ns,
+    _Out_opt_ SIZE_T* BytesReturned
+    )
+{
+    WDF_MEMORY_DESCRIPTOR inputDescriptor;
+    WDF_MEMORY_DESCRIPTOR outputDescriptor;
+    PWDF_MEMORY_DESCRIPTOR pInputDescriptor;
+    PWDF_MEMORY_DESCRIPTOR pOutputDescriptor;
+    WDF_REQUEST_SEND_OPTIONS requestOptions;
+
+    if (IoTarget == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    pInputDescriptor = NULL;
+    if ((InputBuffer != NULL) && (InputBufferSize != 0))
+    {
+        WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputDescriptor, InputBuffer, InputBufferSize);
+        pInputDescriptor = &inputDescriptor;
+    }
+
+    pOutputDescriptor = NULL;
+    if ((OutputBuffer != NULL) && (OutputBufferSize != 0))
+    {
+        WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&outputDescriptor, OutputBuffer, OutputBufferSize);
+        pOutputDescriptor = &outputDescriptor;
+    }
+
+    WDF_REQUEST_SEND_OPTIONS_INIT(&requestOptions, WDF_REQUEST_SEND_OPTION_TIMEOUT);
+    requestOptions.Timeout = Timeout100ns;
+
+    return WdfIoTargetSendInternalIoctlSynchronously(
         IoTarget,
         NULL,
         IoControlCode,
