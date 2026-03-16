@@ -9711,7 +9711,7 @@ PmicGlink_RetrieveRxData(
     }
 
     case 9u:
-        if (BufferSize >= 740u)
+        if (BufferSize >= 732u)
         {
             CHAR battDeviceNameA[129];
             CHAR battManufacturerNameA[129];
@@ -9728,7 +9728,10 @@ PmicGlink_RetrieveRxData(
             RtlCopyMemory(&Context->LegacyBattInfo.capabilities, Buffer + 76, sizeof(Context->LegacyBattInfo.capabilities));
             RtlCopyMemory(&Context->LegacyBattInfo.chemistry, Buffer + 592, sizeof(Context->LegacyBattInfo.chemistry));
             RtlCopyMemory(&Context->LegacyBattInfo.critical_bias, Buffer + 724, sizeof(Context->LegacyBattInfo.critical_bias));
-            RtlCopyMemory(&Context->LegacyBattEstimatedTime, Buffer + 736, sizeof(Context->LegacyBattEstimatedTime));
+            if (BufferSize >= 740u)
+            {
+                RtlCopyMemory(&Context->LegacyBattEstimatedTime, Buffer + 736, sizeof(Context->LegacyBattEstimatedTime));
+            }
             Context->LegacyBattInfo.technology = *(Buffer + 24);
 
             Context->LegacyBattManufactureDate.day = *(Buffer + 728);
