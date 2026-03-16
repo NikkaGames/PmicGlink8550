@@ -1890,6 +1890,7 @@ PmicGlinkInterfaceNotificationCallback(
 {
     PPMIC_GLINK_DEVICE_CONTEXT deviceContext;
     PDEVICE_INTERFACE_CHANGE_NOTIFICATION notification;
+    PUNICODE_STRING symbolicLinkName;
     BOOLEAN arrival;
     NTSTATUS status;
     ULONG currentState;
@@ -1901,6 +1902,7 @@ PmicGlinkInterfaceNotificationCallback(
 
     deviceContext = (PPMIC_GLINK_DEVICE_CONTEXT)Context;
     notification = (PDEVICE_INTERFACE_CHANGE_NOTIFICATION)NotificationStructure;
+    symbolicLinkName = notification->SymbolicLinkName;
 
     arrival = FALSE;
     if (RtlCompareMemory(&notification->Event, &GUID_DEVICE_INTERFACE_ARRIVAL_LOCAL, sizeof(GUID)) == sizeof(GUID))
@@ -1927,7 +1929,7 @@ PmicGlinkInterfaceNotificationCallback(
             }
 
             deviceContext->GlinkDeviceLoaded = TRUE;
-            PmicGlinkSetApiInterfaceSymbolicLink((PUNICODE_STRING)&notification->SymbolicLinkName);
+            PmicGlinkSetApiInterfaceSymbolicLink(symbolicLinkName);
             deviceContext->AllReqIntfArrived = deviceContext->ABDAttached ? TRUE : FALSE;
             KeInitializeEvent(&gPmicGlinkConnectedEvent, NotificationEvent, FALSE);
             KeInitializeEvent(&gPmicGlinkLocalDisconnectedEvent, NotificationEvent, FALSE);
@@ -1975,9 +1977,14 @@ PmicGlinkInterfaceNotificationCallback(
                 {
                     WDF_IO_TARGET_OPEN_PARAMS openParams;
 
+                    if ((symbolicLinkName == NULL) || (symbolicLinkName->Buffer == NULL))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
                     WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
                         &openParams,
-                        (PUNICODE_STRING)&notification->SymbolicLinkName,
+                        symbolicLinkName,
                         GENERIC_READ | GENERIC_WRITE);
                     openParams.ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE;
                     status = WdfIoTargetOpen(deviceContext->AbdIoTarget, &openParams);
@@ -2027,9 +2034,16 @@ PmicGlinkInterfaceNotificationCallback(
                 if (NT_SUCCESS(status) && (deviceContext->BattMiniIoTarget != NULL))
                 {
                     WDF_IO_TARGET_OPEN_PARAMS openParams;
+
+                    if ((symbolicLinkName == NULL) || (symbolicLinkName->Buffer == NULL))
+                    {
+                        status = STATUS_INVALID_PARAMETER;
+                        goto BattMiniExit;
+                    }
+
                     WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
                         &openParams,
-                        (PUNICODE_STRING)&notification->SymbolicLinkName,
+                        symbolicLinkName,
                         GENERIC_READ | GENERIC_WRITE);
                     openParams.ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE;
                     status = WdfIoTargetOpen(deviceContext->BattMiniIoTarget, &openParams);
@@ -2054,6 +2068,7 @@ PmicGlinkInterfaceNotificationCallback(
             deviceContext->NotificationFlag = FALSE;
         }
 
+BattMiniExit:
         WdfWaitLockRelease(deviceContext->BattMiniNotifyLock);
 
         return status;
