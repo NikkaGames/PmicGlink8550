@@ -9578,6 +9578,18 @@ PmicGlinkComputeLegacyBattPercentage(
     {
         fullCapacity = Context->LegacyBattInfo.designed_capacity;
     }
+    else
+    {
+        ULONG designedCapacity;
+
+        designedCapacity = Context->LegacyBattInfo.designed_capacity;
+        if ((designedCapacity != 0u)
+            && (designedCapacity != 0xFFFFFFFFu)
+            && (designedCapacity > fullCapacity))
+        {
+            fullCapacity = designedCapacity;
+        }
+    }
 
     if ((fullCapacity != 0u) && (fullCapacity != 0xFFFFFFFFu))
     {
