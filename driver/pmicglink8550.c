@@ -9569,6 +9569,8 @@ PmicGlink_RetrieveRxData(
             switch (notificationId)
             {
             case 0x800Au:
+                gPmicGlinkLastChargeStatusQueryMsec = 0;
+                gPmicGlinkLastBattInfoQueryMsec = 0;
                 PmicGlinkNotifyBattMiniStatusFromGlink(Context, notificationData);
                 break;
 
@@ -9577,6 +9579,9 @@ PmicGlink_RetrieveRxData(
                 {
                     (VOID)PmicGlinkEvaluateAcpiMethodInteger(Context, "USBN", notificationData);
                     PmicGlinkDDI_NotifyUcsiAlert(Context, notificationId, notificationData);
+                    gPmicGlinkLastChargeStatusQueryMsec = 0;
+                    gPmicGlinkLastBattInfoQueryMsec = 0;
+                    PmicGlinkNotifyBattMiniStatusFromGlink(Context, 0u);
                 }
                 break;
 
