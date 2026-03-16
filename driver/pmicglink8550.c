@@ -78,6 +78,15 @@ typedef struct _PMIC_GLINK_OPEN_CONFIG
         _In_opt_ PVOID Buffer);
 } PMIC_GLINK_OPEN_CONFIG;
 
+typedef struct _PMIC_GLINK_TRACER_PKT_INIT_CONFIG
+{
+    UCHAR QdssTraceEnable;
+    USHORT ClientEventConfig;
+    ULONG GlinkEventConfig;
+    ULONG PacketPrivate[3];
+    ULONG PacketPrivateLength;
+} PMIC_GLINK_TRACER_PKT_INIT_CONFIG;
+
 typedef struct _PMIC_GLINK_API_INTERFACE
 {
     INTERFACE InterfaceHeader;
@@ -108,7 +117,14 @@ typedef struct _PMIC_GLINK_API_INTERFACE
     NTSTATUS(*GLinkQoSCancel)(_In_ GLINK_CHANNEL_CTX* ChannelHandle);
     NTSTATUS(*GLinkQoSStart)(_In_ GLINK_CHANNEL_CTX* ChannelHandle);
     ULONG(*GLinkQoSGetRampTime)(_In_ GLINK_CHANNEL_CTX* ChannelHandle, _In_ ULONG LatencyType, _In_ ULONGLONG LatencyValue);
+    NTSTATUS(*TracerPktInit)(_In_opt_ PVOID TracerContext, _In_ ULONG ClientId, _In_opt_ PMIC_GLINK_TRACER_PKT_INIT_CONFIG* InitConfig);
+    NTSTATUS(*TracerPktSetEventCfg)(_In_opt_ PVOID TracerContext, _In_ USHORT ClientEventConfig, _In_ ULONG GlinkEventConfig);
+    NTSTATUS(*TracerPktLogEvent)(_In_opt_ PVOID TracerContext, _In_ USHORT EventId);
+    ULONG(*TracerPktCalcHexDumpSize)(_In_opt_ PVOID TracerContext, _In_ ULONG DataLength);
+    NTSTATUS(*TracerPktHexDump)(_In_opt_ PVOID TracerContext, _In_ ULONG Flags, _In_reads_bytes_opt_(DataLength) const VOID* Data, _In_ ULONG DataLength);
 } PMIC_GLINK_API_INTERFACE;
+
+C_ASSERT(sizeof(PMIC_GLINK_API_INTERFACE) == 192u);
 
 DEFINE_GUID(
     GUID_DEVINTERFACE_PMICGLINK,
@@ -303,6 +319,8 @@ static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
 static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusTraceMsec;
 static ULONGLONG gPmicGlinkLastChannelRecoverAttemptMsec;
+static UNICODE_STRING gPmicGlinkApiInterfaceSymbolicLinkName;
+static PWSTR gPmicGlinkApiInterfaceSymbolicLinkBuffer;
 static USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA gPmicGlinkUsbcNotification;
 static UCHAR gPmicGlinkPendingPan = PMICGLINK_MAX_PORTS;
 static UCHAR gPmicGlinkPendingPlatformState;
@@ -460,6 +478,7 @@ static NTSTATUS PmicGlinkDDI_EvtDeviceProcessQueryInterfaceRequest(_In_ WDFDEVIC
 static VOID PmicGlinkDDI_NotifyUcsiAlert(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG EventCode, _In_ ULONG EventData);
 static VOID PmicGlinkSetUcsiAlertCallback(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ PFN_PMICGLINK_UCSI_ALERT_CALLBACK Callback);
 static NTSTATUS PmicGlinkCreateDeviceWorkItem(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PFN_WDF_WORKITEM WorkItemRoutine);
+static VOID PmicGlinkSetApiInterfaceSymbolicLink(_In_opt_ const UNICODE_STRING* SymbolicLinkName);
 static NTSTATUS PmicGlinkPlatformUsbc_Request_Write(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ const USBPD_DPM_USBC_WRITE_BUFFER* Request);
 static VOID PmicGlinkPlatformUsbc_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkPlatformSetState_Request_Write_WorkItem(_In_ WDFWORKITEM WorkItem);
@@ -1253,6 +1272,7 @@ PmicGlinkEvtReleaseHardware(
     driverContext->BattMngrDevice = NULL;
 
     PmicGlinkResetCommDataSlots(context, TRUE);
+    PmicGlinkSetApiInterfaceSymbolicLink(NULL);
 
     return STATUS_SUCCESS;
 }
@@ -1907,6 +1927,7 @@ PmicGlinkInterfaceNotificationCallback(
             }
 
             deviceContext->GlinkDeviceLoaded = TRUE;
+            PmicGlinkSetApiInterfaceSymbolicLink((PUNICODE_STRING)&notification->SymbolicLinkName);
             deviceContext->AllReqIntfArrived = deviceContext->ABDAttached ? TRUE : FALSE;
             KeInitializeEvent(&gPmicGlinkConnectedEvent, NotificationEvent, FALSE);
             KeInitializeEvent(&gPmicGlinkLocalDisconnectedEvent, NotificationEvent, FALSE);
@@ -1927,6 +1948,7 @@ PmicGlinkInterfaceNotificationCallback(
             }
 
             deviceContext->GlinkDeviceLoaded = FALSE;
+            PmicGlinkSetApiInterfaceSymbolicLink(NULL);
             deviceContext->AllReqIntfArrived = FALSE;
             deviceContext->GlinkLinkStateUp = FALSE;
         }
@@ -2262,7 +2284,7 @@ PmicGlinkDevice_InitContext(
     Context->LegacyBattId.batt_id = 0xFFFF;
     Context->LegacyBattStateId = 0xCu;
 
-    Context->LegacyChargeStatus.power_state = 2;
+    Context->LegacyChargeStatus.power_state = 1;
     Context->LegacyChargeStatus.capacity = 0xFFFFFFFF;
     Context->LegacyChargeStatus.voltage = 0xFFFFFFFF;
     Context->LegacyChargeStatus.rate = (LONG)0x80000000;
@@ -2579,6 +2601,48 @@ PmicGlinkResetApiInterface(
 }
 
 static VOID
+PmicGlinkSetApiInterfaceSymbolicLink(
+    _In_opt_ const UNICODE_STRING* SymbolicLinkName
+    )
+{
+    PWSTR newBuffer;
+    SIZE_T newSize;
+
+    newBuffer = NULL;
+    newSize = 0u;
+    if ((SymbolicLinkName != NULL)
+        && (SymbolicLinkName->Buffer != NULL)
+        && (SymbolicLinkName->Length != 0u))
+    {
+        newSize = (SIZE_T)SymbolicLinkName->Length + sizeof(WCHAR);
+        newBuffer = (PWSTR)ExAllocatePool2(
+            POOL_FLAG_NON_PAGED,
+            newSize,
+            PMICGLINK_POOLTAG_COMMDATA);
+        if (newBuffer != NULL)
+        {
+            RtlZeroMemory(newBuffer, newSize);
+            RtlCopyMemory(newBuffer, SymbolicLinkName->Buffer, SymbolicLinkName->Length);
+        }
+    }
+
+    if (gPmicGlinkApiInterfaceSymbolicLinkBuffer != NULL)
+    {
+        ExFreePoolWithTag(gPmicGlinkApiInterfaceSymbolicLinkBuffer, PMICGLINK_POOLTAG_COMMDATA);
+        gPmicGlinkApiInterfaceSymbolicLinkBuffer = NULL;
+    }
+
+    RtlZeroMemory(&gPmicGlinkApiInterfaceSymbolicLinkName, sizeof(gPmicGlinkApiInterfaceSymbolicLinkName));
+    if (newBuffer != NULL)
+    {
+        gPmicGlinkApiInterfaceSymbolicLinkBuffer = newBuffer;
+        gPmicGlinkApiInterfaceSymbolicLinkName.Buffer = newBuffer;
+        gPmicGlinkApiInterfaceSymbolicLinkName.Length = SymbolicLinkName->Length;
+        gPmicGlinkApiInterfaceSymbolicLinkName.MaximumLength = (USHORT)newSize;
+    }
+}
+
+static VOID
 PmicGlinkResetCommDataSlots(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _In_ BOOLEAN DeleteMemory
@@ -2627,6 +2691,7 @@ PmicGlinkEnsureApiInterface(
     )
 {
     NTSTATUS status;
+    WDFIOTARGET ioTarget;
 
     if ((Context == NULL) || (Context->Device == NULL))
     {
@@ -2639,6 +2704,34 @@ PmicGlinkEnsureApiInterface(
     }
 
     PmicGlinkResetApiInterface();
+    ioTarget = WdfDeviceGetIoTarget(Context->Device);
+    if (ioTarget != NULL)
+    {
+        status = WdfIoTargetQueryForInterface(
+            ioTarget,
+            &GUID_GLINK_API_INTERFACE,
+            (PINTERFACE)&gPmicGlinkApiInterface,
+            sizeof(gPmicGlinkApiInterface),
+            1,
+            NULL);
+        if (NT_SUCCESS(status))
+        {
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: ensure_api iotarget_query ok size=%lu\n",
+                (ULONG)sizeof(gPmicGlinkApiInterface));
+            return STATUS_SUCCESS;
+        }
+
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: ensure_api iotarget_query failed status=0x%08lx size=%lu\n",
+            (ULONG)status,
+            (ULONG)sizeof(gPmicGlinkApiInterface));
+    }
+
     status = WdfFdoQueryForInterface(
         Context->Device,
         &GUID_GLINK_API_INTERFACE,
@@ -2648,7 +2741,68 @@ PmicGlinkEnsureApiInterface(
         NULL);
     if (!NT_SUCCESS(status))
     {
-        return status;
+        WDFIOTARGET namedIoTarget;
+        WDF_IO_TARGET_OPEN_PARAMS openParams;
+
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: ensure_api fdo_query failed status=0x%08lx nameLen=%hu\n",
+            (ULONG)status,
+            gPmicGlinkApiInterfaceSymbolicLinkName.Length);
+
+        if ((gPmicGlinkApiInterfaceSymbolicLinkName.Buffer == NULL)
+            || (gPmicGlinkApiInterfaceSymbolicLinkName.Length == 0u))
+        {
+            return status;
+        }
+
+        namedIoTarget = NULL;
+        status = WdfIoTargetCreate(Context->Device, WDF_NO_OBJECT_ATTRIBUTES, &namedIoTarget);
+        if (!NT_SUCCESS(status))
+        {
+            return status;
+        }
+
+        WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
+            &openParams,
+            &gPmicGlinkApiInterfaceSymbolicLinkName,
+            GENERIC_READ | GENERIC_WRITE);
+        openParams.ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE;
+
+        status = WdfIoTargetOpen(namedIoTarget, &openParams);
+        if (!NT_SUCCESS(status))
+        {
+            WdfObjectDelete(namedIoTarget);
+            return status;
+        }
+
+        status = WdfIoTargetQueryForInterface(
+            namedIoTarget,
+            &GUID_GLINK_API_INTERFACE,
+            (PINTERFACE)&gPmicGlinkApiInterface,
+            sizeof(gPmicGlinkApiInterface),
+            1,
+            NULL);
+
+        WdfIoTargetClose(namedIoTarget);
+        WdfObjectDelete(namedIoTarget);
+        if (!NT_SUCCESS(status))
+        {
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: ensure_api named_iotarget_query failed status=0x%08lx size=%lu\n",
+                (ULONG)status,
+                (ULONG)sizeof(gPmicGlinkApiInterface));
+            return status;
+        }
+
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: ensure_api named_iotarget_query ok size=%lu\n",
+            (ULONG)sizeof(gPmicGlinkApiInterface));
     }
 
     return STATUS_SUCCESS;
@@ -7931,8 +8085,7 @@ HandleLegacyBattMngrRequest(
 
         if (!usbPowerPresent)
         {
-            outChgStatus->power_state &= ~(1u | 4u);
-            outChgStatus->power_state |= 2u;
+            outChgStatus->power_state = 1u;
             if (outChgStatus->rate > 0)
             {
                 outChgStatus->rate = -outChgStatus->rate;
