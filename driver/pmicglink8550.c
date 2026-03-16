@@ -9548,6 +9548,57 @@ PmicGlink_ANSIToUniString(
     return RtlAnsiStringToUnicodeString(&unicode, &ansi, FALSE);
 }
 
+static
+UCHAR
+PmicGlinkComputeLegacyBattPercentage(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONG RawCapacity
+    )
+{
+    ULONG fullCapacity;
+    ULONGLONG scaledPercent;
+
+    if (Context == NULL)
+    {
+        return 100u;
+    }
+
+    if (RawCapacity == 0xFFFFFFFFu)
+    {
+        return Context->LegacyBattPercentage;
+    }
+
+    if (RawCapacity <= 100u)
+    {
+        return (UCHAR)RawCapacity;
+    }
+
+    fullCapacity = Context->LegacyBattInfo.full_charged_capacity;
+    if ((fullCapacity == 0u) || (fullCapacity == 0xFFFFFFFFu))
+    {
+        fullCapacity = Context->LegacyBattInfo.designed_capacity;
+    }
+
+    if ((fullCapacity != 0u) && (fullCapacity != 0xFFFFFFFFu))
+    {
+        scaledPercent = (((ULONGLONG)RawCapacity * 100ull) + ((ULONGLONG)fullCapacity / 2ull))
+            / (ULONGLONG)fullCapacity;
+        if (scaledPercent > 100ull)
+        {
+            scaledPercent = 100ull;
+        }
+
+        return (UCHAR)scaledPercent;
+    }
+
+    if (RawCapacity <= 10000u)
+    {
+        return (UCHAR)((RawCapacity + 50u) / 100u);
+    }
+
+    return 100u;
+}
+
 NTSTATUS
 PmicGlink_RetrieveRxData(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
@@ -9667,16 +9718,17 @@ PmicGlink_RetrieveRxData(
             RtlCopyMemory(&Context->LegacyChargeStatus.voltage, Buffer + 24, sizeof(Context->LegacyChargeStatus.voltage));
             RtlCopyMemory(&Context->LegacyChargeStatus.power_state, Buffer + 28, sizeof(Context->LegacyChargeStatus.power_state));
             RtlCopyMemory(&Context->LegacyBattTemperature, Buffer + 36, sizeof(Context->LegacyBattTemperature));
-            Context->LegacyBattPercentage = (Context->LegacyChargeStatus.capacity > 100u)
-                ? 100u
-                : (UCHAR)Context->LegacyChargeStatus.capacity;
+            Context->LegacyBattPercentage = PmicGlinkComputeLegacyBattPercentage(
+                Context,
+                Context->LegacyChargeStatus.capacity);
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
                 PMICGLINK_TRACE_LEVEL,
-                "pmicglink: RX chg battState=%lu ps=0x%08lx cap=%lu volt=%lu rate=%ld temp=%lu\n",
+                "pmicglink: RX chg battState=%lu ps=0x%08lx cap=%lu pct=%u volt=%lu rate=%ld temp=%lu\n",
                 Context->LegacyBattStateId,
                 Context->LegacyChargeStatus.power_state,
                 Context->LegacyChargeStatus.capacity,
+                Context->LegacyBattPercentage,
                 Context->LegacyChargeStatus.voltage,
                 Context->LegacyChargeStatus.rate,
                 Context->LegacyBattTemperature);
@@ -9780,16 +9832,20 @@ PmicGlink_RetrieveRxData(
                 battUniqueA,
                 Context->LegacyBattUniqueId,
                 ARRAYSIZE(Context->LegacyBattUniqueId));
+            Context->LegacyBattPercentage = PmicGlinkComputeLegacyBattPercentage(
+                Context,
+                Context->LegacyChargeStatus.capacity);
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
                 PMICGLINK_TRACE_LEVEL,
-                "pmicglink: RX batt_info design=%lu full=%lu cycle=%lu tech=%u crit=%lu est=%lu\n",
+                "pmicglink: RX batt_info design=%lu full=%lu cycle=%lu tech=%u crit=%lu est=%lu pct=%u\n",
                 Context->LegacyBattInfo.designed_capacity,
                 Context->LegacyBattInfo.full_charged_capacity,
                 Context->LegacyBattInfo.cycle_count,
                 Context->LegacyBattInfo.technology,
                 Context->LegacyBattInfo.critical_bias,
-                Context->LegacyBattEstimatedTime);
+                Context->LegacyBattEstimatedTime,
+                Context->LegacyBattPercentage);
         }
         else
         {
