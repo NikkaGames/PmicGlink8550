@@ -491,6 +491,7 @@ static VOID PmicGlinkPlatformUsbc_AcpiNotificationHandler(_In_opt_ PVOID Context
 static NTSTATUS PmicGlinkEnsureBclCriticalCallback(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkNotifyBattMiniStatusFromGlink(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG NotificationData);
+static NTSTATUS PmicGlinkTryAttachBattMiniNoPnp(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
 static VOID PmicGlinkCloseIoTargetIfOpen(_Inout_ WDFIOTARGET* IoTarget);
@@ -2112,8 +2113,8 @@ PmicGlinkInterfaceNotificationCallback(
                     WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
                         &openParams,
                         symbolicLinkName,
-                        GENERIC_READ | GENERIC_WRITE);
-                    openParams.ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE;
+                        PMICGLINK_GLINK_QUERY_ACCESS_MASK);
+                    openParams.ShareAccess = FILE_SHARE_READ;
                     status = WdfIoTargetOpen(deviceContext->BattMiniIoTarget, &openParams);
                     if (NT_SUCCESS(status))
                     {
@@ -4798,6 +4799,79 @@ PmicGlinkNotify_PingBattMiniClass(
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS
+PmicGlinkTryAttachBattMiniNoPnp(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    NTSTATUS status;
+    PWSTR interfaceList;
+    UNICODE_STRING targetName;
+    WDF_IO_TARGET_OPEN_PARAMS openParams;
+
+    if ((Context == NULL) || (Context->Device == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Context->BattMiniDeviceLoaded && (Context->BattMiniIoTarget != NULL))
+    {
+        return STATUS_SUCCESS;
+    }
+
+    interfaceList = NULL;
+    status = IoGetDeviceInterfaces(
+        (LPGUID)&GUID_DEVINTERFACE_PMIC_BATT_MINI,
+        NULL,
+        0ul,
+        &interfaceList);
+    if (!NT_SUCCESS(status))
+    {
+        return status;
+    }
+
+    if ((interfaceList == NULL) || (interfaceList[0] == L'\0'))
+    {
+        if (interfaceList != NULL)
+        {
+            ExFreePool(interfaceList);
+        }
+        return STATUS_NOT_FOUND;
+    }
+
+    if (Context->BattMiniIoTarget == NULL)
+    {
+        status = WdfIoTargetCreate(
+            Context->Device,
+            WDF_NO_OBJECT_ATTRIBUTES,
+            &Context->BattMiniIoTarget);
+    }
+
+    if (NT_SUCCESS(status) && (Context->BattMiniIoTarget != NULL))
+    {
+        RtlInitUnicodeString(&targetName, interfaceList);
+        WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
+            &openParams,
+            &targetName,
+            PMICGLINK_GLINK_QUERY_ACCESS_MASK);
+        openParams.ShareAccess = FILE_SHARE_READ;
+        status = WdfIoTargetOpen(Context->BattMiniIoTarget, &openParams);
+        if (NT_SUCCESS(status))
+        {
+            Context->BattMiniDeviceLoaded = TRUE;
+            Context->NotificationFlag = TRUE;
+            (VOID)PmicGlinkEnsureBclCriticalCallback(Context);
+        }
+        else
+        {
+            PmicGlinkCloseIoTargetIfOpen(&Context->BattMiniIoTarget);
+        }
+    }
+
+    ExFreePool(interfaceList);
+    return status;
+}
+
 static VOID
 PmicGlinkNotifyBattMiniStatusFromGlink(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
@@ -4815,6 +4889,20 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     }
 
     WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+
+    if (!Context->BattMiniDeviceLoaded)
+    {
+        NTSTATUS attachStatus;
+
+        attachStatus = PmicGlinkTryAttachBattMiniNoPnp(Context);
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: battmini on-demand attach status=0x%08lx loaded=%u target=%p\n",
+            (ULONG)attachStatus,
+            Context->BattMiniDeviceLoaded ? 1u : 0u,
+            Context->BattMiniIoTarget);
+    }
 
     if (Context->BattMiniDeviceLoaded)
     {
