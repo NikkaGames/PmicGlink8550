@@ -2830,8 +2830,20 @@ PmicGlinkEnsureApiInterface(
     WDFIOTARGET ioTarget;
     ULONG sizeIndex;
     ULONG versionIndex;
-    static const USHORT querySizes[] = { (USHORT)sizeof(gPmicGlinkApiInterface), 184u, 176u, 168u, 160u };
-    static const USHORT queryVersions[] = { 1u, 2u, 0u };
+    static const USHORT querySizes[] = {
+        (USHORT)sizeof(gPmicGlinkApiInterface),
+        200u,
+        208u,
+        216u,
+        224u,
+        232u,
+        240u,
+        184u,
+        176u,
+        168u,
+        160u
+    };
+    static const USHORT queryVersions[] = { 1u, 2u, 3u, 4u, 0u };
 
     if ((Context == NULL) || (Context->Device == NULL))
     {
@@ -3011,9 +3023,8 @@ PmicGlinkEnsureApiInterface(
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
                 PMICGLINK_TRACE_LEVEL,
-                "pmicglink: ensure_api named_iotarget_query failed status=0x%08lx size=%lu\n",
-                (ULONG)status,
-                (ULONG)sizeof(gPmicGlinkApiInterface));
+                "pmicglink: ensure_api named_iotarget_query failed status=0x%08lx\n",
+                (ULONG)status);
             return status;
         }
 
