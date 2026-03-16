@@ -302,6 +302,7 @@ static ULONGLONG gPmicGlinkLastBattIdQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusQueryMsec;
 static ULONGLONG gPmicGlinkLastBattInfoQueryMsec;
 static ULONGLONG gPmicGlinkLastChargeStatusTraceMsec;
+static ULONGLONG gPmicGlinkLastChannelRecoverAttemptMsec;
 static USBPD_DPM_USBC_PORT_PIN_ASSIGNMENT_DATA gPmicGlinkUsbcNotification;
 static UCHAR gPmicGlinkPendingPan = PMICGLINK_MAX_PORTS;
 static UCHAR gPmicGlinkPendingPlatformState;
@@ -2941,14 +2942,34 @@ PmicGlink_OpenGlinkChannel(
         return STATUS_INVALID_PARAMETER;
     }
 
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: open_channel attempt allReq=%u glinkLoaded=%u linkUp=%u restart=%u hibernate=%u handle=%p\n",
+        Context->AllReqIntfArrived ? 1u : 0u,
+        Context->GlinkDeviceLoaded ? 1u : 0u,
+        Context->GlinkLinkStateUp ? 1u : 0u,
+        Context->GlinkChannelRestart ? 1u : 0u,
+        Context->Hibernate ? 1u : 0u,
+        gPmicGlinkMainChannelHandle);
+
     status = PmicGlinkEnsureApiInterface(Context);
     if (!NT_SUCCESS(status))
     {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: open_channel ensure_api failed status=0x%08lx\n",
+            (ULONG)status);
         return STATUS_SUCCESS;
     }
 
     if (gPmicGlinkApiInterface.GLinkOpen == NULL)
     {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: open_channel GLinkOpen is NULL\n");
         return STATUS_SUCCESS;
     }
 
@@ -2972,11 +2993,21 @@ PmicGlink_OpenGlinkChannel(
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
     if (status != STATUS_SUCCESS)
     {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: open_channel GLinkOpen failed status=0x%08lx\n",
+            (ULONG)status);
         gPmicGlinkMainChannelHandle = NULL;
         return STATUS_UNSUCCESSFUL;
     }
 
     gPmicGlinkMainChannelHandle = channelHandle;
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: open_channel success handle=%p\n",
+        channelHandle);
     return STATUS_SUCCESS;
 }
 
@@ -3147,6 +3178,17 @@ PmicGlinkStateNotificationCb(
         return;
     }
 
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: state_notify event=%lu ctx=%p handle=%p connected=%u restart=%u linkUp=%u\n",
+        (ULONG)Event,
+        Context,
+        channelHandle,
+        Context->GlinkChannelConnected ? 1u : 0u,
+        Context->GlinkChannelRestart ? 1u : 0u,
+        Context->GlinkLinkStateUp ? 1u : 0u);
+
     switch (Event)
     {
     case PmicGlinkChannelConnected:
@@ -3168,6 +3210,12 @@ PmicGlinkStateNotificationCb(
         }
         Context->GlinkRxIntent += 1;
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: state_notify connected done handle=%p rxIntent=%lu\n",
+            gPmicGlinkMainChannelHandle,
+            Context->GlinkRxIntent);
         break;
 
     case PmicGlinkChannelLocalDisconnected:
@@ -3178,6 +3226,12 @@ PmicGlinkStateNotificationCb(
         {
             (VOID)PmicGlink_OpenGlinkChannel(Context);
         }
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: state_notify local_disconnected restart=%u linkUp=%u\n",
+            Context->GlinkChannelRestart ? 1u : 0u,
+            Context->GlinkLinkStateUp ? 1u : 0u);
         break;
 
     case PmicGlinkChannelRemoteDisconnected:
@@ -3194,6 +3248,12 @@ PmicGlinkStateNotificationCb(
             (VOID)KeSetEvent(&gPmicGlinkRemoteDisconnectedEvent, IO_NO_INCREMENT, FALSE);
             (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         }
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: state_notify remote_disconnected restart=%u handle=%p\n",
+            Context->GlinkChannelRestart ? 1u : 0u,
+            gPmicGlinkMainChannelHandle);
         break;
 
     default:
@@ -7746,12 +7806,37 @@ HandleLegacyBattMngrRequest(
 
         if (Context->GlinkChannelRestart || !Context->GlinkChannelConnected)
         {
+            ULONGLONG recoverNowMsec;
+
+            recoverNowMsec = PmicGlink_Helper_get_rel_time_msec();
+            if ((recoverNowMsec >= gPmicGlinkLastChannelRecoverAttemptMsec)
+                && ((recoverNowMsec - gPmicGlinkLastChannelRecoverAttemptMsec) >= 2000ull))
+            {
+                NTSTATUS recoverStatus;
+
+                gPmicGlinkLastChannelRecoverAttemptMsec = recoverNowMsec;
+                recoverStatus = PmicGlink_OpenGlinkChannel(Context);
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    PMICGLINK_TRACE_LEVEL,
+                    "pmicglink: GET_BATT_ID recover attempt status=0x%08lx linkUp=%u restart=%u connected=%u\n",
+                    (ULONG)recoverStatus,
+                    Context->GlinkLinkStateUp ? 1u : 0u,
+                    Context->GlinkChannelRestart ? 1u : 0u,
+                    Context->GlinkChannelConnected ? 1u : 0u);
+            }
+
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
                 PMICGLINK_TRACE_LEVEL,
-                "pmicglink: GET_BATT_ID no-glink restart=%u connected=%u cachedBattId=%lu\n",
+                "pmicglink: GET_BATT_ID no-glink restart=%u connected=%u linkUp=%u allReq=%u loaded=%u rpe=%u handle=%p cachedBattId=%lu\n",
                 Context->GlinkChannelRestart ? 1u : 0u,
                 Context->GlinkChannelConnected ? 1u : 0u,
+                Context->GlinkLinkStateUp ? 1u : 0u,
+                Context->AllReqIntfArrived ? 1u : 0u,
+                Context->GlinkDeviceLoaded ? 1u : 0u,
+                Context->RpeInitialized ? 1u : 0u,
+                gPmicGlinkMainChannelHandle,
                 Context->LegacyBattId.batt_id);
             return STATUS_SUCCESS;
         }
@@ -9452,6 +9537,14 @@ PmicGLinkRegisterLinkStateCb(
         return;
     }
 
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: link_state_cb state=%lu xport=%s remote=%s\n",
+        LinkInfo->LinkState,
+        LinkInfo->Xport,
+        LinkInfo->RemoteSs);
+
     if (LinkInfo->LinkState == 1u)
     {
         deviceContext->GlinkLinkStateUp = TRUE;
@@ -9487,8 +9580,6 @@ PmicGlinkRpeADSPStateNotificationCallback(
     NTSTATUS status;
     PMIC_GLINK_LINK_ID linkId;
 
-    UNREFERENCED_PARAMETER(PreviousState);
-
     if ((Context == NULL) || (CurrentState == NULL))
     {
         return;
@@ -9499,6 +9590,15 @@ PmicGlinkRpeADSPStateNotificationCallback(
     {
         return;
     }
+
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: rpe_adsp_state prev=%lu curr=%lu rpeInit=%u hibernate=%u\n",
+        PreviousState,
+        *CurrentState,
+        deviceContext->RpeInitialized ? 1u : 0u,
+        deviceContext->Hibernate ? 1u : 0u);
 
     if ((*CurrentState == PMICGLINK_RPE_STATE_ID_PDR_READY_FOR_COMMANDS)
         && !deviceContext->RpeInitialized)
@@ -9523,6 +9623,11 @@ PmicGlinkRpeADSPStateNotificationCallback(
                     && (gPmicGlinkApiInterface.GLinkRegisterLinkStateCb(&linkId, deviceContext) == STATUS_SUCCESS))
                 {
                     gPmicGlinkLinkStateHandle = linkId.Handle;
+                    DbgPrintEx(
+                        DPFLTR_IHVDRIVER_ID,
+                        PMICGLINK_TRACE_LEVEL,
+                        "pmicglink: rpe_adsp_state link-state-cb registered handle=%p\n",
+                        gPmicGlinkLinkStateHandle);
                 }
             }
 
