@@ -358,6 +358,8 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_TRACE_LEVEL 31
 #define PMICGLINK_BC_BATTERY_STATUS_GET_OPCODE 0x30u
 #define PMICGLINK_BC_PROP_BATT_CAPACITY 4u
+#define PMICGLINK_BC_ADSP_DEBUG_OPCODE 0x100u
+#define PMICGLINK_BC_DEBUG_MSG_OPCODE 0x101u
 #define PMICGLINK_ABD_IOCTL_REGISTER_CONNECTION 0xC3502FA4u
 #define PMICGLINK_ABD_IOCTL_UNREGISTER_CONNECTION 0xC3502FA8u
 #define PMICGLINK_ULOG_MSG_HEADER 0x10000800Aull
@@ -3272,7 +3274,10 @@ PmicGlinkIsDeferredNotificationOp(
         || (OpCode == 19u)
         || (OpCode == 22u)
         || (OpCode == 130u)
-        || (OpCode == 259u));
+        || (OpCode == 259u)
+        || (OpCode == PMICGLINK_BC_BATTERY_STATUS_GET_OPCODE)
+        || (OpCode == PMICGLINK_BC_ADSP_DEBUG_OPCODE)
+        || (OpCode == PMICGLINK_BC_DEBUG_MSG_OPCODE));
 }
 
 static VOID
@@ -3313,7 +3318,16 @@ PmicGlinkGetPendingNotificationOp(
     _Out_ PULONG OpCode
     )
 {
-    static const ULONG notificationOps[] = { 19u, 7u, 22u, 259u, 130u };
+    static const ULONG notificationOps[] = {
+        PMICGLINK_BC_BATTERY_STATUS_GET_OPCODE,
+        PMICGLINK_BC_ADSP_DEBUG_OPCODE,
+        PMICGLINK_BC_DEBUG_MSG_OPCODE,
+        19u,
+        7u,
+        22u,
+        259u,
+        130u
+    };
     BOOLEAN found;
     ULONG i;
 
@@ -10114,6 +10128,28 @@ PmicGlink_RetrieveRxData(
         }
         break;
 
+    case PMICGLINK_BC_ADSP_DEBUG_OPCODE:
+        if (BufferSize >= 16u)
+        {
+            ULONG debugValue;
+
+            RtlCopyMemory(&debugValue, Buffer + 12, sizeof(debugValue));
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: RX adsp_debug value=0x%08lx\n",
+                debugValue);
+        }
+        else
+        {
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: RX adsp_debug short packet size=%Iu\n",
+                BufferSize);
+        }
+        break;
+
     case 3u:
     case 4u:
     case 5u:
@@ -10474,11 +10510,27 @@ PmicGlink_RetrieveRxData(
         break;
 
     case 257u:
+    {
+        ULONG meta;
+
+        meta = 0u;
+        if (BufferSize >= 16u)
+        {
+            RtlCopyMemory(&meta, Buffer + 12, sizeof(meta));
+        }
+
         if (BufferSize >= 16u + sizeof(Context->OemPropData))
         {
             RtlCopyMemory(Context->OemPropData, Buffer + 16, sizeof(Context->OemPropData));
         }
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: RX oem_prop opcode=0x101 meta=0x%08lx size=%Iu\n",
+            meta,
+            BufferSize);
         break;
+    }
 
     case 258u:
         if (BufferSize >= 16u)
