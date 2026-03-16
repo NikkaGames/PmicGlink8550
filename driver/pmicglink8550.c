@@ -2776,6 +2776,10 @@ PmicGlinkEnsureApiInterface(
 {
     NTSTATUS status;
     WDFIOTARGET ioTarget;
+    ULONG sizeIndex;
+    ULONG versionIndex;
+    static const USHORT querySizes[] = { (USHORT)sizeof(gPmicGlinkApiInterface), 184u, 176u, 168u, 160u };
+    static const USHORT queryVersions[] = { 1u, 2u, 0u };
 
     if ((Context == NULL) || (Context->Device == NULL))
     {
@@ -2796,38 +2800,69 @@ PmicGlinkEnsureApiInterface(
 
     if (ioTarget != NULL)
     {
-        status = WdfIoTargetQueryForInterface(
-            ioTarget,
-            &GUID_GLINK_API_INTERFACE,
-            (PINTERFACE)&gPmicGlinkApiInterface,
-            sizeof(gPmicGlinkApiInterface),
-            1,
-            NULL);
-        if (NT_SUCCESS(status))
+        for (versionIndex = 0u; versionIndex < RTL_NUMBER_OF(queryVersions); versionIndex++)
         {
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
                 PMICGLINK_TRACE_LEVEL,
-                "pmicglink: ensure_api iotarget_query ok size=%lu\n",
-                (ULONG)sizeof(gPmicGlinkApiInterface));
-            return STATUS_SUCCESS;
+                "pmicglink: ensure_api iotarget_query probing version=%hu\n",
+                queryVersions[versionIndex]);
+
+            for (sizeIndex = 0u; sizeIndex < RTL_NUMBER_OF(querySizes); sizeIndex++)
+            {
+                PmicGlinkResetApiInterface();
+                status = WdfIoTargetQueryForInterface(
+                    ioTarget,
+                    &GUID_GLINK_API_INTERFACE,
+                    (PINTERFACE)&gPmicGlinkApiInterface,
+                    querySizes[sizeIndex],
+                    queryVersions[versionIndex],
+                    NULL);
+                if (NT_SUCCESS(status))
+                {
+                    DbgPrintEx(
+                        DPFLTR_IHVDRIVER_ID,
+                        PMICGLINK_TRACE_LEVEL,
+                        "pmicglink: ensure_api iotarget_query ok version=%hu size=%lu\n",
+                        queryVersions[versionIndex],
+                        querySizes[sizeIndex]);
+                    return STATUS_SUCCESS;
+                }
+            }
         }
 
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
             PMICGLINK_TRACE_LEVEL,
-            "pmicglink: ensure_api iotarget_query failed status=0x%08lx size=%lu\n",
-            (ULONG)status,
-            (ULONG)sizeof(gPmicGlinkApiInterface));
+            "pmicglink: ensure_api iotarget_query failed status=0x%08lx\n",
+            (ULONG)status);
     }
 
-    status = WdfFdoQueryForInterface(
-        Context->Device,
-        &GUID_GLINK_API_INTERFACE,
-        (PINTERFACE)&gPmicGlinkApiInterface,
-        sizeof(gPmicGlinkApiInterface),
-        1,
-        NULL);
+    for (versionIndex = 0u; versionIndex < RTL_NUMBER_OF(queryVersions); versionIndex++)
+    {
+        for (sizeIndex = 0u; sizeIndex < RTL_NUMBER_OF(querySizes); sizeIndex++)
+        {
+            PmicGlinkResetApiInterface();
+            status = WdfFdoQueryForInterface(
+                Context->Device,
+                &GUID_GLINK_API_INTERFACE,
+                (PINTERFACE)&gPmicGlinkApiInterface,
+                querySizes[sizeIndex],
+                queryVersions[versionIndex],
+                NULL);
+            if (NT_SUCCESS(status))
+            {
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    PMICGLINK_TRACE_LEVEL,
+                    "pmicglink: ensure_api fdo_query ok version=%hu size=%lu\n",
+                    queryVersions[versionIndex],
+                    querySizes[sizeIndex]);
+                return STATUS_SUCCESS;
+            }
+        }
+    }
+
     if (!NT_SUCCESS(status))
     {
         WDFIOTARGET namedIoTarget;
@@ -2866,13 +2901,35 @@ PmicGlinkEnsureApiInterface(
             return status;
         }
 
-        status = WdfIoTargetQueryForInterface(
-            namedIoTarget,
-            &GUID_GLINK_API_INTERFACE,
-            (PINTERFACE)&gPmicGlinkApiInterface,
-            sizeof(gPmicGlinkApiInterface),
-            1,
-            NULL);
+        for (versionIndex = 0u; versionIndex < RTL_NUMBER_OF(queryVersions); versionIndex++)
+        {
+            for (sizeIndex = 0u; sizeIndex < RTL_NUMBER_OF(querySizes); sizeIndex++)
+            {
+                PmicGlinkResetApiInterface();
+                status = WdfIoTargetQueryForInterface(
+                    namedIoTarget,
+                    &GUID_GLINK_API_INTERFACE,
+                    (PINTERFACE)&gPmicGlinkApiInterface,
+                    querySizes[sizeIndex],
+                    queryVersions[versionIndex],
+                    NULL);
+                if (NT_SUCCESS(status))
+                {
+                    DbgPrintEx(
+                        DPFLTR_IHVDRIVER_ID,
+                        PMICGLINK_TRACE_LEVEL,
+                        "pmicglink: ensure_api named_iotarget_query ok version=%hu size=%lu\n",
+                        queryVersions[versionIndex],
+                        querySizes[sizeIndex]);
+                    break;
+                }
+            }
+
+            if (NT_SUCCESS(status))
+            {
+                break;
+            }
+        }
 
         WdfIoTargetClose(namedIoTarget);
         WdfObjectDelete(namedIoTarget);
