@@ -4831,6 +4831,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         if (NT_SUCCESS(notifyStatus))
         {
             Context->LegacyStatusNotificationPending = TRUE;
+            Context->LegacyStateChangePending = TRUE;
         }
 
         if ((NotificationData & 0xFFu) == 0x83u)
@@ -4852,6 +4853,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
             if (NT_SUCCESS(notifyStatus))
             {
                 Context->LegacyStatusNotificationPending = TRUE;
+                Context->LegacyStateChangePending = TRUE;
             }
         }
     }
@@ -8259,9 +8261,6 @@ HandleLegacyBattMngrRequest(
     {
         DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_CHARGER_STATUS\n");
         BATT_MNGR_CHG_STATUS_OUT* outChgStatus;
-        BOOLEAN usbPowerPresent;
-        ULONG portIndex;
-        UCHAR usbStatusQueryPort;
         ULONGLONG nowMsec;
 
         if ((OutputBuffer == NULL) || (OutputBufferSize != sizeof(*outChgStatus)))
@@ -8290,45 +8289,7 @@ HandleLegacyBattMngrRequest(
 
         outChgStatus = (BATT_MNGR_CHG_STATUS_OUT*)OutputBuffer;
         *outChgStatus = Context->LegacyChargeStatus;
-
-        usbStatusQueryPort = 0u;
-        if ((PmicGlinkQuerySystemTime().QuadPart - gPmicGlinkLastUsbIoctlEvent.QuadPart) > 10000000ll)
-        {
-            (VOID)PmicGlink_SyncSendReceive(
-                Context,
-                IOCTL_PMICGLINK_GET_USB_CHG_STATUS,
-                &usbStatusQueryPort,
-                sizeof(usbStatusQueryPort));
-            gPmicGlinkLastUsbIoctlEvent = PmicGlinkQuerySystemTime();
-        }
-
-        usbPowerPresent = FALSE;
-        for (portIndex = 0u; portIndex < PMICGLINK_MAX_PORTS; portIndex++)
-        {
-            if (Context->UsbinPower[portIndex] > 0)
-            {
-                usbPowerPresent = TRUE;
-                break;
-            }
-        }
-
-        if (!usbPowerPresent)
-        {
-            outChgStatus->power_state &= ~(1u | 4u);
-            outChgStatus->power_state |= 2u;
-            outChgStatus->charging_source = 0u;
-            if (outChgStatus->rate > 0)
-            {
-                outChgStatus->rate = -outChgStatus->rate;
-            }
-        }
-        else
-        {
-            if (outChgStatus->charging_source == 0u)
-            {
-                outChgStatus->charging_source = 2u;
-            }
-        }
+        outChgStatus->charging_source = 2u;
 
         if ((gPmicGlinkLastChargeStatusTraceMsec == 0)
             || (nowMsec < gPmicGlinkLastChargeStatusTraceMsec)
@@ -9591,6 +9552,17 @@ PmicGlink_RetrieveRxData(
         {
             RtlCopyMemory(&notificationAux, Buffer + (sizeof(ULONG) * 4u), sizeof(notificationAux));
         }
+
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: notify op=%lu id=0x%08lx type=%lu data=0x%08lx aux=0x%08lx size=%Iu\n",
+            opCode,
+            notificationId,
+            notificationType,
+            notificationData,
+            notificationAux,
+            BufferSize);
 
         if (notificationType == 2u)
         {
