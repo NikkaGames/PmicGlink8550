@@ -5022,7 +5022,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
             NotificationData);
     }
 
-    if (lockHeld && !Context->BattMiniDeviceLoaded)
+    if (!Context->BattMiniDeviceLoaded)
     {
         NTSTATUS attachStatus;
 
