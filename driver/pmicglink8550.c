@@ -7745,6 +7745,13 @@ HandleLegacyBattMngrRequest(
 
         if (Context->GlinkChannelRestart || !Context->GlinkChannelConnected)
         {
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                DPFLTR_INFO_LEVEL,
+                "pmicglink: GET_BATT_ID no-glink restart=%u connected=%u cachedBattId=%lu\n",
+                Context->GlinkChannelRestart ? 1u : 0u,
+                Context->GlinkChannelConnected ? 1u : 0u,
+                Context->LegacyBattId.batt_id);
             return STATUS_SUCCESS;
         }
 
@@ -7768,6 +7775,13 @@ HandleLegacyBattMngrRequest(
         }
 
         outBattId->batt_id = Context->LegacyBattId.batt_id;
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            DPFLTR_INFO_LEVEL,
+            "pmicglink: GET_BATT_ID result status=0x%08lx battId=%lu queryTick=%I64u\n",
+            (ULONG)status,
+            outBattId->batt_id,
+            nowMsec);
         return status;
     }
 
@@ -7971,6 +7985,17 @@ HandleLegacyBattMngrRequest(
         }
 
         *BytesReturned = PMICGLINK_BATTMNGR_BATT_INFO_OUT_SIZE;
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            DPFLTR_INFO_LEVEL,
+            "pmicglink: GET_BATT_INFO type=%lu status=0x%08lx temp=%lu est=%lu design=%lu full=%lu cycle=%lu\n",
+            request->batt_info_type,
+            (ULONG)status,
+            Context->LegacyBattTemperature,
+            Context->LegacyBattEstimatedTime,
+            Context->LegacyBattInfo.designed_capacity,
+            Context->LegacyBattInfo.full_charged_capacity,
+            Context->LegacyBattInfo.cycle_count);
         return status;
     }
 
@@ -8599,6 +8624,13 @@ PmicGlink_RetrieveRxData(
     RtlCopyMemory(&packetOpCode, Buffer + sizeof(ULONGLONG), sizeof(packetOpCode));
     if (packetOpCode != OpCode)
     {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            DPFLTR_INFO_LEVEL,
+            "pmicglink: RX opcode mismatch expected=%lu got=%lu size=%Iu\n",
+            OpCode,
+            packetOpCode,
+            BufferSize);
         Context->LastRxValid = FALSE;
         return STATUS_SUCCESS;
     }
@@ -8614,6 +8646,20 @@ PmicGlink_RetrieveRxData(
             {
                 gPmicGlinkCachedBatteryStatus = 1u;
             }
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                DPFLTR_INFO_LEVEL,
+                "pmicglink: RX batt_id=%lu size=%Iu\n",
+                Context->LegacyBattId.batt_id,
+                BufferSize);
+        }
+        else
+        {
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                DPFLTR_INFO_LEVEL,
+                "pmicglink: RX batt_id short packet size=%Iu\n",
+                BufferSize);
         }
         break;
 
@@ -8629,6 +8675,24 @@ PmicGlink_RetrieveRxData(
             Context->LegacyBattPercentage = (Context->LegacyChargeStatus.capacity > 100u)
                 ? 100u
                 : (UCHAR)Context->LegacyChargeStatus.capacity;
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                DPFLTR_INFO_LEVEL,
+                "pmicglink: RX chg battState=%lu ps=0x%08lx cap=%lu volt=%lu rate=%ld temp=%lu\n",
+                Context->LegacyBattStateId,
+                Context->LegacyChargeStatus.power_state,
+                Context->LegacyChargeStatus.capacity,
+                Context->LegacyChargeStatus.voltage,
+                Context->LegacyChargeStatus.rate,
+                Context->LegacyBattTemperature);
+        }
+        else
+        {
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                DPFLTR_INFO_LEVEL,
+                "pmicglink: RX chg short packet size=%Iu\n",
+                BufferSize);
         }
         break;
 
@@ -8718,6 +8782,24 @@ PmicGlink_RetrieveRxData(
                 battUniqueA,
                 Context->LegacyBattUniqueId,
                 ARRAYSIZE(Context->LegacyBattUniqueId));
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                DPFLTR_INFO_LEVEL,
+                "pmicglink: RX batt_info design=%lu full=%lu cycle=%lu tech=%u crit=%lu est=%lu\n",
+                Context->LegacyBattInfo.designed_capacity,
+                Context->LegacyBattInfo.full_charged_capacity,
+                Context->LegacyBattInfo.cycle_count,
+                Context->LegacyBattInfo.technology,
+                Context->LegacyBattInfo.critical_bias,
+                Context->LegacyBattEstimatedTime);
+        }
+        else
+        {
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                DPFLTR_INFO_LEVEL,
+                "pmicglink: RX batt_info short packet size=%Iu\n",
+                BufferSize);
         }
         break;
 
