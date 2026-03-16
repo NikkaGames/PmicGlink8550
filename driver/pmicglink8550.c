@@ -5518,6 +5518,7 @@ PmicGlinkSendDriverRequestAsync(
     WDF_OBJECT_ATTRIBUTES attributes;
     WDF_OBJECT_ATTRIBUTES memoryAttributes;
     WDFMEMORY inputMemory;
+    PVOID inputMemoryBuffer;
     WDF_REQUEST_SEND_OPTIONS requestOptions;
 
     if (IoTarget == NULL)
@@ -5534,20 +5535,25 @@ PmicGlinkSendDriverRequestAsync(
     }
 
     inputMemory = NULL;
+    inputMemoryBuffer = NULL;
     if ((InputBuffer != NULL) && (InputBufferSize != 0))
     {
         WDF_OBJECT_ATTRIBUTES_INIT(&memoryAttributes);
         memoryAttributes.ParentObject = request;
-        status = WdfMemoryCreatePreallocated(
+        status = WdfMemoryCreate(
             &memoryAttributes,
-            InputBuffer,
+            NonPagedPoolNx,
+            PMICGLINK_POOLTAG_COMMDATA,
             InputBufferSize,
-            &inputMemory);
+            &inputMemory,
+            &inputMemoryBuffer);
         if (!NT_SUCCESS(status))
         {
             WdfObjectDelete(request);
             return status;
         }
+
+        RtlCopyMemory(inputMemoryBuffer, InputBuffer, InputBufferSize);
 
         status = WdfIoTargetFormatRequestForIoctl(
             IoTarget,
