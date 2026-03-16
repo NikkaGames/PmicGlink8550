@@ -282,7 +282,7 @@ DEFINE_GUID(
 
 DEFINE_GUID(
     GUID_GLINK_API_INTERFACE,
-    0xdc449f0c,
+    0xdc424aec,
     0x4d0f,
     0x4a41,
     0x8e,
