@@ -330,6 +330,7 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE 0x800A2008u
 #define PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS 0x800A0FB0u
 #define PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS (-100000000ll)
+#define PMICGLINK_TRACE_LEVEL 31
 #define PMICGLINK_ABD_IOCTL_REGISTER_CONNECTION 0xC3502FA4u
 #define PMICGLINK_ABD_IOCTL_UNREGISTER_CONNECTION 0xC3502FA8u
 #define PMICGLINK_ULOG_MSG_HEADER 0x10000800Aull
@@ -7702,7 +7703,7 @@ HandleLegacyBattMngrRequest(
     effectiveIoctl = PmicGlinkNormalizeLegacyIoctl(IoControlCode);
     DbgPrintEx(
         DPFLTR_IHVDRIVER_ID,
-        DPFLTR_INFO_LEVEL,
+        PMICGLINK_TRACE_LEVEL,
         "pmicglink: legacy ioctl in=0x%08lx normalized=0x%08lx (%s) inLen=%Iu outLen=%Iu\n",
         IoControlCode,
         effectiveIoctl,
@@ -7714,7 +7715,7 @@ HandleLegacyBattMngrRequest(
     {
     case IOCTL_BATTMNGR_GET_CAPABILITIES:
     {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case GET_CAPABILITIES\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_CAPABILITIES\n");
         BATT_MNGR_GET_CAPABILITIES_OUT* outCapabilities;
 
         if ((OutputBuffer == NULL) || (OutputBufferSize != sizeof(*outCapabilities)))
@@ -7730,7 +7731,7 @@ HandleLegacyBattMngrRequest(
 
     case IOCTL_BATTMNGR_GET_BATT_ID:
     {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case GET_BATT_ID\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_BATT_ID\n");
         BATT_MNGR_GET_BATT_ID_OUT* outBattId;
         ULONGLONG nowMsec;
 
@@ -7747,7 +7748,7 @@ HandleLegacyBattMngrRequest(
         {
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
-                DPFLTR_INFO_LEVEL,
+                PMICGLINK_TRACE_LEVEL,
                 "pmicglink: GET_BATT_ID no-glink restart=%u connected=%u cachedBattId=%lu\n",
                 Context->GlinkChannelRestart ? 1u : 0u,
                 Context->GlinkChannelConnected ? 1u : 0u,
@@ -7777,7 +7778,7 @@ HandleLegacyBattMngrRequest(
         outBattId->batt_id = Context->LegacyBattId.batt_id;
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
-            DPFLTR_INFO_LEVEL,
+            PMICGLINK_TRACE_LEVEL,
             "pmicglink: GET_BATT_ID result status=0x%08lx battId=%lu queryTick=%I64u\n",
             (ULONG)status,
             outBattId->batt_id,
@@ -7787,7 +7788,7 @@ HandleLegacyBattMngrRequest(
 
     case IOCTL_BATTMNGR_GET_CHARGER_STATUS:
     {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case GET_CHARGER_STATUS\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_CHARGER_STATUS\n");
         BATT_MNGR_CHG_STATUS_OUT* outChgStatus;
         BOOLEAN usbPowerPresent;
         ULONG portIndex;
@@ -7860,7 +7861,7 @@ HandleLegacyBattMngrRequest(
             gPmicGlinkLastChargeStatusTraceMsec = nowMsec;
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
-                DPFLTR_INFO_LEVEL,
+                PMICGLINK_TRACE_LEVEL,
                 "pmicglink: qstatus ps=0x%08lx cap=%lu volt=%lu rate=%ld usb=[%ld,%ld,%ld,%ld]\n",
                 outChgStatus->power_state,
                 outChgStatus->capacity,
@@ -7885,7 +7886,7 @@ HandleLegacyBattMngrRequest(
 
     case IOCTL_BATTMNGR_GET_BATT_INFO:
     {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case GET_BATT_INFO\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_BATT_INFO\n");
         const BATT_MNGR_GET_BATT_INFO* request;
         BATT_MNGR_GET_BATT_INFO_OUT* outBattInfo;
         ULONGLONG nowMsec;
@@ -7987,7 +7988,7 @@ HandleLegacyBattMngrRequest(
         *BytesReturned = PMICGLINK_BATTMNGR_BATT_INFO_OUT_SIZE;
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
-            DPFLTR_INFO_LEVEL,
+            PMICGLINK_TRACE_LEVEL,
             "pmicglink: GET_BATT_INFO type=%lu status=0x%08lx temp=%lu est=%lu design=%lu full=%lu cycle=%lu\n",
             request->batt_info_type,
             (ULONG)status,
@@ -8000,7 +8001,7 @@ HandleLegacyBattMngrRequest(
     }
 
     case IOCTL_BATTMNGR_CONTROL_CHARGING:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case CONTROL_CHARGING\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case CONTROL_CHARGING\n");
         if (InputBufferSize != sizeof(BATT_MNGR_CONTROL_CHARGING))
         {
             return STATUS_INVALID_PARAMETER;
@@ -8015,7 +8016,7 @@ HandleLegacyBattMngrRequest(
             BytesReturned);
 
     case IOCTL_BATTMNGR_SET_STATUS_CRITERIA:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case SET_STATUS_CRITERIA\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case SET_STATUS_CRITERIA\n");
         return PmicGlink_SyncSendReceive(
             Context,
             IOCTL_BATTMNGR_SET_STATUS_CRITERIA,
@@ -8023,7 +8024,7 @@ HandleLegacyBattMngrRequest(
             InputBufferSize);
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case GET_BATT_PRESENT\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_BATT_PRESENT\n");
         if (!Context->Notify)
         {
             return STATUS_SUCCESS;
@@ -8042,7 +8043,7 @@ HandleLegacyBattMngrRequest(
         return status;
 
     case IOCTL_BATTMNGR_SET_OPERATION_MODE:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case SET_OPERATION_MODE\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case SET_OPERATION_MODE\n");
         return PmicGlink_SyncSendReceive(
             Context,
             IOCTL_BATTMNGR_SET_OPERATION_MODE,
@@ -8051,7 +8052,7 @@ HandleLegacyBattMngrRequest(
 
     case IOCTL_BATTMNGR_SET_CHARGE_RATE:
     {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case SET_CHARGE_RATE\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case SET_CHARGE_RATE\n");
         const BATT_MNGR_SET_CHARGE_RATE* request;
 
         if ((InputBuffer == NULL) || (InputBufferSize != sizeof(BATT_MNGR_SET_CHARGE_RATE)))
@@ -8077,12 +8078,12 @@ HandleLegacyBattMngrRequest(
     }
 
     case IOCTL_BATTMNGR_NOTIFY_IFACE_FREE:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case NOTIFY_IFACE_FREE\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case NOTIFY_IFACE_FREE\n");
         return PmicGlinkNotify_Interface_Free(Context);
 
     case IOCTL_BATTMNGR_GET_BATTERY_PRESENT_STATUS:
     {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case GET_BATTERY_PRESENT_STATUS\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_BATTERY_PRESENT_STATUS\n");
         BATT_MNGR_GET_BATTERY_PRESENT_STATUS* outPresentStatus;
 
         if ((OutputBuffer == NULL) || (OutputBufferSize != sizeof(*outPresentStatus)))
@@ -8104,7 +8105,7 @@ HandleLegacyBattMngrRequest(
 
     case IOCTL_BATTMNGR_GET_TEST_INFO:
     {
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case GET_TEST_INFO\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_TEST_INFO\n");
         BATT_MNGR_GENERIC_TEST_INFO_OUTPUT* outTestInfo;
 
         if ((OutputBuffer == NULL) || (OutputBufferSize != sizeof(*outTestInfo)))
@@ -8131,7 +8132,7 @@ HandleLegacyBattMngrRequest(
     }
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT_V1:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case GET_BATT_PRESENT_V1\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_BATT_PRESENT_V1\n");
         if (OutputBufferSize != 24)
         {
             return STATUS_INVALID_PARAMETER;
@@ -8146,7 +8147,7 @@ HandleLegacyBattMngrRequest(
         return STATUS_UNSUCCESSFUL;
 
     case IOCTL_BATTMNGR_ENABLE_CHARGE_LIMIT:
-        DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: legacy case ENABLE_CHARGE_LIMIT\n");
+        DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case ENABLE_CHARGE_LIMIT\n");
         if (!Context->GlinkChannelConnected)
         {
             return STATUS_UNSUCCESSFUL;
@@ -8161,7 +8162,7 @@ HandleLegacyBattMngrRequest(
     default:
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
-            DPFLTR_INFO_LEVEL,
+            PMICGLINK_TRACE_LEVEL,
             "pmicglink: legacy case UNKNOWN normalized=0x%08lx\n",
             effectiveIoctl);
         return STATUS_NOT_SUPPORTED;
@@ -8626,7 +8627,7 @@ PmicGlink_RetrieveRxData(
     {
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
-            DPFLTR_INFO_LEVEL,
+            PMICGLINK_TRACE_LEVEL,
             "pmicglink: RX opcode mismatch expected=%lu got=%lu size=%Iu\n",
             OpCode,
             packetOpCode,
@@ -8648,7 +8649,7 @@ PmicGlink_RetrieveRxData(
             }
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
-                DPFLTR_INFO_LEVEL,
+                PMICGLINK_TRACE_LEVEL,
                 "pmicglink: RX batt_id=%lu size=%Iu\n",
                 Context->LegacyBattId.batt_id,
                 BufferSize);
@@ -8657,7 +8658,7 @@ PmicGlink_RetrieveRxData(
         {
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
-                DPFLTR_INFO_LEVEL,
+                PMICGLINK_TRACE_LEVEL,
                 "pmicglink: RX batt_id short packet size=%Iu\n",
                 BufferSize);
         }
@@ -8677,7 +8678,7 @@ PmicGlink_RetrieveRxData(
                 : (UCHAR)Context->LegacyChargeStatus.capacity;
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
-                DPFLTR_INFO_LEVEL,
+                PMICGLINK_TRACE_LEVEL,
                 "pmicglink: RX chg battState=%lu ps=0x%08lx cap=%lu volt=%lu rate=%ld temp=%lu\n",
                 Context->LegacyBattStateId,
                 Context->LegacyChargeStatus.power_state,
@@ -8690,7 +8691,7 @@ PmicGlink_RetrieveRxData(
         {
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
-                DPFLTR_INFO_LEVEL,
+                PMICGLINK_TRACE_LEVEL,
                 "pmicglink: RX chg short packet size=%Iu\n",
                 BufferSize);
         }
@@ -8784,7 +8785,7 @@ PmicGlink_RetrieveRxData(
                 ARRAYSIZE(Context->LegacyBattUniqueId));
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
-                DPFLTR_INFO_LEVEL,
+                PMICGLINK_TRACE_LEVEL,
                 "pmicglink: RX batt_info design=%lu full=%lu cycle=%lu tech=%u crit=%lu est=%lu\n",
                 Context->LegacyBattInfo.designed_capacity,
                 Context->LegacyBattInfo.full_charged_capacity,
@@ -8797,7 +8798,7 @@ PmicGlink_RetrieveRxData(
         {
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
-                DPFLTR_INFO_LEVEL,
+                PMICGLINK_TRACE_LEVEL,
                 "pmicglink: RX batt_info short packet size=%Iu\n",
                 BufferSize);
         }
@@ -9817,7 +9818,7 @@ PmicGlinkUlogPrintBuffer(
                 RtlZeroMemory(lineBuffer, sizeof(lineBuffer));
                 RtlCopyMemory(lineBuffer, &localBuffer[chunkStart], chunkBytes);
                 lineBuffer[chunkBytes - 1u] = '\0';
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: %s\n", lineBuffer);
+                DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: %s\n", lineBuffer);
 
                 chunkStart += chunkBytes;
             }
@@ -9830,7 +9831,7 @@ PmicGlinkUlogPrintBuffer(
             RtlZeroMemory(lineBuffer, sizeof(lineBuffer));
             RtlCopyMemory(lineBuffer, &localBuffer[lineStart], lineBytes);
             lineBuffer[index - lineStart] = '\0';
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "pmicglink: %s\n", lineBuffer);
+            DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: %s\n", lineBuffer);
         }
 
         lineStart = index + 1u;
