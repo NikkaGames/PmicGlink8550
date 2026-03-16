@@ -1967,6 +1967,13 @@ PmicGlinkInterfaceNotificationCallback(
                 return STATUS_INVALID_PARAMETER;
             }
 
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: glink_iface arrival nameLen=%hu target=%p\n",
+                symbolicLinkName->Length,
+                deviceContext->GlinkIoTarget);
+
             WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
                 &openParams,
                 symbolicLinkName,
@@ -1975,9 +1982,20 @@ PmicGlinkInterfaceNotificationCallback(
             status = WdfIoTargetOpen(deviceContext->GlinkIoTarget, &openParams);
             if (!NT_SUCCESS(status))
             {
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    PMICGLINK_TRACE_LEVEL,
+                    "pmicglink: glink_iface open failed status=0x%08lx\n",
+                    (ULONG)status);
                 PmicGlinkCloseIoTargetIfOpen(&deviceContext->GlinkIoTarget);
                 return status;
             }
+
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: glink_iface open ok target=%p\n",
+                deviceContext->GlinkIoTarget);
 
             deviceContext->GlinkDeviceLoaded = TRUE;
             PmicGlinkSetApiInterfaceSymbolicLink(symbolicLinkName);
