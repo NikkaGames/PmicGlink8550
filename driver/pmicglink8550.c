@@ -4806,6 +4806,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
 {
     SIZE_T notifyBytesReturned;
     NTSTATUS notifyStatus;
+    ULONG battMiniNotifyArgument;
 
     PmicGlinkNotify_PingBattMiniClass(Context);
     if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) == 0)
@@ -4828,33 +4829,43 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
             PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
             &notifyBytesReturned);
         (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: battmini notify_presence status=0x%08lx notif=0x%08lx\n",
+            (ULONG)notifyStatus,
+            NotificationData);
         if (NT_SUCCESS(notifyStatus))
         {
             Context->LegacyStatusNotificationPending = TRUE;
             Context->LegacyStateChangePending = TRUE;
         }
 
-        if ((NotificationData & 0xFFu) == 0x83u)
+        battMiniNotifyArgument = ((NotificationData & 0xFFu) == 0x83u)
+            ? (NotificationData >> 8)
+            : NotificationData;
+        notifyBytesReturned = 0u;
+        notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
+            Context->BattMiniIoTarget,
+            PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
+            &battMiniNotifyArgument,
+            sizeof(battMiniNotifyArgument),
+            NULL,
+            0u,
+            PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
+            &notifyBytesReturned);
+        (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: battmini notify_status status=0x%08lx arg=0x%08lx notif=0x%08lx\n",
+            (ULONG)notifyStatus,
+            battMiniNotifyArgument,
+            NotificationData);
+        if (NT_SUCCESS(notifyStatus))
         {
-            ULONG battMiniNotifyArgument;
-
-            battMiniNotifyArgument = (NotificationData >> 8);
-            notifyBytesReturned = 0u;
-            notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
-                Context->BattMiniIoTarget,
-                PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
-                &battMiniNotifyArgument,
-                sizeof(battMiniNotifyArgument),
-                NULL,
-                0u,
-                PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
-                &notifyBytesReturned);
-            (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
-            if (NT_SUCCESS(notifyStatus))
-            {
-                Context->LegacyStatusNotificationPending = TRUE;
-                Context->LegacyStateChangePending = TRUE;
-            }
+            Context->LegacyStatusNotificationPending = TRUE;
+            Context->LegacyStateChangePending = TRUE;
         }
     }
 
