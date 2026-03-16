@@ -7414,15 +7414,15 @@ PmicGlinkNormalizeLegacyIoctl(
         return IOCTL_BATTMNGR_SET_STATUS_CRITERIA;
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT_V1_ALIAS0:
+        return IOCTL_BATTMNGR_SET_OPERATION_MODE;
+
     case IOCTL_BATTMNGR_GET_BATT_PRESENT_V1_ALIAS1:
         return IOCTL_BATTMNGR_GET_BATT_PRESENT;
 
     case IOCTL_BATTMNGR_SET_OPERATION_MODE_V1:
-        return IOCTL_BATTMNGR_SET_OPERATION_MODE;
-
-    case IOCTL_BATTMNGR_SET_CHARGE_RATE_V1:
         return IOCTL_BATTMNGR_SET_CHARGE_RATE;
 
+    case IOCTL_BATTMNGR_SET_CHARGE_RATE_V1:
     case IOCTL_BATTMNGR_NOTIFY_IFACE_FREE_V1:
         return IOCTL_BATTMNGR_NOTIFY_IFACE_FREE;
 
@@ -7705,12 +7705,6 @@ HandleLegacyBattMngrRequest(
     case IOCTL_BATTMNGR_GET_CHARGER_STATUS:
     {
         BATT_MNGR_CHG_STATUS_OUT* outChgStatus;
-        BOOLEAN externalPowerPresent;
-        BOOLEAN usbPowerPresent;
-        BOOLEAN stateCharging;
-        BOOLEAN stateNotCharging;
-        ULONG portIndex;
-        UCHAR usbStatusQueryPort;
         ULONGLONG nowMsec;
 
         if ((OutputBuffer == NULL) || (OutputBufferSize != sizeof(*outChgStatus)))
@@ -7740,58 +7734,6 @@ HandleLegacyBattMngrRequest(
         outChgStatus = (BATT_MNGR_CHG_STATUS_OUT*)OutputBuffer;
         *outChgStatus = Context->LegacyChargeStatus;
         outChgStatus->charging_source = 2u;
-
-        usbStatusQueryPort = 0u;
-        if ((PmicGlinkQuerySystemTime().QuadPart - gPmicGlinkLastUsbIoctlEvent.QuadPart) > 10000000ll)
-        {
-            (VOID)PmicGlink_SyncSendReceive(
-                Context,
-                IOCTL_PMICGLINK_GET_USB_CHG_STATUS,
-                &usbStatusQueryPort,
-                sizeof(usbStatusQueryPort));
-            gPmicGlinkLastUsbIoctlEvent = PmicGlinkQuerySystemTime();
-        }
-
-        usbPowerPresent = FALSE;
-        for (portIndex = 0u; portIndex < PMICGLINK_MAX_PORTS; portIndex++)
-        {
-            if (Context->UsbinPower[portIndex] > 0)
-            {
-                usbPowerPresent = TRUE;
-                break;
-            }
-        }
-
-        stateCharging = PmicGlinkIsBattStateCharging(Context->LegacyBattStateId);
-        stateNotCharging = PmicGlinkIsBattStateNotCharging(Context->LegacyBattStateId);
-        externalPowerPresent = usbPowerPresent
-            || (Context->LastChargerVoltage > 0u)
-            || (Context->LastChargerPortType > 0u)
-            || stateCharging;
-
-        if (externalPowerPresent && (outChgStatus->rate > 0))
-        {
-            outChgStatus->power_state |= (1u | 4u);
-            outChgStatus->power_state &= ~2u;
-        }
-        else if (externalPowerPresent)
-        {
-            outChgStatus->power_state &= ~4u;
-            outChgStatus->power_state |= 1u;
-            if (stateNotCharging)
-            {
-                outChgStatus->power_state &= ~2u;
-            }
-        }
-        else
-        {
-            outChgStatus->power_state &= ~4u;
-            outChgStatus->power_state &= ~1u;
-            if (outChgStatus->rate <= 0)
-            {
-                outChgStatus->power_state |= 2u;
-            }
-        }
         *BytesReturned = sizeof(*outChgStatus);
 
         if (Context->LegacyBattId.batt_id == 0)
@@ -7929,86 +7871,21 @@ HandleLegacyBattMngrRequest(
             InputBufferSize);
 
     case IOCTL_BATTMNGR_GET_BATT_PRESENT:
-        status = STATUS_SUCCESS;
-        PmicGlinkNotify_PingBattMiniClass(Context);
-        if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) != 0)
+        if (!Context->Notify)
         {
-            WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-
-            if (Context->BattMiniDeviceLoaded)
-            {
-                SIZE_T notifyBytesReturned;
-                NTSTATUS notifyStatus;
-
-                notifyBytesReturned = 0;
-                notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
-                    Context->BattMiniIoTarget,
-                    PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE,
-                    NULL,
-                    0,
-                    NULL,
-                    0,
-                    PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
-                    &notifyBytesReturned);
-                (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
-                if (NT_SUCCESS(notifyStatus))
-                {
-                    Context->LegacyStatusNotificationPending = TRUE;
-                }
-            }
-
-            WdfWaitLockRelease(Context->BattMiniNotifyLock);
+            return STATUS_SUCCESS;
         }
 
-        if ((Context->LegacyStatusCriteria.batt_notify_criteria.high_capacity & 0xFFu) == 0x83u)
+        status = PmicGlink_SyncSendReceive(
+            Context,
+            IOCTL_BATTMNGR_GET_BATT_PRESENT,
+            (PUCHAR)InputBuffer,
+            InputBufferSize);
+        if (NT_SUCCESS(status))
         {
-            ULONG battMiniNotifyArgument;
-
-            battMiniNotifyArgument = Context->LegacyStatusCriteria.batt_notify_criteria.high_capacity >> 8;
-            PmicGlinkNotify_PingBattMiniClass(Context);
-            if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) != 0)
-            {
-                WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
-
-                if (Context->BattMiniDeviceLoaded)
-                {
-                    SIZE_T notifyBytesReturned;
-                    NTSTATUS notifyStatus;
-
-                    notifyBytesReturned = 0;
-                    notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
-                        Context->BattMiniIoTarget,
-                        PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
-                        &battMiniNotifyArgument,
-                        sizeof(battMiniNotifyArgument),
-                        NULL,
-                        0,
-                        PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
-                        &notifyBytesReturned);
-                    (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
-                    if (NT_SUCCESS(notifyStatus))
-                    {
-                        Context->LegacyStatusNotificationPending = TRUE;
-                    }
-                }
-
-                WdfWaitLockRelease(Context->BattMiniNotifyLock);
-            }
+            Context->Notify = FALSE;
         }
 
-        if (Context->LegacyStatusNotificationPending)
-        {
-            status = PmicGlink_SyncSendReceive(
-                Context,
-                IOCTL_BATTMNGR_GET_BATT_PRESENT,
-                (PUCHAR)InputBuffer,
-                InputBufferSize);
-
-            if (NT_SUCCESS(status))
-            {
-                Context->LegacyStatusNotificationPending = FALSE;
-            }
-        }
         return status;
 
     case IOCTL_BATTMNGR_SET_OPERATION_MODE:
