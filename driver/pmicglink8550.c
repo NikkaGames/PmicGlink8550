@@ -8123,8 +8123,9 @@ HandleLegacyBattMngrRequest(
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
                 PMICGLINK_TRACE_LEVEL,
-                "pmicglink: qstatus ps=0x%08lx cap=%lu volt=%lu rate=%ld usb=[%ld,%ld,%ld,%ld]\n",
+                "pmicglink: qstatus ps=0x%08lx src=%lu cap=%lu volt=%lu rate=%ld usb=[%ld,%ld,%ld,%ld]\n",
                 outChgStatus->power_state,
+                outChgStatus->charging_source,
                 outChgStatus->capacity,
                 outChgStatus->voltage,
                 outChgStatus->rate,
