@@ -356,6 +356,8 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_USBN_NOTIFY_SIG_IN 0x4E42535549696541ull
 #define PMICGLINK_USBN_NOTIFY_SIG_OUT 0x426F6541u
 #define PMICGLINK_TRACE_LEVEL 31
+#define PMICGLINK_BC_BATTERY_STATUS_GET_OPCODE 0x30u
+#define PMICGLINK_BC_PROP_BATT_CAPACITY 4u
 #define PMICGLINK_ABD_IOCTL_REGISTER_CONNECTION 0xC3502FA4u
 #define PMICGLINK_ABD_IOCTL_UNREGISTER_CONNECTION 0xC3502FA8u
 #define PMICGLINK_ULOG_MSG_HEADER 0x10000800Aull
@@ -633,10 +635,20 @@ PmicGlinkNormalizeLegacyRemainingCapacity(
     );
 
 static BOOLEAN
-PmicGlinkTryApplyLegacyAuxSoc(
+PmicGlinkTryConvertModernSocX100(
+    _In_ ULONG RawValue,
+    _Out_ PULONG SocX100
+    );
+
+static VOID
+PmicGlinkApplyModernSocToLegacy(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
-    _In_ ULONG RawCapacity,
-    _In_ ULONG AuxValue
+    _In_ ULONG SocX100
+    );
+
+static NTSTATUS
+PmicGlinkQueryModernBatterySoc(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     );
 
 static NTSTATUS
@@ -2449,6 +2461,9 @@ PmicGlinkDevice_InitContext(
     Context->LegacyChargeStatus.charging_source = 0;
     Context->LegacyChargeStatusRawCapacity = 0xFFFFFFFF;
     Context->LegacyChargeStatusAux = 0xFFFFFFFF;
+    Context->ModernSocX100 = 0xFFFFFFFF;
+    Context->ModernSocRaw = 0xFFFFFFFF;
+    Context->ModernSocValid = FALSE;
 
     RtlZeroMemory(&Context->LegacyBattInfo, sizeof(Context->LegacyBattInfo));
     Context->LegacyBattInfo.capabilities = 0x8000000F;
@@ -2528,6 +2543,7 @@ PmicGlinkDevice_InitContext(
     Context->LegacyLastBattIdQueryMsec = 0;
     Context->LegacyLastChargeStatusQueryMsec = 0;
     Context->LegacyLastBattInfoQueryMsec = 0;
+    Context->LegacyLastModernSocQueryMsec = 0;
     Context->LegacyLastTestInfoRequestType = 0;
     Context->LegacyReserved = 0;
 
@@ -8840,6 +8856,25 @@ HandleLegacyBattMngrRequest(
             }
         }
 
+        if (Context->GlinkChannelConnected
+            && ((Context->LegacyLastModernSocQueryMsec == 0)
+                || (nowMsec < Context->LegacyLastModernSocQueryMsec)
+                || ((nowMsec - Context->LegacyLastModernSocQueryMsec) >= 1000ull)))
+        {
+            NTSTATUS modernSocStatus;
+
+            modernSocStatus = PmicGlinkQueryModernBatterySoc(Context);
+            Context->LegacyLastModernSocQueryMsec = nowMsec;
+            if (!NT_SUCCESS(modernSocStatus))
+            {
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    PMICGLINK_TRACE_LEVEL,
+                    "pmicglink: modern_soc query failed status=0x%08lx\n",
+                    (ULONG)modernSocStatus);
+            }
+        }
+
         outChgStatus = (BATT_MNGR_CHG_STATUS_OUT*)OutputBuffer;
         *outChgStatus = Context->LegacyChargeStatus;
         outChgStatus->charging_source = 2u;
@@ -8852,12 +8887,15 @@ HandleLegacyBattMngrRequest(
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
                 PMICGLINK_TRACE_LEVEL,
-                "pmicglink: qstatus ps=0x%08lx src=%lu cap=%lu volt=%lu rate=%ld usb=[%ld,%ld,%ld,%ld]\n",
+                "pmicglink: qstatus ps=0x%08lx src=%lu cap=%lu volt=%lu rate=%ld modern=[raw:%lu x100:%lu valid:%u] usb=[%ld,%ld,%ld,%ld]\n",
                 outChgStatus->power_state,
                 outChgStatus->charging_source,
                 outChgStatus->capacity,
                 outChgStatus->voltage,
                 outChgStatus->rate,
+                Context->ModernSocRaw,
+                Context->ModernSocX100,
+                Context->ModernSocValid ? 1u : 0u,
                 Context->UsbinPower[0],
                 Context->UsbinPower[1],
                 Context->UsbinPower[2],
@@ -8916,6 +8954,25 @@ HandleLegacyBattMngrRequest(
             else
             {
                 status = STATUS_SUCCESS;
+            }
+        }
+
+        if (Context->GlinkChannelConnected
+            && ((Context->LegacyLastModernSocQueryMsec == 0)
+                || (nowMsec < Context->LegacyLastModernSocQueryMsec)
+                || ((nowMsec - Context->LegacyLastModernSocQueryMsec) >= 1000ull)))
+        {
+            NTSTATUS modernSocStatus;
+
+            modernSocStatus = PmicGlinkQueryModernBatterySoc(Context);
+            Context->LegacyLastModernSocQueryMsec = nowMsec;
+            if (!NT_SUCCESS(modernSocStatus))
+            {
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    PMICGLINK_TRACE_LEVEL,
+                    "pmicglink: modern_soc query (batt_info) failed status=0x%08lx\n",
+                    (ULONG)modernSocStatus);
             }
         }
 
@@ -9672,72 +9729,124 @@ PmicGlinkNormalizeLegacyRemainingCapacity(
 
 static
 BOOLEAN
-PmicGlinkTryApplyLegacyAuxSoc(
+PmicGlinkTryConvertModernSocX100(
+    _In_ ULONG RawValue,
+    _Out_ PULONG SocX100
+    )
+{
+    ULONG normalized;
+
+    if (SocX100 == NULL)
+    {
+        return FALSE;
+    }
+
+    if ((RawValue == 0xFFFFFFFFu) || (RawValue == 0u))
+    {
+        return FALSE;
+    }
+
+    normalized = 0u;
+    if (RawValue <= 100u)
+    {
+        normalized = RawValue * 100u;
+    }
+    else if (RawValue <= 10000u)
+    {
+        normalized = RawValue;
+    }
+    else if (RawValue <= 100000u)
+    {
+        normalized = (RawValue + 5u) / 10u;
+    }
+    else if (RawValue <= 1000000u)
+    {
+        normalized = (RawValue + 50u) / 100u;
+    }
+
+    if ((normalized == 0u) || (normalized > 10000u))
+    {
+        return FALSE;
+    }
+
+    *SocX100 = normalized;
+    return TRUE;
+}
+
+static
+VOID
+PmicGlinkApplyModernSocToLegacy(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
-    _In_ ULONG RawCapacity,
-    _In_ ULONG AuxValue
+    _In_ ULONG SocX100
     )
 {
     ULONG reportedFullCapacity;
     ULONGLONG liveCapacity;
-    UCHAR livePercent;
 
-    if ((Context == NULL)
-        || (AuxValue == 0u)
-        || (AuxValue == 0xFFFFFFFFu)
-        || (AuxValue > 10000u))
+    if (Context == NULL)
     {
-        return FALSE;
+        return;
     }
 
-    if ((Context->LegacyBattInfo.designed_capacity == 0u)
-        || (Context->LegacyBattInfo.full_charged_capacity == 0u)
-        || (Context->LegacyBattInfo.designed_capacity == 0xFFFFFFFFu)
-        || (Context->LegacyBattInfo.full_charged_capacity == 0xFFFFFFFFu))
+    if (SocX100 > 10000u)
     {
-        return FALSE;
+        SocX100 = 10000u;
     }
 
-    if (Context->LegacyBattInfo.designed_capacity <= Context->LegacyBattInfo.full_charged_capacity)
+    Context->ModernSocX100 = SocX100;
+    Context->ModernSocValid = TRUE;
+    Context->LegacyBattPercentage = (UCHAR)((SocX100 + 50u) / 100u);
+    if (Context->LegacyBattPercentage > 100u)
     {
-        return FALSE;
+        Context->LegacyBattPercentage = 100u;
     }
 
-    if (RawCapacity != Context->LegacyBattInfo.full_charged_capacity)
-    {
-        return FALSE;
-    }
-
-    reportedFullCapacity = PmicGlinkGetLegacyReportedFullCapacity(Context, RawCapacity);
+    reportedFullCapacity = PmicGlinkGetLegacyReportedFullCapacity(Context, Context->LegacyChargeStatusRawCapacity);
     if ((reportedFullCapacity == 0u) || (reportedFullCapacity == 0xFFFFFFFFu))
     {
-        return FALSE;
+        return;
     }
 
-    if (AuxValue <= 100u)
-    {
-        livePercent = (UCHAR)AuxValue;
-        liveCapacity = (((ULONGLONG)reportedFullCapacity * (ULONGLONG)AuxValue) + 50ull) / 100ull;
-    }
-    else
-    {
-        livePercent = (UCHAR)((AuxValue + 50u) / 100u);
-        liveCapacity = (((ULONGLONG)reportedFullCapacity * (ULONGLONG)AuxValue) + 5000ull) / 10000ull;
-    }
-
-    if (livePercent > 100u)
-    {
-        livePercent = 100u;
-    }
-
+    liveCapacity = (((ULONGLONG)reportedFullCapacity * (ULONGLONG)SocX100) + 5000ull) / 10000ull;
     if (liveCapacity > (ULONGLONG)reportedFullCapacity)
     {
         liveCapacity = (ULONGLONG)reportedFullCapacity;
     }
 
     Context->LegacyChargeStatus.capacity = (ULONG)liveCapacity;
-    Context->LegacyBattPercentage = livePercent;
-    return TRUE;
+}
+
+static
+NTSTATUS
+PmicGlinkQueryModernBatterySoc(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    struct
+    {
+        ULONGLONG Header;
+        ULONG MessageOp;
+        ULONG BatteryId;
+        ULONG PropertyId;
+        ULONG Value;
+    } request;
+
+    if (Context == NULL)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    request.Header = 0x10000800Aull;
+    request.MessageOp = PMICGLINK_BC_BATTERY_STATUS_GET_OPCODE;
+    request.BatteryId = 0u;
+    request.PropertyId = PMICGLINK_BC_PROP_BATT_CAPACITY;
+    request.Value = 0u;
+    return PmicGlink_SendData(
+        Context,
+        PMICGLINK_BC_BATTERY_STATUS_GET_OPCODE,
+        &request,
+        sizeof(request),
+        FALSE);
 }
 
 static
@@ -9902,7 +10011,6 @@ PmicGlink_RetrieveRxData(
         {
             ULONG rawCapacity;
             ULONG auxValue;
-            BOOLEAN usedAuxSoc;
 
             RtlCopyMemory(&Context->LegacyBattStateId, Buffer + 12, sizeof(Context->LegacyBattStateId));
             RtlCopyMemory(&rawCapacity, Buffer + 16, sizeof(rawCapacity));
@@ -9916,24 +10024,23 @@ PmicGlink_RetrieveRxData(
             RtlCopyMemory(&Context->LegacyChargeStatus.voltage, Buffer + 24, sizeof(Context->LegacyChargeStatus.voltage));
             RtlCopyMemory(&Context->LegacyChargeStatus.power_state, Buffer + 28, sizeof(Context->LegacyChargeStatus.power_state));
             RtlCopyMemory(&Context->LegacyBattTemperature, Buffer + 36, sizeof(Context->LegacyBattTemperature));
-            usedAuxSoc = PmicGlinkTryApplyLegacyAuxSoc(Context, rawCapacity, auxValue);
-            if (!usedAuxSoc)
+            Context->LegacyBattPercentage = PmicGlinkComputeLegacyBattPercentage(
+                Context,
+                Context->LegacyChargeStatus.capacity);
+            if (Context->ModernSocValid)
             {
-                Context->LegacyBattPercentage = PmicGlinkComputeLegacyBattPercentage(
-                    Context,
-                    Context->LegacyChargeStatus.capacity);
+                PmicGlinkApplyModernSocToLegacy(Context, Context->ModernSocX100);
             }
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
                 PMICGLINK_TRACE_LEVEL,
-                "pmicglink: RX chg battState=%lu ps=0x%08lx capRaw=%lu capAux=%lu cap=%lu pct=%u auxSoc=%lu volt=%lu rate=%ld temp=%lu\n",
+                "pmicglink: RX chg battState=%lu ps=0x%08lx capRaw=%lu capAux=%lu cap=%lu pct=%u volt=%lu rate=%ld temp=%lu\n",
                 Context->LegacyBattStateId,
                 Context->LegacyChargeStatus.power_state,
                 Context->LegacyChargeStatusRawCapacity,
                 Context->LegacyChargeStatusAux,
                 Context->LegacyChargeStatus.capacity,
                 Context->LegacyBattPercentage,
-                usedAuxSoc ? 1u : 0u,
                 Context->LegacyChargeStatus.voltage,
                 Context->LegacyChargeStatus.rate,
                 Context->LegacyBattTemperature);
@@ -9944,6 +10051,65 @@ PmicGlink_RetrieveRxData(
                 DPFLTR_IHVDRIVER_ID,
                 PMICGLINK_TRACE_LEVEL,
                 "pmicglink: RX chg short packet size=%Iu\n",
+                BufferSize);
+        }
+        break;
+
+    case PMICGLINK_BC_BATTERY_STATUS_GET_OPCODE:
+        if (BufferSize >= 24u)
+        {
+            ULONG propertyId;
+            ULONG value;
+            ULONG retCode;
+
+            RtlCopyMemory(&propertyId, Buffer + 12, sizeof(propertyId));
+            RtlCopyMemory(&value, Buffer + 16, sizeof(value));
+            RtlCopyMemory(&retCode, Buffer + 20, sizeof(retCode));
+            status = (retCode == 0u) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+            if ((retCode == 0u) && (propertyId == PMICGLINK_BC_PROP_BATT_CAPACITY))
+            {
+                ULONG socX100;
+
+                Context->ModernSocRaw = value;
+                if (PmicGlinkTryConvertModernSocX100(value, &socX100))
+                {
+                    PmicGlinkApplyModernSocToLegacy(Context, socX100);
+                    DbgPrintEx(
+                        DPFLTR_IHVDRIVER_ID,
+                        PMICGLINK_TRACE_LEVEL,
+                        "pmicglink: RX modern_soc raw=%lu x100=%lu pct=%u cap=%lu\n",
+                        value,
+                        socX100,
+                        Context->LegacyBattPercentage,
+                        Context->LegacyChargeStatus.capacity);
+                }
+                else
+                {
+                    Context->ModernSocValid = FALSE;
+                    DbgPrintEx(
+                        DPFLTR_IHVDRIVER_ID,
+                        PMICGLINK_TRACE_LEVEL,
+                        "pmicglink: RX modern_soc invalid raw=%lu\n",
+                        value);
+                }
+            }
+            else
+            {
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    PMICGLINK_TRACE_LEVEL,
+                    "pmicglink: RX modern_resp prop=%lu value=%lu ret=0x%08lx\n",
+                    propertyId,
+                    value,
+                    retCode);
+            }
+        }
+        else
+        {
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: RX modern_resp short packet size=%Iu\n",
                 BufferSize);
         }
         break;
@@ -10040,14 +10206,12 @@ PmicGlink_RetrieveRxData(
             Context->LegacyChargeStatus.capacity = PmicGlinkNormalizeLegacyRemainingCapacity(
                 Context,
                 Context->LegacyChargeStatusRawCapacity);
-            if (!PmicGlinkTryApplyLegacyAuxSoc(
+            Context->LegacyBattPercentage = PmicGlinkComputeLegacyBattPercentage(
                 Context,
-                Context->LegacyChargeStatusRawCapacity,
-                Context->LegacyChargeStatusAux))
+                Context->LegacyChargeStatus.capacity);
+            if (Context->ModernSocValid)
             {
-                Context->LegacyBattPercentage = PmicGlinkComputeLegacyBattPercentage(
-                    Context,
-                    Context->LegacyChargeStatus.capacity);
+                PmicGlinkApplyModernSocToLegacy(Context, Context->ModernSocX100);
             }
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,

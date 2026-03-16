@@ -512,6 +512,9 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     BATT_MNGR_CHG_STATUS_OUT LegacyChargeStatus;
     ULONG LegacyChargeStatusRawCapacity;
     ULONG LegacyChargeStatusAux;
+    ULONG ModernSocX100;
+    ULONG ModernSocRaw;
+    BOOLEAN ModernSocValid;
     BATT_MNGR_INFO_OUT LegacyBattInfo;
     BATT_MNGR_REPORTING_SCALE_OUT LegacyReportingScale[4];
     ULONG LegacyBattTemperature;
@@ -534,6 +537,7 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONGLONG LegacyLastBattIdQueryMsec;
     ULONGLONG LegacyLastChargeStatusQueryMsec;
     ULONGLONG LegacyLastBattInfoQueryMsec;
+    ULONGLONG LegacyLastModernSocQueryMsec;
     ULONG LegacyLastTestInfoRequestType;
     ULONG LegacyReserved;
 
