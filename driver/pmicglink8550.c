@@ -2303,7 +2303,7 @@ PmicGlinkDevice_InitContext(
     Context->LegacyChargeStatus.capacity = 0xFFFFFFFF;
     Context->LegacyChargeStatus.voltage = 0xFFFFFFFF;
     Context->LegacyChargeStatus.rate = (LONG)0x80000000;
-    Context->LegacyChargeStatus.charging_source = 2;
+    Context->LegacyChargeStatus.charging_source = 0;
 
     RtlZeroMemory(&Context->LegacyBattInfo, sizeof(Context->LegacyBattInfo));
     Context->LegacyBattInfo.capabilities = 0x8000000F;
@@ -8075,7 +8075,6 @@ HandleLegacyBattMngrRequest(
 
         outChgStatus = (BATT_MNGR_CHG_STATUS_OUT*)OutputBuffer;
         *outChgStatus = Context->LegacyChargeStatus;
-        outChgStatus->charging_source = 2u;
 
         usbStatusQueryPort = 0u;
         if ((PmicGlinkQuerySystemTime().QuadPart - gPmicGlinkLastUsbIoctlEvent.QuadPart) > 10000000ll)
@@ -8100,10 +8099,19 @@ HandleLegacyBattMngrRequest(
 
         if (!usbPowerPresent)
         {
-            outChgStatus->power_state = 1u;
+            outChgStatus->power_state &= ~(1u | 4u);
+            outChgStatus->power_state |= 2u;
+            outChgStatus->charging_source = 0u;
             if (outChgStatus->rate > 0)
             {
                 outChgStatus->rate = -outChgStatus->rate;
+            }
+        }
+        else
+        {
+            if (outChgStatus->charging_source == 0u)
+            {
+                outChgStatus->charging_source = 2u;
             }
         }
 
