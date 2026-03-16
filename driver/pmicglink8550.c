@@ -5069,9 +5069,18 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
             Context->LegacyStateChangePending = TRUE;
         }
 
-        if ((NotificationData & 0xFFu) == 0x83u)
+        if (((NotificationData & 0xFFu) == 0x83u)
+            || (NotificationData == 0x80u)
+            || (NotificationData == 0x32u))
         {
-            battMiniNotifyArgument = (NotificationData >> 8);
+            if ((NotificationData & 0xFFu) == 0x83u)
+            {
+                battMiniNotifyArgument = (NotificationData >> 8);
+            }
+            else
+            {
+                battMiniNotifyArgument = NotificationData;
+            }
             notifyStatus = PmicGlinkSendDriverRequestAsync(
                 battMiniTarget,
                 PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
