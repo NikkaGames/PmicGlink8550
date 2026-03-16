@@ -539,6 +539,7 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     PCALLBACK_OBJECT BclCriticalCallbackObject;
     BOOLEAN BclCriticalCallbackEnabled;
     PVOID GlinkNotificationEntry;
+    WDFIOTARGET GlinkIoTarget;
     PVOID AbdNotificationEntry;
     WDFIOTARGET AbdIoTarget;
     PVOID BattMiniNotificationEntry;

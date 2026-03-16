@@ -346,6 +346,7 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_POOLTAG_CRASHDUMP 'DmGP'
 #define PMICGLINK_POOLTAG_COMMDATA  'CmGP'
 #define PMICGLINK_CRASHDUMP_STALE_FILE_OBJECT ((WDFFILEOBJECT)(ULONG_PTR)-1)
+#define PMICGLINK_GLINK_QUERY_ACCESS_MASK 0x001F0000u
 #define PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE 0x800A2008u
 #define PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS 0x800A0FB0u
 #define PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS (-100000000ll)
@@ -492,6 +493,7 @@ static VOID PmicGlinkNotifyBattMiniStatusFromGlink(_In_ PPMIC_GLINK_DEVICE_CONTE
 static NTSTATUS PmicGlinkSendDriverRequest(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _Out_opt_ SIZE_T* BytesReturned);
 static NTSTATUS PmicGlinkSendDriverRequestWithTimeout(_In_ WDFIOTARGET IoTarget, _In_ ULONG IoControlCode, _In_reads_bytes_opt_(InputBufferSize) PVOID InputBuffer, _In_ ULONG InputBufferSize, _Out_writes_bytes_opt_(OutputBufferSize) PVOID OutputBuffer, _In_ ULONG OutputBufferSize, _In_ LONGLONG Timeout100ns, _Out_opt_ SIZE_T* BytesReturned);
 static VOID PmicGlinkCloseIoTargetIfOpen(_Inout_ WDFIOTARGET* IoTarget);
+static VOID PmicGlinkClearGlinkAttachment(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkClearAbdAttachment(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ BOOLEAN UnregisterConnections);
 static VOID PmicGlinkClearBattMiniAttachment(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkUnregisterPnPNotificationEntry(_Inout_ PVOID* Entry);
@@ -1271,6 +1273,7 @@ PmicGlinkEvtReleaseHardware(
     driverContext = PmicGlinkGetDriverContext(driver);
     driverContext->BattMngrDevice = NULL;
 
+    PmicGlinkClearGlinkAttachment(context);
     PmicGlinkResetCommDataSlots(context, TRUE);
     PmicGlinkSetApiInterfaceSymbolicLink(NULL);
 
@@ -1823,6 +1826,22 @@ PmicGlinkCloseIoTargetIfOpen(
 }
 
 static VOID
+PmicGlinkClearGlinkAttachment(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    PmicGlinkCloseIoTargetIfOpen(&Context->GlinkIoTarget);
+    Context->GlinkDeviceLoaded = FALSE;
+    Context->AllReqIntfArrived = FALSE;
+    Context->GlinkLinkStateUp = FALSE;
+}
+
+static VOID
 PmicGlinkClearAbdAttachment(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
     _In_ BOOLEAN UnregisterConnections
@@ -1923,9 +1942,41 @@ PmicGlinkInterfaceNotificationCallback(
         status = STATUS_SUCCESS;
         if (arrival)
         {
+            WDF_IO_TARGET_OPEN_PARAMS openParams;
+
             if (deviceContext->GlinkDeviceLoaded)
             {
                 return STATUS_SUCCESS;
+            }
+
+            if (deviceContext->GlinkIoTarget == NULL)
+            {
+                status = WdfIoTargetCreate(
+                    deviceContext->Device,
+                    WDF_NO_OBJECT_ATTRIBUTES,
+                    &deviceContext->GlinkIoTarget);
+            }
+
+            if (!NT_SUCCESS(status) || (deviceContext->GlinkIoTarget == NULL))
+            {
+                return status;
+            }
+
+            if ((symbolicLinkName == NULL) || (symbolicLinkName->Buffer == NULL))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
+                &openParams,
+                symbolicLinkName,
+                PMICGLINK_GLINK_QUERY_ACCESS_MASK);
+            openParams.ShareAccess = FILE_SHARE_READ;
+            status = WdfIoTargetOpen(deviceContext->GlinkIoTarget, &openParams);
+            if (!NT_SUCCESS(status))
+            {
+                PmicGlinkCloseIoTargetIfOpen(&deviceContext->GlinkIoTarget);
+                return status;
             }
 
             deviceContext->GlinkDeviceLoaded = TRUE;
@@ -1949,10 +2000,8 @@ PmicGlinkInterfaceNotificationCallback(
                 return STATUS_SUCCESS;
             }
 
-            deviceContext->GlinkDeviceLoaded = FALSE;
+            PmicGlinkClearGlinkAttachment(deviceContext);
             PmicGlinkSetApiInterfaceSymbolicLink(NULL);
-            deviceContext->AllReqIntfArrived = FALSE;
-            deviceContext->GlinkLinkStateUp = FALSE;
         }
 
         return status;
@@ -2097,6 +2146,7 @@ PmicGlinkDevice_RegisterForPnPNotifications(
         status = STATUS_SUCCESS;
 
         PmicGlinkResetApiInterface();
+        PmicGlinkClearGlinkAttachment(Context);
 
         unregisterStatus = PmicGlinkUnregisterPnPNotificationEntry(&Context->GlinkNotificationEntry);
         if (!NT_SUCCESS(unregisterStatus))
@@ -2392,6 +2442,7 @@ PmicGlinkDevice_InitContext(
     Context->BclCriticalCallbackObject = NULL;
     Context->BclCriticalCallbackEnabled = FALSE;
     Context->GlinkNotificationEntry = NULL;
+    Context->GlinkIoTarget = NULL;
     Context->AbdNotificationEntry = NULL;
     Context->AbdIoTarget = NULL;
     Context->BattMiniNotificationEntry = NULL;
@@ -2720,6 +2771,11 @@ PmicGlinkEnsureApiInterface(
 
     PmicGlinkResetApiInterface();
     ioTarget = WdfDeviceGetIoTarget(Context->Device);
+    if (Context->GlinkIoTarget != NULL)
+    {
+        ioTarget = Context->GlinkIoTarget;
+    }
+
     if (ioTarget != NULL)
     {
         status = WdfIoTargetQueryForInterface(
@@ -2782,8 +2838,8 @@ PmicGlinkEnsureApiInterface(
         WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
             &openParams,
             &gPmicGlinkApiInterfaceSymbolicLinkName,
-            GENERIC_READ | GENERIC_WRITE);
-        openParams.ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE;
+            PMICGLINK_GLINK_QUERY_ACCESS_MASK);
+        openParams.ShareAccess = FILE_SHARE_READ;
 
         status = WdfIoTargetOpen(namedIoTarget, &openParams);
         if (!NT_SUCCESS(status))
