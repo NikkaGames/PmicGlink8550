@@ -4945,13 +4945,60 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     NTSTATUS notifyStatus;
     ULONG battMiniNotifyArgument;
 
-    PmicGlinkNotify_PingBattMiniClass(Context);
-    if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) == 0)
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: battmini notify enter notif=0x%08lx loaded=%u target=%p go=%ld lock=%p\n",
+        NotificationData,
+        (Context != NULL && Context->BattMiniDeviceLoaded) ? 1u : 0u,
+        (Context != NULL) ? Context->BattMiniIoTarget : NULL,
+        InterlockedCompareExchange(&gPmicGlinkNotifyGo, 0, 0),
+        (Context != NULL) ? Context->BattMiniNotifyLock : NULL);
+
+    if (Context == NULL)
     {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: battmini notify exit null-context notif=0x%08lx\n",
+            NotificationData);
         return;
     }
 
+    PmicGlinkNotify_PingBattMiniClass(Context);
+    if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) == 0)
+    {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: battmini notify early-exit go=0 notif=0x%08lx\n",
+            NotificationData);
+        return;
+    }
+
+    if (Context->BattMiniNotifyLock == NULL)
+    {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: battmini notify no-lock notif=0x%08lx\n",
+            NotificationData);
+        return;
+    }
+
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: battmini notify acquire lock notif=0x%08lx\n",
+        NotificationData);
     WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: battmini notify lock-acquired notif=0x%08lx loaded=%u target=%p\n",
+        NotificationData,
+        Context->BattMiniDeviceLoaded ? 1u : 0u,
+        Context->BattMiniIoTarget);
 
     if (!Context->BattMiniDeviceLoaded)
     {
@@ -5029,6 +5076,13 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     }
 
     WdfWaitLockRelease(Context->BattMiniNotifyLock);
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: battmini notify exit notif=0x%08lx loaded=%u target=%p\n",
+        NotificationData,
+        Context->BattMiniDeviceLoaded ? 1u : 0u,
+        Context->BattMiniIoTarget);
 }
 
 static VOID
@@ -9741,6 +9795,12 @@ PmicGlink_RetrieveRxData(
             case 0x800Au:
                 gPmicGlinkLastChargeStatusQueryMsec = 0;
                 gPmicGlinkLastBattInfoQueryMsec = 0;
+                DbgPrintEx(
+                    DPFLTR_IHVDRIVER_ID,
+                    PMICGLINK_TRACE_LEVEL,
+                    "pmicglink: notify dispatch battmini id=0x%08lx data=0x%08lx\n",
+                    notificationId,
+                    notificationData);
                 PmicGlinkNotifyBattMiniStatusFromGlink(Context, notificationData);
                 break;
 
@@ -9751,6 +9811,13 @@ PmicGlink_RetrieveRxData(
                     PmicGlinkDDI_NotifyUcsiAlert(Context, notificationId, notificationData);
                     gPmicGlinkLastChargeStatusQueryMsec = 0;
                     gPmicGlinkLastBattInfoQueryMsec = 0;
+                    DbgPrintEx(
+                        DPFLTR_IHVDRIVER_ID,
+                        PMICGLINK_TRACE_LEVEL,
+                        "pmicglink: notify dispatch battmini id=0x%08lx data=0x%08lx aux=0x%08lx\n",
+                        notificationId,
+                        notificationData,
+                        notificationAux);
                     PmicGlinkNotifyBattMiniStatusFromGlink(Context, 0u);
                 }
                 break;
