@@ -4943,10 +4943,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     )
 {
     NTSTATUS notifyStatus;
-    NTSTATUS lockStatus;
-    LONGLONG zeroTimeout;
     ULONG battMiniNotifyArgument;
-    BOOLEAN lockHeld;
     BOOLEAN battMiniLoaded;
     WDFIOTARGET battMiniTarget;
 
@@ -4981,46 +4978,11 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         return;
     }
 
-    lockHeld = FALSE;
-    lockStatus = STATUS_SUCCESS;
-    if (Context->BattMiniNotifyLock != NULL)
-    {
-        zeroTimeout = 0;
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini notify acquire lock notif=0x%08lx\n",
-            NotificationData);
-        lockStatus = WdfWaitLockAcquire(Context->BattMiniNotifyLock, &zeroTimeout);
-        if (NT_SUCCESS(lockStatus))
-        {
-            lockHeld = TRUE;
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: battmini notify lock-acquired notif=0x%08lx loaded=%u target=%p\n",
-                NotificationData,
-                Context->BattMiniDeviceLoaded ? 1u : 0u,
-                Context->BattMiniIoTarget);
-        }
-        else
-        {
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: battmini notify lock-busy status=0x%08lx notif=0x%08lx\n",
-                (ULONG)lockStatus,
-                NotificationData);
-        }
-    }
-    else
-    {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini notify no-lock notif=0x%08lx\n",
-            NotificationData);
-    }
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: battmini notify no-lockpath notif=0x%08lx\n",
+        NotificationData);
 
     if (!Context->BattMiniDeviceLoaded)
     {
@@ -5041,12 +5003,6 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     if (battMiniTarget != NULL)
     {
         WdfObjectReference(battMiniTarget);
-    }
-
-    if (lockHeld)
-    {
-        WdfWaitLockRelease(Context->BattMiniNotifyLock);
-        lockHeld = FALSE;
     }
 
     if (battMiniLoaded && (battMiniTarget != NULL))
@@ -5126,19 +5082,13 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         WdfObjectDereference(battMiniTarget);
     }
 
-    if (lockHeld)
-    {
-        WdfWaitLockRelease(Context->BattMiniNotifyLock);
-    }
-
     DbgPrintEx(
         DPFLTR_IHVDRIVER_ID,
         PMICGLINK_TRACE_LEVEL,
-        "pmicglink: battmini notify exit notif=0x%08lx loaded=%u target=%p lockStatus=0x%08lx\n",
+        "pmicglink: battmini notify exit notif=0x%08lx loaded=%u target=%p\n",
         NotificationData,
         Context->BattMiniDeviceLoaded ? 1u : 0u,
-        Context->BattMiniIoTarget,
-        (ULONG)lockStatus);
+        Context->BattMiniIoTarget);
 }
 
 static VOID
