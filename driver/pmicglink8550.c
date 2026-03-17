@@ -360,6 +360,7 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_BC_PROP_BATT_CAPACITY 4u
 #define PMICGLINK_BC_ADSP_DEBUG_OPCODE 0x100u
 #define PMICGLINK_BC_DEBUG_MSG_OPCODE 0x101u
+#define PMICGLINK_BC_DEBUG_MSG_MAX_CHARS 256u
 #define PMICGLINK_ABD_IOCTL_REGISTER_CONNECTION 0xC3502FA4u
 #define PMICGLINK_ABD_IOCTL_UNREGISTER_CONNECTION 0xC3502FA8u
 #define PMICGLINK_ULOG_MSG_HEADER 0x10000800Aull
@@ -639,6 +640,14 @@ PmicGlinkNormalizeLegacyRemainingCapacity(
 static BOOLEAN
 PmicGlinkTryConvertModernSocX100(
     _In_ ULONG RawValue,
+    _Out_ PULONG SocX100
+    );
+
+static BOOLEAN
+PmicGlinkTryExtractModernSocFromDebugMsg(
+    _In_reads_bytes_(TextLength) const CHAR* Text,
+    _In_ SIZE_T TextLength,
+    _Out_ PULONG RawValue,
     _Out_ PULONG SocX100
     );
 
@@ -9763,6 +9772,137 @@ PmicGlinkTryConvertModernSocX100(
 }
 
 static
+BOOLEAN
+PmicGlinkTryExtractModernSocFromDebugMsg(
+    _In_reads_bytes_(TextLength) const CHAR* Text,
+    _In_ SIZE_T TextLength,
+    _Out_ PULONG RawValue,
+    _Out_ PULONG SocX100
+    )
+{
+    static const CHAR* const patterns[] =
+    {
+        "ui_capacity",
+        "fake_soc",
+        "rsoc",
+        "ssoc",
+        "soc",
+        "capacity"
+    };
+    SIZE_T patternIndex;
+
+    if ((Text == NULL) || (RawValue == NULL) || (SocX100 == NULL) || (TextLength == 0u))
+    {
+        return FALSE;
+    }
+
+    for (patternIndex = 0; patternIndex < ARRAYSIZE(patterns); patternIndex++)
+    {
+        const CHAR* pattern;
+        SIZE_T patternLength;
+        SIZE_T i;
+
+        pattern = patterns[patternIndex];
+        patternLength = 0u;
+        while (pattern[patternLength] != '\0')
+        {
+            patternLength++;
+        }
+
+        if ((patternLength == 0u) || (patternLength >= TextLength))
+        {
+            continue;
+        }
+
+        for (i = 0; (i + patternLength) <= TextLength; i++)
+        {
+            SIZE_T matchIndex;
+            SIZE_T valueIndex;
+            ULONG value;
+            SIZE_T digitCount;
+            BOOLEAN matched;
+
+            if ((i != 0u)
+                && (((Text[i - 1] >= '0') && (Text[i - 1] <= '9'))
+                    || ((Text[i - 1] >= 'A') && (Text[i - 1] <= 'Z'))
+                    || ((Text[i - 1] >= 'a') && (Text[i - 1] <= 'z'))
+                    || (Text[i - 1] == '_')))
+            {
+                continue;
+            }
+
+            matched = TRUE;
+            for (matchIndex = 0; matchIndex < patternLength; matchIndex++)
+            {
+                CHAR hay;
+                CHAR needle;
+
+                hay = Text[i + matchIndex];
+                needle = pattern[matchIndex];
+                if ((hay >= 'A') && (hay <= 'Z'))
+                {
+                    hay = (CHAR)(hay + ('a' - 'A'));
+                }
+
+                if (hay != needle)
+                {
+                    matched = FALSE;
+                    break;
+                }
+            }
+
+            if (!matched)
+            {
+                continue;
+            }
+
+            valueIndex = i + patternLength;
+            while ((valueIndex < TextLength)
+                && ((Text[valueIndex] == ' ')
+                    || (Text[valueIndex] == '\t')
+                    || (Text[valueIndex] == '=')
+                    || (Text[valueIndex] == ':')
+                    || (Text[valueIndex] == '-')
+                    || (Text[valueIndex] == '_')
+                    || (Text[valueIndex] == '[')
+                    || (Text[valueIndex] == ']')))
+            {
+                valueIndex++;
+            }
+
+            if ((valueIndex >= TextLength)
+                || (Text[valueIndex] < '0')
+                || (Text[valueIndex] > '9'))
+            {
+                continue;
+            }
+
+            value = 0u;
+            digitCount = 0u;
+            while ((valueIndex < TextLength)
+                && (Text[valueIndex] >= '0')
+                && (Text[valueIndex] <= '9')
+                && (digitCount < 8u))
+            {
+                value = (value * 10u) + (ULONG)(Text[valueIndex] - '0');
+                valueIndex++;
+                digitCount++;
+            }
+
+            if ((digitCount == 0u) || !PmicGlinkTryConvertModernSocX100(value, SocX100))
+            {
+                continue;
+            }
+
+            *RawValue = value;
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+static
 VOID
 PmicGlinkApplyModernSocToLegacy(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
@@ -10095,9 +10235,25 @@ PmicGlink_RetrieveRxData(
             {
                 ULONG socX100;
 
-                Context->ModernSocRaw = value;
                 if (PmicGlinkTryConvertModernSocX100(value, &socX100))
                 {
+                    if ((value == 10000u)
+                        && Context->ModernSocValid
+                        && (Context->ModernSocRaw != 0xFFFFFFFFu)
+                        && (Context->ModernSocRaw != 10000u))
+                    {
+                        DbgPrintEx(
+                            DPFLTR_IHVDRIVER_ID,
+                            PMICGLINK_TRACE_LEVEL,
+                            "pmicglink: RX modern_soc raw=%lu ignored keeping raw=%lu x100=%lu pct=%u\n",
+                            value,
+                            Context->ModernSocRaw,
+                            Context->ModernSocX100,
+                            Context->LegacyBattPercentage);
+                        break;
+                    }
+
+                    Context->ModernSocRaw = value;
                     PmicGlinkApplyModernSocToLegacy(Context, socX100);
                     DbgPrintEx(
                         DPFLTR_IHVDRIVER_ID,
@@ -10110,7 +10266,12 @@ PmicGlink_RetrieveRxData(
                 }
                 else
                 {
-                    Context->ModernSocValid = FALSE;
+                    if (!Context->ModernSocValid
+                        || (Context->ModernSocRaw == 0xFFFFFFFFu)
+                        || (Context->ModernSocRaw == 10000u))
+                    {
+                        Context->ModernSocValid = FALSE;
+                    }
                     DbgPrintEx(
                         DPFLTR_IHVDRIVER_ID,
                         PMICGLINK_TRACE_LEVEL,
@@ -10522,24 +10683,89 @@ PmicGlink_RetrieveRxData(
 
     case 257u:
     {
-        ULONG meta;
+        CHAR debugText[PMICGLINK_BC_DEBUG_MSG_MAX_CHARS + 1u];
+        ULONG debugRawSoc;
+        ULONG debugSocX100;
+        ULONG textLength;
+        SIZE_T copyLength;
+        SIZE_T i;
 
-        meta = 0u;
-        if (BufferSize >= 16u)
+        RtlZeroMemory(debugText, sizeof(debugText));
+        debugRawSoc = 0u;
+        debugSocX100 = 0u;
+        textLength = 0u;
+
+        if (BufferSize >= (12u + PMICGLINK_BC_DEBUG_MSG_MAX_CHARS + sizeof(ULONG)))
         {
-            RtlCopyMemory(&meta, Buffer + 12, sizeof(meta));
+            RtlCopyMemory(
+                &textLength,
+                Buffer + 12u + PMICGLINK_BC_DEBUG_MSG_MAX_CHARS,
+                sizeof(textLength));
         }
 
         if (BufferSize >= 16u + sizeof(Context->OemPropData))
         {
             RtlCopyMemory(Context->OemPropData, Buffer + 16, sizeof(Context->OemPropData));
         }
+
+        if ((textLength == 0u) || (textLength > PMICGLINK_BC_DEBUG_MSG_MAX_CHARS))
+        {
+            textLength = (ULONG)((BufferSize > 12u) ? (BufferSize - 12u) : 0u);
+            if (textLength > PMICGLINK_BC_DEBUG_MSG_MAX_CHARS)
+            {
+                textLength = PMICGLINK_BC_DEBUG_MSG_MAX_CHARS;
+            }
+        }
+
+        copyLength = textLength;
+        if (copyLength > PMICGLINK_BC_DEBUG_MSG_MAX_CHARS)
+        {
+            copyLength = PMICGLINK_BC_DEBUG_MSG_MAX_CHARS;
+        }
+
+        if ((copyLength != 0u) && (BufferSize >= (12u + copyLength)))
+        {
+            RtlCopyMemory(debugText, Buffer + 12, copyLength);
+            for (i = 0; i < copyLength; i++)
+            {
+                if ((debugText[i] == '\0') || (debugText[i] == '\r') || (debugText[i] == '\n'))
+                {
+                    debugText[i] = '\0';
+                    break;
+                }
+
+                if (((UCHAR)debugText[i] < 0x20u) || ((UCHAR)debugText[i] > 0x7Eu))
+                {
+                    debugText[i] = ' ';
+                }
+            }
+            debugText[PMICGLINK_BC_DEBUG_MSG_MAX_CHARS] = '\0';
+        }
+
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
             PMICGLINK_TRACE_LEVEL,
-            "pmicglink: RX oem_prop opcode=0x101 meta=0x%08lx size=%Iu\n",
-            meta,
-            BufferSize);
+            "pmicglink: RX debug_msg size=%Iu text=%s\n",
+            BufferSize,
+            debugText);
+
+        if (PmicGlinkTryExtractModernSocFromDebugMsg(
+            debugText,
+            copyLength,
+            &debugRawSoc,
+            &debugSocX100))
+        {
+            Context->ModernSocRaw = debugRawSoc;
+            PmicGlinkApplyModernSocToLegacy(Context, debugSocX100);
+            DbgPrintEx(
+                DPFLTR_IHVDRIVER_ID,
+                PMICGLINK_TRACE_LEVEL,
+                "pmicglink: RX debug_soc raw=%lu x100=%lu pct=%u cap=%lu\n",
+                debugRawSoc,
+                debugSocX100,
+                Context->LegacyBattPercentage,
+                Context->LegacyChargeStatus.capacity);
+        }
         break;
     }
 
