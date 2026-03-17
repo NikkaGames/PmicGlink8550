@@ -3275,7 +3275,6 @@ PmicGlinkIsDeferredNotificationOp(
         || (OpCode == 22u)
         || (OpCode == 130u)
         || (OpCode == 259u)
-        || (OpCode == PMICGLINK_BC_BATTERY_STATUS_GET_OPCODE)
         || (OpCode == PMICGLINK_BC_ADSP_DEBUG_OPCODE)
         || (OpCode == PMICGLINK_BC_DEBUG_MSG_OPCODE));
 }
@@ -3319,7 +3318,6 @@ PmicGlinkGetPendingNotificationOp(
     )
 {
     static const ULONG notificationOps[] = {
-        PMICGLINK_BC_BATTERY_STATUS_GET_OPCODE,
         PMICGLINK_BC_ADSP_DEBUG_OPCODE,
         PMICGLINK_BC_DEBUG_MSG_OPCODE,
         19u,
@@ -9860,7 +9858,7 @@ PmicGlinkQueryModernBatterySoc(
         PMICGLINK_BC_BATTERY_STATUS_GET_OPCODE,
         &request,
         sizeof(request),
-        FALSE);
+        TRUE);
 }
 
 static
