@@ -653,6 +653,13 @@ PmicGlinkQueryModernBatterySoc(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     );
 
+static VOID
+PmicGlinkRefreshModernBatterySoc(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONGLONG NowMsec,
+    _In_ BOOLEAN Force
+    );
+
 static NTSTATUS
 PmicGlink_SendData(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
@@ -8868,24 +8875,7 @@ HandleLegacyBattMngrRequest(
             }
         }
 
-        if (Context->GlinkChannelConnected
-            && ((Context->LegacyLastModernSocQueryMsec == 0)
-                || (nowMsec < Context->LegacyLastModernSocQueryMsec)
-                || ((nowMsec - Context->LegacyLastModernSocQueryMsec) >= 1000ull)))
-        {
-            NTSTATUS modernSocStatus;
-
-            modernSocStatus = PmicGlinkQueryModernBatterySoc(Context);
-            Context->LegacyLastModernSocQueryMsec = nowMsec;
-            if (!NT_SUCCESS(modernSocStatus))
-            {
-                DbgPrintEx(
-                    DPFLTR_IHVDRIVER_ID,
-                    PMICGLINK_TRACE_LEVEL,
-                    "pmicglink: modern_soc query failed status=0x%08lx\n",
-                    (ULONG)modernSocStatus);
-            }
-        }
+        PmicGlinkRefreshModernBatterySoc(Context, nowMsec, FALSE);
 
         outChgStatus = (BATT_MNGR_CHG_STATUS_OUT*)OutputBuffer;
         *outChgStatus = Context->LegacyChargeStatus;
@@ -8969,24 +8959,7 @@ HandleLegacyBattMngrRequest(
             }
         }
 
-        if (Context->GlinkChannelConnected
-            && ((Context->LegacyLastModernSocQueryMsec == 0)
-                || (nowMsec < Context->LegacyLastModernSocQueryMsec)
-                || ((nowMsec - Context->LegacyLastModernSocQueryMsec) >= 1000ull)))
-        {
-            NTSTATUS modernSocStatus;
-
-            modernSocStatus = PmicGlinkQueryModernBatterySoc(Context);
-            Context->LegacyLastModernSocQueryMsec = nowMsec;
-            if (!NT_SUCCESS(modernSocStatus))
-            {
-                DbgPrintEx(
-                    DPFLTR_IHVDRIVER_ID,
-                    PMICGLINK_TRACE_LEVEL,
-                    "pmicglink: modern_soc query (batt_info) failed status=0x%08lx\n",
-                    (ULONG)modernSocStatus);
-            }
-        }
+        PmicGlinkRefreshModernBatterySoc(Context, nowMsec, FALSE);
 
         outBattInfo = (BATT_MNGR_GET_BATT_INFO_OUT*)OutputBuffer;
         RtlZeroMemory(outBattInfo, sizeof(*outBattInfo));
@@ -9180,11 +9153,15 @@ HandleLegacyBattMngrRequest(
     {
         DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: legacy case GET_BATTERY_PRESENT_STATUS\n");
         BATT_MNGR_GET_BATTERY_PRESENT_STATUS* outPresentStatus;
+        ULONGLONG nowMsec;
 
         if ((OutputBuffer == NULL) || (OutputBufferSize != sizeof(*outPresentStatus)))
         {
             return STATUS_INVALID_PARAMETER;
         }
+
+        nowMsec = PmicGlink_Helper_get_rel_time_msec();
+        PmicGlinkRefreshModernBatterySoc(Context, nowMsec, TRUE);
 
         outPresentStatus = (BATT_MNGR_GET_BATTERY_PRESENT_STATUS*)OutputBuffer;
         RtlZeroMemory(outPresentStatus, sizeof(*outPresentStatus));
@@ -9753,7 +9730,7 @@ PmicGlinkTryConvertModernSocX100(
         return FALSE;
     }
 
-    if ((RawValue == 0xFFFFFFFFu) || (RawValue == 0u))
+    if (RawValue == 0xFFFFFFFFu)
     {
         return FALSE;
     }
@@ -9859,6 +9836,42 @@ PmicGlinkQueryModernBatterySoc(
         &request,
         sizeof(request),
         TRUE);
+}
+
+static
+VOID
+PmicGlinkRefreshModernBatterySoc(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_ ULONGLONG NowMsec,
+    _In_ BOOLEAN Force
+    )
+{
+    NTSTATUS status;
+
+    if ((Context == NULL) || !Context->GlinkChannelConnected)
+    {
+        return;
+    }
+
+    if (!Force
+        && (Context->LegacyLastModernSocQueryMsec != 0)
+        && (NowMsec >= Context->LegacyLastModernSocQueryMsec)
+        && ((NowMsec - Context->LegacyLastModernSocQueryMsec) < 250ull))
+    {
+        return;
+    }
+
+    status = PmicGlinkQueryModernBatterySoc(Context);
+    Context->LegacyLastModernSocQueryMsec = NowMsec;
+    if (!NT_SUCCESS(status))
+    {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: modern_soc refresh failed status=0x%08lx force=%u\n",
+            (ULONG)status,
+            Force ? 1u : 0u);
+    }
 }
 
 static
