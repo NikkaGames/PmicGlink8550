@@ -536,6 +536,7 @@ static BOOLEAN PmicGlinkGetPendingNotificationOp(_In_ PPMIC_GLINK_DEVICE_CONTEXT
 static BOOLEAN PmicGlinkConsumeCommDataPacket(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG OpCode);
 static NTSTATUS PmicGlink_OpenGlinkChannel(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
+static VOID PmicGlinkBootBatteryRefreshWorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkRxNotificationCb(
     _In_opt_ PVOID Handle,
     _In_opt_ const VOID* Context,
@@ -2201,6 +2202,12 @@ PmicGlinkInterfaceNotificationCallback(
                             "pmicglink: battmini iface open ok target=%p\n",
                             deviceContext->BattMiniIoTarget);
                         status = PmicGlinkEnsureBclCriticalCallback(deviceContext);
+                        if (NT_SUCCESS(status) && deviceContext->GlinkChannelConnected)
+                        {
+                            (VOID)PmicGlinkCreateDeviceWorkItem(
+                                deviceContext,
+                                PmicGlinkBootBatteryRefreshWorkItem);
+                        }
                     }
                     else
                     {
@@ -3592,6 +3599,43 @@ PmicGlinkRegisterInterfaceWorkItem(
 }
 
 static VOID
+PmicGlinkBootBatteryRefreshWorkItem(
+    _In_ WDFWORKITEM WorkItem
+    )
+{
+    WDFOBJECT parentObject;
+    PPMIC_GLINK_DEVICE_CONTEXT context;
+
+    parentObject = WdfWorkItemGetParentObject(WorkItem);
+    context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
+
+    if ((context != NULL) && context->GlinkChannelConnected)
+    {
+        gPmicGlinkLastBattIdQueryMsec = 0;
+        gPmicGlinkLastChargeStatusQueryMsec = 0;
+        gPmicGlinkLastBattInfoQueryMsec = 0;
+        context->LegacyLastModernSocQueryMsec = 0;
+        context->LegacyStatusNotificationPending = TRUE;
+        context->LegacyStateChangePending = TRUE;
+        context->Notify = TRUE;
+
+        PmicGlinkTryAttachBattMiniFromIoctl(context, "BOOT_REFRESH");
+
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: boot_refresh connected=%u battmini=%u target=%p\n",
+            context->GlinkChannelConnected ? 1u : 0u,
+            context->BattMiniDeviceLoaded ? 1u : 0u,
+            context->BattMiniIoTarget);
+
+        PmicGlinkNotifyBattMiniStatusFromGlink(context, 0x80u);
+    }
+
+    WdfObjectDelete(WorkItem);
+}
+
+static VOID
 PmicGlinkStateNotificationShim(
     _In_opt_ GLINK_CHANNEL_CTX* Channel,
     _In_opt_ const VOID* Context,
@@ -3712,6 +3756,7 @@ PmicGlinkStateNotificationCb(
         }
         Context->GlinkRxIntent += 1;
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
+        (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkBootBatteryRefreshWorkItem);
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
             PMICGLINK_TRACE_LEVEL,
