@@ -3616,6 +3616,11 @@ PmicGlinkBootBatteryRefreshWorkItem(
 {
     WDFOBJECT parentObject;
     PPMIC_GLINK_DEVICE_CONTEXT context;
+    BATT_MNGR_GET_BATT_INFO battInfoRequest;
+    ULONGLONG nowMsec;
+    NTSTATUS battIdStatus;
+    NTSTATUS battInfoStatus;
+    NTSTATUS chgStatus;
 
     parentObject = WdfWorkItemGetParentObject(WorkItem);
     context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
@@ -3631,14 +3636,40 @@ PmicGlinkBootBatteryRefreshWorkItem(
         context->Notify = TRUE;
 
         PmicGlinkTryAttachBattMiniFromIoctl(context, "BOOT_REFRESH");
+        battIdStatus = PmicGlink_SyncSendReceive(
+            context,
+            IOCTL_BATTMNGR_GET_BATT_ID,
+            NULL,
+            0u);
+
+        RtlZeroMemory(&battInfoRequest, sizeof(battInfoRequest));
+        battInfoRequest.batt_id = context->LegacyBattId.batt_id;
+        battInfoRequest.rate_of_drain = context->LegacyChargeStatus.rate;
+        battInfoStatus = PmicGlink_SyncSendReceive(
+            context,
+            IOCTL_BATTMNGR_GET_BATT_INFO,
+            (PUCHAR)&battInfoRequest,
+            sizeof(battInfoRequest));
+        chgStatus = PmicGlink_SyncSendReceive(
+            context,
+            IOCTL_BATTMNGR_GET_CHARGER_STATUS,
+            NULL,
+            0u);
+        nowMsec = PmicGlink_Helper_get_rel_time_msec();
+        PmicGlinkRefreshModernBatterySoc(context, nowMsec, TRUE);
 
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
             PMICGLINK_TRACE_LEVEL,
-            "pmicglink: boot_refresh connected=%u battmini=%u target=%p\n",
+            "pmicglink: boot_refresh connected=%u battmini=%u target=%p battId=0x%08lx info=0x%08lx chg=0x%08lx pct=%u state=0x%08lx\n",
             context->GlinkChannelConnected ? 1u : 0u,
             context->BattMiniDeviceLoaded ? 1u : 0u,
-            context->BattMiniIoTarget);
+            context->BattMiniIoTarget,
+            (ULONG)battIdStatus,
+            (ULONG)battInfoStatus,
+            (ULONG)chgStatus,
+            context->LegacyBattPercentage,
+            context->LegacyChargeStatus.power_state);
 
         PmicGlinkNotifyBattMiniStatusFromGlink(context, 0x80u);
     }
