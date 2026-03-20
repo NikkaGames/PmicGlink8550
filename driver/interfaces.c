@@ -1089,6 +1089,8 @@ PmicGlink_Init(
     _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
     )
 {
+    NTSTATUS status;
+
     if (Context == NULL)
     {
         return STATUS_INVALID_PARAMETER;
@@ -1121,6 +1123,20 @@ PmicGlink_Init(
     Context->LegacyLastAdspBatteryNotifyMsec = 0;
     Context->LegacyBatteryRefreshTimer = NULL;
     Context->UlogTimer = NULL;
+
+    status = PmicGlinkEnsureLegacyBatteryRefreshTimer(Context);
+    if (NT_SUCCESS(status))
+    {
+        PmicGlinkStartLegacyBatteryRefreshTimer(Context, "Init");
+    }
+    else
+    {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: batt_fallback_timer init failed status=0x%08lx\n",
+            (ULONG)status);
+    }
 
     return STATUS_SUCCESS;
 }

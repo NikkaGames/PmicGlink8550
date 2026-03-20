@@ -221,84 +221,23 @@ PmicGlinkPollBattMiniClass(
     _In_opt_ PCSTR Reason
     )
 {
-    NTSTATUS presenceStatus;
-    NTSTATUS statusStatus;
-    SIZE_T bytesReturned;
-    ULONG statusArgument;
-    WDFIOTARGET battMiniTarget;
-
     if (Context == NULL)
     {
         return;
     }
 
+    Context->Notify = TRUE;
+    Context->LegacyStatusNotificationPending = TRUE;
+    Context->LegacyStateChangePending = TRUE;
     PmicGlinkTryAttachBattMiniFromIoctl(Context, (Reason != NULL) ? Reason : "poll");
-    if (!Context->BattMiniDeviceLoaded || (Context->BattMiniIoTarget == NULL))
-    {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini poll skipped reason=%s loaded=%u target=%p\n",
-            (Reason != NULL) ? Reason : "poll",
-            Context->BattMiniDeviceLoaded ? 1u : 0u,
-            Context->BattMiniIoTarget);
-        return;
-    }
-
-    battMiniTarget = Context->BattMiniIoTarget;
-    WdfObjectReference(battMiniTarget);
-
-    bytesReturned = 0u;
-    presenceStatus = PmicGlinkSendDriverRequestWithTimeout(
-        battMiniTarget,
-        PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE,
-        NULL,
-        0u,
-        NULL,
-        0u,
-        PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
-        &bytesReturned);
     DbgPrintEx(
         DPFLTR_IHVDRIVER_ID,
         PMICGLINK_TRACE_LEVEL,
-        "pmicglink: battmini poll_presence reason=%s status=0x%08lx bytes=%Iu\n",
+        "pmicglink: battmini poll reason=%s loaded=%u target=%p\n",
         (Reason != NULL) ? Reason : "poll",
-        (ULONG)presenceStatus,
-        bytesReturned);
-
-    /*
-     * The periodic timer exists to wake battminiclass when ADSP battery
-     * notifications stop. Send a neutral status ping too, but do not tear
-     * down the battmini attachment if this optional ioctl is unsupported.
-     */
-    statusArgument = 0u;
-    bytesReturned = 0u;
-    statusStatus = PmicGlinkSendDriverRequestWithTimeout(
-        battMiniTarget,
-        PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
-        &statusArgument,
-        sizeof(statusArgument),
-        NULL,
-        0u,
-        PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
-        &bytesReturned);
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: battmini poll_status reason=%s status=0x%08lx arg=0x%08lx bytes=%Iu\n",
-        (Reason != NULL) ? Reason : "poll",
-        (ULONG)statusStatus,
-        statusArgument,
-        bytesReturned);
-
-    if (NT_SUCCESS(presenceStatus) || NT_SUCCESS(statusStatus))
-    {
-        Context->LegacyStatusNotificationPending = TRUE;
-        Context->LegacyStateChangePending = TRUE;
-        Context->Notify = TRUE;
-    }
-
-    WdfObjectDereference(battMiniTarget);
+        Context->BattMiniDeviceLoaded ? 1u : 0u,
+        Context->BattMiniIoTarget);
+    PmicGlinkNotifyBattMiniStatusFromGlink(Context, 0x80u);
 }
 
 static NTSTATUS
@@ -545,6 +484,8 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     ULONG battMiniNotifyArgument;
     BOOLEAN battMiniLoaded;
     WDFIOTARGET battMiniTarget;
+    BOOLEAN lockHeld;
+    SIZE_T bytesReturned;
 
     DbgPrintEx(
         DPFLTR_IHVDRIVER_ID,
@@ -577,22 +518,28 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         return;
     }
 
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: battmini notify no-lockpath notif=0x%08lx\n",
-        NotificationData);
+    lockHeld = FALSE;
+    if (Context->BattMiniNotifyLock != NULL)
+    {
+        WdfWaitLockAcquire(Context->BattMiniNotifyLock, NULL);
+        lockHeld = TRUE;
+    }
 
     if (!Context->BattMiniDeviceLoaded)
     {
         Context->LegacyStatusNotificationPending = TRUE;
         Context->LegacyStateChangePending = TRUE;
+        Context->Notify = TRUE;
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
             PMICGLINK_TRACE_LEVEL,
             "pmicglink: battmini notify defer attach notif=0x%08lx loaded=0 target=%p\n",
             NotificationData,
             Context->BattMiniIoTarget);
+        if (lockHeld)
+        {
+            WdfWaitLockRelease(Context->BattMiniNotifyLock);
+        }
         return;
     }
 
@@ -605,30 +552,27 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
 
     if (battMiniLoaded && (battMiniTarget != NULL))
     {
-        notifyStatus = PmicGlinkSendDriverRequestAsync(
+        bytesReturned = 0u;
+        notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
             battMiniTarget,
             PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE,
             NULL,
-            0u);
+            0u,
+            NULL,
+            0u,
+            PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
+            &bytesReturned);
         (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
             PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini notify_presence status=0x%08lx notif=0x%08lx\n",
+            "pmicglink: battmini notify_presence status=0x%08lx notif=0x%08lx bytes=%Iu\n",
             (ULONG)notifyStatus,
-            NotificationData);
-        if ((notifyStatus == STATUS_NOT_SUPPORTED)
-            || (notifyStatus == STATUS_INVALID_DEVICE_REQUEST))
-        {
-            PmicGlinkClearBattMiniAttachment(Context);
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: battmini notify_presence detach unsupported status=0x%08lx\n",
-                (ULONG)notifyStatus);
-        }
+            NotificationData,
+            bytesReturned);
         if (NT_SUCCESS(notifyStatus))
         {
+            Context->Notify = TRUE;
             Context->LegacyStatusNotificationPending = TRUE;
             Context->LegacyStateChangePending = TRUE;
         }
@@ -636,31 +580,28 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         if ((NotificationData & 0xFFu) == 0x83u)
         {
             battMiniNotifyArgument = (NotificationData >> 8);
-            notifyStatus = PmicGlinkSendDriverRequestAsync(
+            bytesReturned = 0u;
+            notifyStatus = PmicGlinkSendDriverRequestWithTimeout(
                 battMiniTarget,
                 PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
                 &battMiniNotifyArgument,
-                sizeof(battMiniNotifyArgument));
+                sizeof(battMiniNotifyArgument),
+                NULL,
+                0u,
+                PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
+                &bytesReturned);
             (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
             DbgPrintEx(
                 DPFLTR_IHVDRIVER_ID,
                 PMICGLINK_TRACE_LEVEL,
-                "pmicglink: battmini notify_status status=0x%08lx arg=0x%08lx notif=0x%08lx\n",
+                "pmicglink: battmini notify_status status=0x%08lx arg=0x%08lx notif=0x%08lx bytes=%Iu\n",
                 (ULONG)notifyStatus,
                 battMiniNotifyArgument,
-                NotificationData);
-            if ((notifyStatus == STATUS_NOT_SUPPORTED)
-                || (notifyStatus == STATUS_INVALID_DEVICE_REQUEST))
-            {
-                PmicGlinkClearBattMiniAttachment(Context);
-                DbgPrintEx(
-                    DPFLTR_IHVDRIVER_ID,
-                    PMICGLINK_TRACE_LEVEL,
-                    "pmicglink: battmini notify_status detach unsupported status=0x%08lx\n",
-                    (ULONG)notifyStatus);
-            }
+                NotificationData,
+                bytesReturned);
             if (NT_SUCCESS(notifyStatus))
             {
+                Context->Notify = TRUE;
                 Context->LegacyStatusNotificationPending = TRUE;
                 Context->LegacyStateChangePending = TRUE;
             }
@@ -672,7 +613,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
                 PMICGLINK_TRACE_LEVEL,
                 "pmicglink: battmini notify_status skip notif=0x%08lx low=0x%02lx\n",
                 NotificationData,
-                NotificationData & 0xFFu);
+            NotificationData & 0xFFu);
         }
     }
     else
@@ -684,6 +625,11 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
             battMiniLoaded ? 1u : 0u,
             battMiniTarget,
             NotificationData);
+    }
+
+    if (lockHeld)
+    {
+        WdfWaitLockRelease(Context->BattMiniNotifyLock);
     }
 
     if (battMiniTarget != NULL)
