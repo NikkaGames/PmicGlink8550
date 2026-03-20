@@ -45,6 +45,5 @@
     <ClInclude Include="*.h;*.hpp;*.hxx;*.hm;*.inl;*.xsd"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\driver.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="..\internal.h"><Filter>Header Files</Filter></ClInclude>
-    <ClInclude Include="..\tag_aliases.h"><Filter>Header Files</Filter></ClInclude>
   </ItemGroup>
 </Project>
