@@ -540,6 +540,7 @@ static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkBootBatteryRefreshWorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkLegacyBatteryRefreshTimerFunction(_In_ WDFTIMER Timer);
 static NTSTATUS PmicGlinkEnsureLegacyBatteryRefreshTimer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static VOID PmicGlinkStartLegacyBatteryRefreshTimer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ PCSTR Reason);
 static VOID PmicGlinkRxNotificationCb(
     _In_opt_ PVOID Handle,
     _In_opt_ const VOID* Context,
@@ -1364,7 +1365,12 @@ PmicGlinkEvtD0Entry(
     WDFIOTARGET ioTarget;
 
     context = PmicGlinkGetDeviceContext(Device);
-    UNREFERENCED_PARAMETER(context);
+    if (context == NULL)
+    {
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    context->Hibernate = FALSE;
 
     if (PreviousState != WdfPowerDeviceD3)
     {
@@ -1378,6 +1384,7 @@ PmicGlinkEvtD0Entry(
     }
 
     (VOID)WdfIoTargetStart(ioTarget);
+    PmicGlinkStartLegacyBatteryRefreshTimer(context, "D0Entry");
     return STATUS_SUCCESS;
 }
 
@@ -1488,6 +1495,7 @@ PmicGlinkEvtSelfManagedIoInit(
     _In_ WDFDEVICE Device
     )
 {
+    PPMIC_GLINK_DEVICE_CONTEXT context;
     WDFIOTARGET ioTarget;
 
     ioTarget = WdfDeviceGetIoTarget(Device);
@@ -1497,7 +1505,12 @@ PmicGlinkEvtSelfManagedIoInit(
     }
 
     (VOID)WdfIoTargetStart(ioTarget);
-    (VOID)PmicGlinkGetDeviceContext(Device);
+    context = PmicGlinkGetDeviceContext(Device);
+    if (context != NULL)
+    {
+        context->Hibernate = FALSE;
+        PmicGlinkStartLegacyBatteryRefreshTimer(context, "SelfManagedIoInit");
+    }
     return STATUS_SUCCESS;
 }
 
@@ -1506,6 +1519,7 @@ PmicGlinkEvtSelfManagedIoRestart(
     _In_ WDFDEVICE Device
     )
 {
+    PPMIC_GLINK_DEVICE_CONTEXT context;
     WDFIOTARGET ioTarget;
 
     ioTarget = WdfDeviceGetIoTarget(Device);
@@ -1515,6 +1529,12 @@ PmicGlinkEvtSelfManagedIoRestart(
     }
 
     (VOID)WdfIoTargetStart(ioTarget);
+    context = PmicGlinkGetDeviceContext(Device);
+    if (context != NULL)
+    {
+        context->Hibernate = FALSE;
+        PmicGlinkStartLegacyBatteryRefreshTimer(context, "SelfManagedIoRestart");
+    }
     return STATUS_SUCCESS;
 }
 
@@ -3732,6 +3752,45 @@ PmicGlinkEnsureLegacyBatteryRefreshTimer(
 }
 
 static VOID
+PmicGlinkStartLegacyBatteryRefreshTimer(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_opt_ PCSTR Reason
+    )
+{
+    NTSTATUS status;
+
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    status = PmicGlinkEnsureLegacyBatteryRefreshTimer(Context);
+    if (!NT_SUCCESS(status) || (Context->LegacyBatteryRefreshTimer == NULL))
+    {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: batt_fallback_timer start failed reason=%s status=0x%08lx timer=%p\n",
+            (Reason != NULL) ? Reason : "unknown",
+            (ULONG)status,
+            Context->LegacyBatteryRefreshTimer);
+        return;
+    }
+
+    (VOID)WdfTimerStart(
+        Context->LegacyBatteryRefreshTimer,
+        -((LONGLONG)PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS * 10000ll));
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: batt_fallback_timer started reason=%s timer=%p connected=%u hibernate=%u\n",
+        (Reason != NULL) ? Reason : "unknown",
+        Context->LegacyBatteryRefreshTimer,
+        Context->GlinkChannelConnected ? 1u : 0u,
+        Context->Hibernate ? 1u : 0u);
+}
+
+static VOID
 PmicGlinkLegacyBatteryRefreshTimerFunction(
     _In_ WDFTIMER Timer
     )
@@ -3759,13 +3818,20 @@ PmicGlinkLegacyBatteryRefreshTimerFunction(
     DbgPrintEx(
         DPFLTR_IHVDRIVER_ID,
         PMICGLINK_TRACE_LEVEL,
-        "pmicglink: batt_fallback_timer lastNotify=%I64u now=%I64u connected=%u battmini=%u\n",
+        "pmicglink: batt_fallback_timer ping lastNotify=%I64u now=%I64u connected=%u battmini=%u\n",
         context->LegacyLastAdspBatteryNotifyMsec,
         nowMsec,
         context->GlinkChannelConnected ? 1u : 0u,
         context->BattMiniDeviceLoaded ? 1u : 0u);
 
-    (VOID)PmicGlinkCreateDeviceWorkItem(context, PmicGlinkBootBatteryRefreshWorkItem);
+    gPmicGlinkLastChargeStatusQueryMsec = 0;
+    gPmicGlinkLastBattInfoQueryMsec = 0;
+    context->LegacyLastModernSocQueryMsec = 0;
+    context->LegacyStatusNotificationPending = TRUE;
+    context->LegacyStateChangePending = TRUE;
+    context->Notify = TRUE;
+    PmicGlinkTryAttachBattMiniFromIoctl(context, "TIMER");
+    PmicGlinkNotifyBattMiniStatusFromGlink(context, 0x80u);
 }
 
 static VOID
@@ -3889,13 +3955,7 @@ PmicGlinkStateNotificationCb(
             (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(channelHandle, Context, 4096u);
         }
         Context->GlinkRxIntent += 1;
-        if (NT_SUCCESS(PmicGlinkEnsureLegacyBatteryRefreshTimer(Context))
-            && (Context->LegacyBatteryRefreshTimer != NULL))
-        {
-            (VOID)WdfTimerStart(
-                Context->LegacyBatteryRefreshTimer,
-                -((LONGLONG)PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS * 10000ll));
-        }
+        PmicGlinkStartLegacyBatteryRefreshTimer(Context, "ChannelConnected");
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkBootBatteryRefreshWorkItem);
         DbgPrintEx(
