@@ -12,15 +12,14 @@ DriverEntry(
     PPMIC_GLINK_DRIVER_CONTEXT driverContext;
     WDF_DRIVER_CONFIG config;
 
+    WPP_INIT_TRACING(DriverObject, RegistryPath);
+
     WDF_DRIVER_CONFIG_INIT(&config, PmicGlinkOnDeviceAdd);
     config.EvtDriverUnload = PmicGlinkOnDriverUnload;
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&driverAttributes, PMIC_GLINK_DRIVER_CONTEXT);
     driverAttributes.EvtCleanupCallback = PmicGlinkOnDriverCleanup;
 
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: build tag 2026-03-16 commit decomp-criteria-fallback\n");
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: build tag 2026-03-16 commit decomp-criteria-fallback\n");
 
     status = WdfDriverCreate(
         DriverObject,
@@ -30,6 +29,7 @@ DriverEntry(
         &driver);
     if (!NT_SUCCESS(status))
     {
+        WPP_CLEANUP(DriverObject);
         return status;
     }
 
@@ -632,4 +632,3 @@ PmicGlinkEvtQueryStop(
 
     return STATUS_SUCCESS;
 }
-

@@ -270,7 +270,7 @@ PmicGlinkUlogPrintBuffer(
                 RtlZeroMemory(lineBuffer, sizeof(lineBuffer));
                 RtlCopyMemory(lineBuffer, &localBuffer[chunkStart], chunkBytes);
                 lineBuffer[chunkBytes - 1u] = '\0';
-                DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: %s\n", lineBuffer);
+                Trace(TRACE_LEVEL_INFORMATION, "pmicglink: %s\n", lineBuffer);
 
                 chunkStart += chunkBytes;
             }
@@ -283,7 +283,7 @@ PmicGlinkUlogPrintBuffer(
             RtlZeroMemory(lineBuffer, sizeof(lineBuffer));
             RtlCopyMemory(lineBuffer, &localBuffer[lineStart], lineBytes);
             lineBuffer[index - lineStart] = '\0';
-            DbgPrintEx(DPFLTR_IHVDRIVER_ID, PMICGLINK_TRACE_LEVEL, "pmicglink: %s\n", lineBuffer);
+            Trace(TRACE_LEVEL_INFORMATION, "pmicglink: %s\n", lineBuffer);
         }
 
         lineStart = index + 1u;

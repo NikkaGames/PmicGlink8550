@@ -49,10 +49,7 @@ PmicGlinkBootBatteryRefreshWorkItem(
         nowMsec = PmicGlink_Helper_get_rel_time_msec();
         PmicGlinkRefreshModernBatterySoc(context, nowMsec, TRUE);
 
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: boot_refresh connected=%u battmini=%u target=%p battId=0x%08lx info=0x%08lx chg=0x%08lx pct=%u state=0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: boot_refresh connected=%u battmini=%u target=%p battId=0x%08lx info=0x%08lx chg=0x%08lx pct=%u state=0x%08lx\n",
             context->GlinkChannelConnected ? 1u : 0u,
             context->BattMiniDeviceLoaded ? 1u : 0u,
             context->BattMiniIoTarget,
@@ -103,18 +100,12 @@ PmicGlinkEnsureLegacyBatteryRefreshTimer(
     if (!NT_SUCCESS(status))
     {
         Context->LegacyBatteryRefreshTimer = NULL;
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: batt_fallback_timer create failed status=0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: batt_fallback_timer create failed status=0x%08lx\n",
             (ULONG)status);
     }
     else
     {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: batt_fallback_timer created delayMs=%u\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: batt_fallback_timer created delayMs=%u\n",
             PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS);
     }
 
@@ -137,10 +128,7 @@ PmicGlinkStartLegacyBatteryRefreshTimer(
     status = PmicGlinkEnsureLegacyBatteryRefreshTimer(Context);
     if (!NT_SUCCESS(status) || (Context->LegacyBatteryRefreshTimer == NULL))
     {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: batt_fallback_timer start failed reason=%s status=0x%08lx timer=%p\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: batt_fallback_timer start failed reason=%s status=0x%08lx timer=%p\n",
             (Reason != NULL) ? Reason : "unknown",
             (ULONG)status,
             Context->LegacyBatteryRefreshTimer);
@@ -150,10 +138,7 @@ PmicGlinkStartLegacyBatteryRefreshTimer(
     (VOID)WdfTimerStart(
         Context->LegacyBatteryRefreshTimer,
         -((LONGLONG)PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS * 10000ll));
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: batt_fallback_timer started reason=%s timer=%p connected=%u hibernate=%u\n",
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: batt_fallback_timer started reason=%s timer=%p connected=%u hibernate=%u\n",
         (Reason != NULL) ? Reason : "unknown",
         Context->LegacyBatteryRefreshTimer,
         Context->GlinkChannelConnected ? 1u : 0u,
@@ -188,10 +173,7 @@ PmicGlinkLegacyBatteryRefreshTimerFunction(
         return;
     }
 
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: batt_fallback_timer ping lastNotify=%I64u now=%I64u connected=%u battmini=%u\n",
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: batt_fallback_timer ping lastNotify=%I64u now=%I64u connected=%u battmini=%u\n",
         context->LegacyLastAdspBatteryNotifyMsec,
         nowMsec,
         context->GlinkChannelConnected ? 1u : 0u,
@@ -239,10 +221,7 @@ PmicGlinkPollBattMiniClass(
     Context->LegacyStatusNotificationPending = TRUE;
     Context->LegacyStateChangePending = TRUE;
     PmicGlinkTryAttachBattMiniFromIoctl(Context, (Reason != NULL) ? Reason : "poll");
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: battmini poll reason=%s loaded=%u target=%p\n",
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini poll reason=%s loaded=%u target=%p\n",
         (Reason != NULL) ? Reason : "poll",
         Context->BattMiniDeviceLoaded ? 1u : 0u,
         Context->BattMiniIoTarget);
@@ -307,10 +286,7 @@ PmicGlinkTryAttachBattMiniNoPnp(
                 &interfaceList);
             if (!NT_SUCCESS(status))
             {
-                DbgPrintEx(
-                    DPFLTR_IHVDRIVER_ID,
-                    PMICGLINK_TRACE_LEVEL,
-                    "pmicglink: battmini attach query guid=%s flags=0x%lx failed status=0x%08lx\n",
+                Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini attach query guid=%s flags=0x%lx failed status=0x%08lx\n",
                     interfaceNames[guidIndex],
                     interfaceFlags,
                     (ULONG)status);
@@ -338,10 +314,7 @@ PmicGlinkTryAttachBattMiniNoPnp(
                         &Context->BattMiniIoTarget);
                     if (!NT_SUCCESS(status))
                     {
-                        DbgPrintEx(
-                            DPFLTR_IHVDRIVER_ID,
-                            PMICGLINK_TRACE_LEVEL,
-                            "pmicglink: battmini attach create target failed status=0x%08lx\n",
+                        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini attach create target failed status=0x%08lx\n",
                             (ULONG)status);
                         break;
                     }
@@ -354,10 +327,7 @@ PmicGlinkTryAttachBattMiniNoPnp(
                     PMICGLINK_GLINK_QUERY_ACCESS_MASK);
                 openParams.ShareAccess = FILE_SHARE_READ;
                 openStatus = WdfIoTargetOpen(Context->BattMiniIoTarget, &openParams);
-                DbgPrintEx(
-                    DPFLTR_IHVDRIVER_ID,
-                    PMICGLINK_TRACE_LEVEL,
-                    "pmicglink: battmini attach try guid=%s[%lu] flags=0x%lx status=0x%08lx name=%ws\n",
+                Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini attach try guid=%s[%lu] flags=0x%lx status=0x%08lx name=%ws\n",
                     interfaceNames[guidIndex],
                     interfaceIndex,
                     interfaceFlags,
@@ -375,10 +345,7 @@ PmicGlinkTryAttachBattMiniNoPnp(
                         0u,
                         -1000000ll,
                         &probeBytesReturned);
-                    DbgPrintEx(
-                        DPFLTR_IHVDRIVER_ID,
-                        PMICGLINK_TRACE_LEVEL,
-                        "pmicglink: battmini attach probe guid=%s[%lu] status=0x%08lx bytes=%Iu\n",
+                    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini attach probe guid=%s[%lu] status=0x%08lx bytes=%Iu\n",
                         interfaceNames[guidIndex],
                         interfaceIndex,
                         (ULONG)probeStatus,
@@ -393,10 +360,7 @@ PmicGlinkTryAttachBattMiniNoPnp(
                         break;
                     }
 
-                    DbgPrintEx(
-                        DPFLTR_IHVDRIVER_ID,
-                        PMICGLINK_TRACE_LEVEL,
-                        "pmicglink: battmini attach reject guid=%s[%lu] status=0x%08lx\n",
+                    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini attach reject guid=%s[%lu] status=0x%08lx\n",
                         interfaceNames[guidIndex],
                         interfaceIndex,
                         (ULONG)probeStatus);
@@ -473,10 +437,7 @@ PmicGlinkTryAttachBattMiniFromIoctl(
     gPmicGlinkLastBattMiniAttachAttemptMsec = nowMsec;
 
     attachStatus = PmicGlinkTryAttachBattMiniNoPnp(Context);
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: battmini ioctl-attach reason=%s status=0x%08lx loaded=%u target=%p\n",
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini ioctl-attach reason=%s status=0x%08lx loaded=%u target=%p\n",
         (Reason != NULL) ? Reason : "unknown",
         (ULONG)attachStatus,
         Context->BattMiniDeviceLoaded ? 1u : 0u,
@@ -496,10 +457,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     BOOLEAN lockHeld;
     SIZE_T bytesReturned;
 
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: battmini notify enter notif=0x%08lx loaded=%u target=%p go=%ld lock=%p\n",
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini notify enter notif=0x%08lx loaded=%u target=%p go=%ld lock=%p\n",
         NotificationData,
         (Context != NULL && Context->BattMiniDeviceLoaded) ? 1u : 0u,
         (Context != NULL) ? Context->BattMiniIoTarget : NULL,
@@ -508,10 +466,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
 
     if (Context == NULL)
     {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini notify exit null-context notif=0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini notify exit null-context notif=0x%08lx\n",
             NotificationData);
         return;
     }
@@ -519,10 +474,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
     PmicGlinkNotify_PingBattMiniClass(Context);
     if (InterlockedCompareExchange(&gPmicGlinkNotifyGo, 1, 1) == 0)
     {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini notify early-exit go=0 notif=0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini notify early-exit go=0 notif=0x%08lx\n",
             NotificationData);
         return;
     }
@@ -539,10 +491,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         Context->LegacyStatusNotificationPending = TRUE;
         Context->LegacyStateChangePending = TRUE;
         Context->Notify = TRUE;
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini notify defer attach notif=0x%08lx loaded=0 target=%p\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini notify defer attach notif=0x%08lx loaded=0 target=%p\n",
             NotificationData,
             Context->BattMiniIoTarget);
         if (lockHeld)
@@ -572,10 +521,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
             PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
             &bytesReturned);
         (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini notify_presence status=0x%08lx notif=0x%08lx bytes=%Iu\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini notify_presence status=0x%08lx notif=0x%08lx bytes=%Iu\n",
             (ULONG)notifyStatus,
             NotificationData,
             bytesReturned);
@@ -600,10 +546,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
                 PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
                 &bytesReturned);
             (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 0);
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: battmini notify_status status=0x%08lx arg=0x%08lx notif=0x%08lx bytes=%Iu\n",
+            Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini notify_status status=0x%08lx arg=0x%08lx notif=0x%08lx bytes=%Iu\n",
                 (ULONG)notifyStatus,
                 battMiniNotifyArgument,
                 NotificationData,
@@ -617,20 +560,14 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         }
         else
         {
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: battmini notify_status skip notif=0x%08lx low=0x%02lx\n",
+            Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini notify_status skip notif=0x%08lx low=0x%02lx\n",
                 NotificationData,
             NotificationData & 0xFFu);
         }
     }
     else
     {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini notify skipped loaded=%u target=%p notif=0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini notify skipped loaded=%u target=%p notif=0x%08lx\n",
             battMiniLoaded ? 1u : 0u,
             battMiniTarget,
             NotificationData);
@@ -646,10 +583,7 @@ PmicGlinkNotifyBattMiniStatusFromGlink(
         WdfObjectDereference(battMiniTarget);
     }
 
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: battmini notify exit notif=0x%08lx loaded=%u target=%p\n",
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini notify exit notif=0x%08lx loaded=%u target=%p\n",
         NotificationData,
         Context->BattMiniDeviceLoaded ? 1u : 0u,
         Context->BattMiniIoTarget);

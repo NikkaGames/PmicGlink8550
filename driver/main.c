@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "kmdf/trace.h"
+#include "main.tmh"
 
 typedef struct _GLINK_CHANNEL_CTX GLINK_CHANNEL_CTX;
 

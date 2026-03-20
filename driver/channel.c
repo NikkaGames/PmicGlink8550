@@ -203,10 +203,7 @@ PmicGlinkEnsureApiInterface(
     {
         for (versionIndex = 0u; versionIndex < RTL_NUMBER_OF(queryVersions); versionIndex++)
         {
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: ensure_api iotarget_query probing version=%hu\n",
+            Trace(TRACE_LEVEL_INFORMATION, "pmicglink: ensure_api iotarget_query probing version=%hu\n",
                 queryVersions[versionIndex]);
 
             for (sizeIndex = 0u; sizeIndex < RTL_NUMBER_OF(querySizes); sizeIndex++)
@@ -226,10 +223,7 @@ PmicGlinkEnsureApiInterface(
                         &gPmicGlinkApiInterface,
                         Context->GlinkApiInterfaceBuffer,
                         sizeof(gPmicGlinkApiInterface));
-                    DbgPrintEx(
-                        DPFLTR_IHVDRIVER_ID,
-                        PMICGLINK_TRACE_LEVEL,
-                        "pmicglink: ensure_api iotarget_query ok version=%hu size=%lu\n",
+                    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: ensure_api iotarget_query ok version=%hu size=%lu\n",
                         queryVersions[versionIndex],
                         querySizes[sizeIndex]);
                     return STATUS_SUCCESS;
@@ -237,10 +231,7 @@ PmicGlinkEnsureApiInterface(
             }
         }
 
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: ensure_api iotarget_query failed status=0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: ensure_api iotarget_query failed status=0x%08lx\n",
             (ULONG)status);
     }
 
@@ -263,10 +254,7 @@ PmicGlinkEnsureApiInterface(
                     &gPmicGlinkApiInterface,
                     Context->GlinkApiInterfaceBuffer,
                     sizeof(gPmicGlinkApiInterface));
-                DbgPrintEx(
-                    DPFLTR_IHVDRIVER_ID,
-                    PMICGLINK_TRACE_LEVEL,
-                    "pmicglink: ensure_api fdo_query ok version=%hu size=%lu\n",
+                Trace(TRACE_LEVEL_INFORMATION, "pmicglink: ensure_api fdo_query ok version=%hu size=%lu\n",
                     queryVersions[versionIndex],
                     querySizes[sizeIndex]);
                 return STATUS_SUCCESS;
@@ -279,10 +267,7 @@ PmicGlinkEnsureApiInterface(
         WDFIOTARGET namedIoTarget;
         WDF_IO_TARGET_OPEN_PARAMS openParams;
 
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: ensure_api fdo_query failed status=0x%08lx nameLen=%hu\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: ensure_api fdo_query failed status=0x%08lx nameLen=%hu\n",
             (ULONG)status,
             gPmicGlinkApiInterfaceSymbolicLinkName.Length);
 
@@ -331,10 +316,7 @@ PmicGlinkEnsureApiInterface(
                         &gPmicGlinkApiInterface,
                         Context->GlinkApiInterfaceBuffer,
                         sizeof(gPmicGlinkApiInterface));
-                    DbgPrintEx(
-                        DPFLTR_IHVDRIVER_ID,
-                        PMICGLINK_TRACE_LEVEL,
-                        "pmicglink: ensure_api named_iotarget_query ok version=%hu size=%lu\n",
+                    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: ensure_api named_iotarget_query ok version=%hu size=%lu\n",
                         queryVersions[versionIndex],
                         querySizes[sizeIndex]);
                     break;
@@ -351,18 +333,12 @@ PmicGlinkEnsureApiInterface(
         WdfObjectDelete(namedIoTarget);
         if (!NT_SUCCESS(status))
         {
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: ensure_api named_iotarget_query failed status=0x%08lx\n",
+            Trace(TRACE_LEVEL_INFORMATION, "pmicglink: ensure_api named_iotarget_query failed status=0x%08lx\n",
                 (ULONG)status);
             return status;
         }
 
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: ensure_api named_iotarget_query ok size=%lu\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: ensure_api named_iotarget_query ok size=%lu\n",
             (ULONG)sizeof(gPmicGlinkApiInterface));
     }
 
@@ -667,10 +643,7 @@ PmicGlink_OpenGlinkChannel(
         return STATUS_INVALID_PARAMETER;
     }
 
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: open_channel attempt allReq=%u glinkLoaded=%u linkUp=%u restart=%u hibernate=%u handle=%p\n",
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: open_channel attempt allReq=%u glinkLoaded=%u linkUp=%u restart=%u hibernate=%u handle=%p\n",
         Context->AllReqIntfArrived ? 1u : 0u,
         Context->GlinkDeviceLoaded ? 1u : 0u,
         Context->GlinkLinkStateUp ? 1u : 0u,
@@ -681,20 +654,14 @@ PmicGlink_OpenGlinkChannel(
     status = PmicGlinkEnsureApiInterface(Context);
     if (!NT_SUCCESS(status))
     {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: open_channel ensure_api failed status=0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: open_channel ensure_api failed status=0x%08lx\n",
             (ULONG)status);
         return STATUS_SUCCESS;
     }
 
     if (gPmicGlinkApiInterface.GLinkOpen == NULL)
     {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: open_channel GLinkOpen is NULL\n");
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: open_channel GLinkOpen is NULL\n");
         return STATUS_SUCCESS;
     }
 
@@ -718,20 +685,14 @@ PmicGlink_OpenGlinkChannel(
     status = gPmicGlinkApiInterface.GLinkOpen(&openConfig, &channelHandle);
     if (status != STATUS_SUCCESS)
     {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: open_channel GLinkOpen failed status=0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: open_channel GLinkOpen failed status=0x%08lx\n",
             (ULONG)status);
         gPmicGlinkMainChannelHandle = NULL;
         return STATUS_UNSUCCESSFUL;
     }
 
     gPmicGlinkMainChannelHandle = channelHandle;
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: open_channel success handle=%p\n",
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: open_channel success handle=%p\n",
         channelHandle);
     return STATUS_SUCCESS;
 }
@@ -904,10 +865,7 @@ PmicGlinkStateNotificationCb(
         return;
     }
 
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: state_notify event=%lu ctx=%p handle=%p connected=%u restart=%u linkUp=%u\n",
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: state_notify event=%lu ctx=%p handle=%p connected=%u restart=%u linkUp=%u\n",
         (ULONG)Event,
         Context,
         channelHandle,
@@ -939,10 +897,7 @@ PmicGlinkStateNotificationCb(
         PmicGlinkStartLegacyBatteryRefreshTimer(Context, "ChannelConnected");
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkBootBatteryRefreshWorkItem);
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: state_notify connected done handle=%p rxIntent=%lu\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: state_notify connected done handle=%p rxIntent=%lu\n",
             gPmicGlinkMainChannelHandle,
             Context->GlinkRxIntent);
         break;
@@ -959,10 +914,7 @@ PmicGlinkStateNotificationCb(
         {
             (VOID)PmicGlink_OpenGlinkChannel(Context);
         }
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: state_notify local_disconnected restart=%u linkUp=%u\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: state_notify local_disconnected restart=%u linkUp=%u\n",
             Context->GlinkChannelRestart ? 1u : 0u,
             Context->GlinkLinkStateUp ? 1u : 0u);
         break;
@@ -985,10 +937,7 @@ PmicGlinkStateNotificationCb(
             (VOID)KeSetEvent(&gPmicGlinkRemoteDisconnectedEvent, IO_NO_INCREMENT, FALSE);
             (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         }
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: state_notify remote_disconnected restart=%u handle=%p\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: state_notify remote_disconnected restart=%u handle=%p\n",
             Context->GlinkChannelRestart ? 1u : 0u,
             gPmicGlinkMainChannelHandle);
         break;

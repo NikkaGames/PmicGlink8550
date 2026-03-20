@@ -1464,10 +1464,7 @@ PmicGlinkNotifyUsbnIoctl(
         NULL,
         &bytesReturned);
 
-    DbgPrintEx(
-        DPFLTR_IHVDRIVER_ID,
-        PMICGLINK_TRACE_LEVEL,
-        "pmicglink: usbn_notify ioctl status=0x%08lx bytes=%Iu out=[0x%08lx,0x%08lx,0x%08lx,0x%08lx,0x%08lx]\n",
+    Trace(TRACE_LEVEL_INFORMATION, "pmicglink: usbn_notify ioctl status=0x%08lx bytes=%Iu out=[0x%08lx,0x%08lx,0x%08lx,0x%08lx,0x%08lx]\n",
         (ULONG)status,
         (SIZE_T)bytesReturned,
         outputBuffer[0],
@@ -1539,10 +1536,7 @@ PmicGlinkSendDriverRequest(
             NULL,
             (PULONG_PTR)BytesReturned);
 
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: sendreq fallback internal ioctl=0x%08lx status=0x%08lx->0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: sendreq fallback internal ioctl=0x%08lx status=0x%08lx->0x%08lx\n",
             IoControlCode,
             (ULONG)status,
             (ULONG)fallbackStatus);
@@ -1618,10 +1612,7 @@ PmicGlinkSendDriverRequestWithTimeout(
             &requestOptions,
             (PULONG_PTR)BytesReturned);
 
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: sendreq_timeout fallback internal ioctl=0x%08lx status=0x%08lx->0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: sendreq_timeout fallback internal ioctl=0x%08lx status=0x%08lx->0x%08lx\n",
             IoControlCode,
             (ULONG)status,
             (ULONG)fallbackStatus);

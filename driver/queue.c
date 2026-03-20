@@ -152,7 +152,7 @@ PmicGlinkOnDriverCleanup(
     _In_ WDFOBJECT DriverObject
     )
 {
-    UNREFERENCED_PARAMETER(DriverObject);
+    WPP_CLEANUP(WdfDriverWdmGetDriverObject((WDFDRIVER)DriverObject));
 }
 
 static VOID

@@ -114,6 +114,9 @@ ipch/
 *.VC.db
 *.VC.VC.opendb
 
+# Generated WPP amalgamation for the include-based pmicglink build
+driver/pmicglink8550_wpp.c
+
 # Visual Studio profiler
 *.psess
 *.vsp

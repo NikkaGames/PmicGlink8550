@@ -469,10 +469,7 @@ PmicGlinkInterfaceNotificationCallback(
                 return STATUS_INVALID_PARAMETER;
             }
 
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: glink_iface arrival nameLen=%hu target=%p\n",
+            Trace(TRACE_LEVEL_INFORMATION, "pmicglink: glink_iface arrival nameLen=%hu target=%p\n",
                 symbolicLinkName->Length,
                 deviceContext->GlinkIoTarget);
 
@@ -484,19 +481,13 @@ PmicGlinkInterfaceNotificationCallback(
             status = WdfIoTargetOpen(deviceContext->GlinkIoTarget, &openParams);
             if (!NT_SUCCESS(status))
             {
-                DbgPrintEx(
-                    DPFLTR_IHVDRIVER_ID,
-                    PMICGLINK_TRACE_LEVEL,
-                    "pmicglink: glink_iface open failed status=0x%08lx\n",
+                Trace(TRACE_LEVEL_INFORMATION, "pmicglink: glink_iface open failed status=0x%08lx\n",
                     (ULONG)status);
                 PmicGlinkCloseIoTargetIfOpen(&deviceContext->GlinkIoTarget);
                 return status;
             }
 
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: glink_iface open ok target=%p\n",
+            Trace(TRACE_LEVEL_INFORMATION, "pmicglink: glink_iface open ok target=%p\n",
                 deviceContext->GlinkIoTarget);
 
             deviceContext->GlinkDeviceLoaded = TRUE;
@@ -587,10 +578,7 @@ PmicGlinkInterfaceNotificationCallback(
     {
         status = STATUS_SUCCESS;
         WdfWaitLockAcquire(deviceContext->BattMiniNotifyLock, NULL);
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini iface event=%s loaded=%u target=%p nameLen=%hu\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini iface event=%s loaded=%u target=%p nameLen=%hu\n",
             arrival ? "arrival" : "removal",
             deviceContext->BattMiniDeviceLoaded ? 1u : 0u,
             deviceContext->BattMiniIoTarget,
@@ -627,10 +615,7 @@ PmicGlinkInterfaceNotificationCallback(
                     if (NT_SUCCESS(status))
                     {
                         deviceContext->BattMiniDeviceLoaded = TRUE;
-                        DbgPrintEx(
-                            DPFLTR_IHVDRIVER_ID,
-                            PMICGLINK_TRACE_LEVEL,
-                            "pmicglink: battmini iface open ok target=%p\n",
+                        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini iface open ok target=%p\n",
                             deviceContext->BattMiniIoTarget);
                         status = PmicGlinkEnsureBclCriticalCallback(deviceContext);
                         if (NT_SUCCESS(status) && deviceContext->GlinkChannelConnected)
@@ -643,10 +628,7 @@ PmicGlinkInterfaceNotificationCallback(
                     }
                     else
                     {
-                        DbgPrintEx(
-                            DPFLTR_IHVDRIVER_ID,
-                            PMICGLINK_TRACE_LEVEL,
-                            "pmicglink: battmini iface open failed status=0x%08lx\n",
+                        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini iface open failed status=0x%08lx\n",
                             (ULONG)status);
                     }
                 }
@@ -663,10 +645,7 @@ PmicGlinkInterfaceNotificationCallback(
 
             deviceContext->BattMiniDeviceLoaded = FALSE;
             deviceContext->NotificationFlag = FALSE;
-            DbgPrintEx(
-                DPFLTR_IHVDRIVER_ID,
-                PMICGLINK_TRACE_LEVEL,
-                "pmicglink: battmini iface removed target=%p\n",
+            Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini iface removed target=%p\n",
                 deviceContext->BattMiniIoTarget);
         }
 
@@ -786,10 +765,7 @@ PmicGlinkDevice_RegisterForPnPNotifications(
             return status;
         }
 
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: battmini iface notify registered entry=%p status=0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: battmini iface notify registered entry=%p status=0x%08lx\n",
             Context->BattMiniNotificationEntry,
             (ULONG)status);
     }
@@ -1131,10 +1107,7 @@ PmicGlink_Init(
     }
     else
     {
-        DbgPrintEx(
-            DPFLTR_IHVDRIVER_ID,
-            PMICGLINK_TRACE_LEVEL,
-            "pmicglink: batt_fallback_timer init failed status=0x%08lx\n",
+        Trace(TRACE_LEVEL_INFORMATION, "pmicglink: batt_fallback_timer init failed status=0x%08lx\n",
             (ULONG)status);
     }
 

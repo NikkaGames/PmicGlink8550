@@ -196,7 +196,12 @@
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);..\..\inc;..</AdditionalIncludeDirectories>
       <ExceptionHandling>
       </ExceptionHandling>
+      <WppEnabled>true</WppEnabled>
+      <WppScanConfigurationData>trace.h</WppScanConfigurationData>
     </ClCompile>
+    <PreBuildEvent>
+      <Command>powershell.exe -ExecutionPolicy Bypass -File "$(ProjectDir)gen_wpp_source.ps1"</Command>
+    </PreBuildEvent>
     <Midl>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);_UNICODE;UNICODE;POOL_NX_OPTIN=1</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);..\..\inc;..</AdditionalIncludeDirectories>
@@ -240,8 +245,10 @@
       </ExceptionHandling>
       <WppEnabled>true</WppEnabled>
       <WppScanConfigurationData>trace.h</WppScanConfigurationData>
-      <WppTraceFunction>Trace(LEVEL,FLAGS,MSG,...)</WppTraceFunction>
     </ClCompile>
+    <PreBuildEvent>
+      <Command>powershell.exe -ExecutionPolicy Bypass -File "$(ProjectDir)gen_wpp_source.ps1"</Command>
+    </PreBuildEvent>
     <Midl>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);_UNICODE;UNICODE;POOL_NX_OPTIN=1</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);..\..\inc;..</AdditionalIncludeDirectories>
@@ -255,10 +262,10 @@
     </DriverSign>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\main.c">
+    <ClCompile Include="..\pmicglink8550_wpp.c">
+      <WppEnabled Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">true</WppEnabled>
       <WppEnabled Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</WppEnabled>
       <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">trace.h</WppScanConfigurationData>
-      <WppTraceFunction Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">Trace(LEVEL,FLAGS,MSG,...)</WppTraceFunction>
     </ClCompile>
     <ResourceCompile Include="pmicglink8550.rc" />
   </ItemGroup>

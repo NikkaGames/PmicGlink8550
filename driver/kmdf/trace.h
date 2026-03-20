@@ -17,13 +17,13 @@ Environment:
 //
 // Define the tracing flags.
 //
-// Tracing GUID - 16f0c780-d6cf-4f60-a7ce-68f4c1d1bc1b
+// Tracing GUID - 16f0c780-d6cf-4f60-a7ce-68f4c1d1bc1f
 //
 #pragma once
 
 #define WPP_CONTROL_GUIDS                                              \
     WPP_DEFINE_CONTROL_GUID(                                           \
-        GT9886TraceGuid, (16f0c780,d6cf,4f60,a7ce,68f4c1d1bc1f), \
+        PmicGlinkTraceGuid, (16f0c780,d6cf,4f60,a7ce,68f4c1d1bc1f), \
                                                                             \
         WPP_DEFINE_BIT(MYDRIVER_ALL_INFO)                              \
         WPP_DEFINE_BIT(TRACE_DRIVER)                                   \
@@ -38,6 +38,12 @@ Environment:
 #define WPP_FLAG_LEVEL_ENABLED(flag, level)                                 \
     (WPP_LEVEL_ENABLED(flag) &&                                             \
      WPP_CONTROL(WPP_BIT_ ## flag).Level >= level)
+
+#define WPP_FLAGS_LEVEL_LOGGER(flags, level) \
+           WPP_LEVEL_LOGGER(flags)
+
+#define WPP_FLAGS_LEVEL_ENABLED(flags, level) \
+           (WPP_LEVEL_ENABLED(flags) && WPP_CONTROL(WPP_BIT_ ## flags).Level >= level)
 
 #define WPP_LEVEL_FLAGS_LOGGER(lvl,flags) \
            WPP_LEVEL_LOGGER(flags)
@@ -58,6 +64,7 @@ Environment:
 // Trace function.
 //
 // begin_wpp config
+// FUNC Trace{FLAGS=MYDRIVER_ALL_INFO}(LEVEL, MSG, ...);
 // FUNC TraceEvents(LEVEL, FLAGS, MSG, ...);
 // end_wpp
 //
