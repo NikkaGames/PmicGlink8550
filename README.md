@@ -11,7 +11,7 @@ description: "Qualcomm PMIC GLink KMDF driver workspace"
 
 # Qualcomm PMIC GLink Driver
 
-This repository now contains a PMIC GLink focused KMDF driver.
+This repository now contains a PMIC GLink focused KMDF driver for ZTE RedMagic 8 Pro.
 
 ## Build
 

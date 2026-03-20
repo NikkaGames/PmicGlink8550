@@ -201,8 +201,7 @@ PmicGlinkLegacyBatteryRefreshTimerFunction(
     context->LegacyStatusNotificationPending = TRUE;
     context->LegacyStateChangePending = TRUE;
     context->Notify = TRUE;
-    PmicGlinkTryAttachBattMiniFromIoctl(context, "TIMER");
-    PmicGlinkNotifyBattMiniStatusFromGlink(context, 0x80u);
+    PmicGlinkPollBattMiniClass(context, "TIMER");
 }
 
 
@@ -214,6 +213,92 @@ PmicGlinkNotify_PingBattMiniClass(
     UNREFERENCED_PARAMETER(Context);
     (VOID)InterlockedExchange(&gPmicGlinkNotifyGo, 1);
     return STATUS_SUCCESS;
+}
+
+static VOID
+PmicGlinkPollBattMiniClass(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context,
+    _In_opt_ PCSTR Reason
+    )
+{
+    NTSTATUS presenceStatus;
+    NTSTATUS statusStatus;
+    SIZE_T bytesReturned;
+    ULONG statusArgument;
+    WDFIOTARGET battMiniTarget;
+
+    if (Context == NULL)
+    {
+        return;
+    }
+
+    PmicGlinkTryAttachBattMiniFromIoctl(Context, (Reason != NULL) ? Reason : "poll");
+    if (!Context->BattMiniDeviceLoaded || (Context->BattMiniIoTarget == NULL))
+    {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: battmini poll skipped reason=%s loaded=%u target=%p\n",
+            (Reason != NULL) ? Reason : "poll",
+            Context->BattMiniDeviceLoaded ? 1u : 0u,
+            Context->BattMiniIoTarget);
+        return;
+    }
+
+    battMiniTarget = Context->BattMiniIoTarget;
+    WdfObjectReference(battMiniTarget);
+
+    bytesReturned = 0u;
+    presenceStatus = PmicGlinkSendDriverRequestWithTimeout(
+        battMiniTarget,
+        PMICGLINK_BATTMINI_IOCTL_NOTIFY_PRESENCE,
+        NULL,
+        0u,
+        NULL,
+        0u,
+        PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
+        &bytesReturned);
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: battmini poll_presence reason=%s status=0x%08lx bytes=%Iu\n",
+        (Reason != NULL) ? Reason : "poll",
+        (ULONG)presenceStatus,
+        bytesReturned);
+
+    /*
+     * The periodic timer exists to wake battminiclass when ADSP battery
+     * notifications stop. Send a neutral status ping too, but do not tear
+     * down the battmini attachment if this optional ioctl is unsupported.
+     */
+    statusArgument = 0u;
+    bytesReturned = 0u;
+    statusStatus = PmicGlinkSendDriverRequestWithTimeout(
+        battMiniTarget,
+        PMICGLINK_BATTMINI_IOCTL_NOTIFY_STATUS,
+        &statusArgument,
+        sizeof(statusArgument),
+        NULL,
+        0u,
+        PMICGLINK_BATTMINI_NOTIFY_TIMEOUT_100NS,
+        &bytesReturned);
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: battmini poll_status reason=%s status=0x%08lx arg=0x%08lx bytes=%Iu\n",
+        (Reason != NULL) ? Reason : "poll",
+        (ULONG)statusStatus,
+        statusArgument,
+        bytesReturned);
+
+    if (NT_SUCCESS(presenceStatus) || NT_SUCCESS(statusStatus))
+    {
+        Context->LegacyStatusNotificationPending = TRUE;
+        Context->LegacyStateChangePending = TRUE;
+        Context->Notify = TRUE;
+    }
+
+    WdfObjectDereference(battMiniTarget);
 }
 
 static NTSTATUS
@@ -392,6 +477,10 @@ PmicGlinkTryAttachBattMiniNoPnp(
         Context->BattMiniDeviceLoaded = TRUE;
         Context->NotificationFlag = TRUE;
         (VOID)PmicGlinkEnsureBclCriticalCallback(Context);
+        if (Context->GlinkChannelConnected && !Context->Hibernate)
+        {
+            PmicGlinkStartLegacyBatteryRefreshTimer(Context, "BattMiniAttach");
+        }
         return STATUS_SUCCESS;
     }
 
@@ -650,4 +739,3 @@ PmicGlinkIsBattStateNotCharging(
         return FALSE;
     }
 }
-

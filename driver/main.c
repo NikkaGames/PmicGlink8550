@@ -496,6 +496,7 @@ static NTSTATUS PmicGlinkPlatformUsbc_HandleStateNotification(_In_ PPMIC_GLINK_D
 static VOID PmicGlinkPlatformUsbc_AcpiNotificationHandler(_In_opt_ PVOID Context, _In_ ULONG NotifyValue);
 static NTSTATUS PmicGlinkEnsureBclCriticalCallback(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static NTSTATUS PmicGlinkNotify_PingBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
+static VOID PmicGlinkPollBattMiniClass(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_opt_ PCSTR Reason);
 static VOID PmicGlinkNotifyBattMiniStatusFromGlink(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ ULONG NotificationData);
 static NTSTATUS PmicGlinkTryAttachBattMiniNoPnp(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkTryAttachBattMiniFromIoctl(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context, _In_ PCSTR Reason);

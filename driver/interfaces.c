@@ -635,6 +635,7 @@ PmicGlinkInterfaceNotificationCallback(
                         status = PmicGlinkEnsureBclCriticalCallback(deviceContext);
                         if (NT_SUCCESS(status) && deviceContext->GlinkChannelConnected)
                         {
+                            PmicGlinkStartLegacyBatteryRefreshTimer(deviceContext, "BattMiniIface");
                             (VOID)PmicGlinkCreateDeviceWorkItem(
                                 deviceContext,
                                 PmicGlinkBootBatteryRefreshWorkItem);
@@ -1218,4 +1219,3 @@ PmicGlinkLoadPlatformConfig(
 
     WdfRegistryClose(regKey);
 }
-
