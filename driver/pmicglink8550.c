@@ -361,6 +361,7 @@ static volatile LONG gPmicGlinkLkmdTelMaxSizeInitialized;
 #define PMICGLINK_BC_ADSP_DEBUG_OPCODE 0x100u
 #define PMICGLINK_BC_DEBUG_MSG_OPCODE 0x101u
 #define PMICGLINK_BC_DEBUG_MSG_MAX_CHARS 256u
+#define PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS 3000u
 #define PMICGLINK_ABD_IOCTL_REGISTER_CONNECTION 0xC3502FA4u
 #define PMICGLINK_ABD_IOCTL_UNREGISTER_CONNECTION 0xC3502FA8u
 #define PMICGLINK_ULOG_MSG_HEADER 0x10000800Aull
@@ -537,6 +538,8 @@ static BOOLEAN PmicGlinkConsumeCommDataPacket(_In_ PPMIC_GLINK_DEVICE_CONTEXT Co
 static NTSTATUS PmicGlink_OpenGlinkChannel(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkRegisterInterfaceWorkItem(_In_ WDFWORKITEM WorkItem);
 static VOID PmicGlinkBootBatteryRefreshWorkItem(_In_ WDFWORKITEM WorkItem);
+static VOID PmicGlinkLegacyBatteryRefreshTimerFunction(_In_ WDFTIMER Timer);
+static NTSTATUS PmicGlinkEnsureLegacyBatteryRefreshTimer(_In_ PPMIC_GLINK_DEVICE_CONTEXT Context);
 static VOID PmicGlinkRxNotificationCb(
     _In_opt_ PVOID Handle,
     _In_opt_ const VOID* Context,
@@ -1402,6 +1405,10 @@ PmicGlinkEvtD0Exit(
     if (context->UlogTimer != NULL)
     {
         (VOID)WdfTimerStop(context->UlogTimer, TRUE);
+    }
+    if (context->LegacyBatteryRefreshTimer != NULL)
+    {
+        (VOID)WdfTimerStop(context->LegacyBatteryRefreshTimer, TRUE);
     }
 
     PmicGlinkStateNotificationCb(gPmicGlinkMainChannelHandle, context, PmicGlinkChannelLocalDisconnected);
@@ -2569,6 +2576,7 @@ PmicGlinkDevice_InitContext(
     Context->LegacyLastChargeStatusQueryMsec = 0;
     Context->LegacyLastBattInfoQueryMsec = 0;
     Context->LegacyLastModernSocQueryMsec = 0;
+    Context->LegacyLastAdspBatteryNotifyMsec = 0;
     Context->LegacyLastTestInfoRequestType = 0;
     Context->LegacyReserved = 0;
 
@@ -2613,6 +2621,7 @@ PmicGlinkDevice_InitContext(
     Context->UlogInterval = 0;
     Context->UlogLevel = PMICGLINK_ULOG_DEFAULT_LEVEL;
     Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
+    Context->LegacyBatteryRefreshTimer = NULL;
     Context->UlogTimer = NULL;
 
     KeInitializeEvent(&Context->QcmbNotifyEvent, NotificationEvent, FALSE);
@@ -2684,6 +2693,8 @@ PmicGlink_Init(
     Context->UlogInterval = 0;
     Context->UlogLevel = PMICGLINK_ULOG_DEFAULT_LEVEL;
     Context->UlogCategories = PMICGLINK_ULOG_DEFAULT_CATEGORIES;
+    Context->LegacyLastAdspBatteryNotifyMsec = 0;
+    Context->LegacyBatteryRefreshTimer = NULL;
     Context->UlogTimer = NULL;
 
     return STATUS_SUCCESS;
@@ -3635,6 +3646,97 @@ PmicGlinkBootBatteryRefreshWorkItem(
     WdfObjectDelete(WorkItem);
 }
 
+static NTSTATUS
+PmicGlinkEnsureLegacyBatteryRefreshTimer(
+    _In_ PPMIC_GLINK_DEVICE_CONTEXT Context
+    )
+{
+    NTSTATUS status;
+    WDF_TIMER_CONFIG timerConfig;
+    WDF_OBJECT_ATTRIBUTES timerAttributes;
+
+    if ((Context == NULL) || (Context->Device == NULL))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Context->LegacyBatteryRefreshTimer != NULL)
+    {
+        return STATUS_SUCCESS;
+    }
+
+    WDF_TIMER_CONFIG_INIT_PERIODIC(
+        &timerConfig,
+        PmicGlinkLegacyBatteryRefreshTimerFunction,
+        PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS);
+    timerConfig.AutomaticSerialization = FALSE;
+
+    WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
+    timerAttributes.ParentObject = Context->Device;
+    timerAttributes.ExecutionLevel = WdfExecutionLevelPassive;
+
+    status = WdfTimerCreate(
+        &timerConfig,
+        &timerAttributes,
+        &Context->LegacyBatteryRefreshTimer);
+    if (!NT_SUCCESS(status))
+    {
+        Context->LegacyBatteryRefreshTimer = NULL;
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: batt_fallback_timer create failed status=0x%08lx\n",
+            (ULONG)status);
+    }
+    else
+    {
+        DbgPrintEx(
+            DPFLTR_IHVDRIVER_ID,
+            PMICGLINK_TRACE_LEVEL,
+            "pmicglink: batt_fallback_timer created periodMs=%u\n",
+            PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS);
+    }
+
+    return status;
+}
+
+static VOID
+PmicGlinkLegacyBatteryRefreshTimerFunction(
+    _In_ WDFTIMER Timer
+    )
+{
+    WDFOBJECT parentObject;
+    PPMIC_GLINK_DEVICE_CONTEXT context;
+    ULONGLONG nowMsec;
+
+    parentObject = WdfTimerGetParentObject(Timer);
+    context = PmicGlinkGetDeviceContext((WDFDEVICE)parentObject);
+    if ((context == NULL) || !context->GlinkChannelConnected || context->Hibernate)
+    {
+        return;
+    }
+
+    nowMsec = PmicGlink_Helper_get_rel_time_msec();
+    if ((context->LegacyLastAdspBatteryNotifyMsec != 0)
+        && (nowMsec >= context->LegacyLastAdspBatteryNotifyMsec)
+        && ((nowMsec - context->LegacyLastAdspBatteryNotifyMsec)
+            < (ULONGLONG)PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS))
+    {
+        return;
+    }
+
+    DbgPrintEx(
+        DPFLTR_IHVDRIVER_ID,
+        PMICGLINK_TRACE_LEVEL,
+        "pmicglink: batt_fallback_timer lastNotify=%I64u now=%I64u connected=%u battmini=%u\n",
+        context->LegacyLastAdspBatteryNotifyMsec,
+        nowMsec,
+        context->GlinkChannelConnected ? 1u : 0u,
+        context->BattMiniDeviceLoaded ? 1u : 0u);
+
+    (VOID)PmicGlinkCreateDeviceWorkItem(context, PmicGlinkBootBatteryRefreshWorkItem);
+}
+
 static VOID
 PmicGlinkStateNotificationShim(
     _In_opt_ GLINK_CHANNEL_CTX* Channel,
@@ -3741,6 +3843,7 @@ PmicGlinkStateNotificationCb(
         Context->GlinkChannelFirstConnect = TRUE;
         Context->GlinkChannelConnected = TRUE;
         Context->GlinkChannelRestart = FALSE;
+        Context->LegacyLastAdspBatteryNotifyMsec = 0;
         if (channelHandle != NULL)
         {
             gPmicGlinkMainChannelHandle = channelHandle;
@@ -3755,6 +3858,13 @@ PmicGlinkStateNotificationCb(
             (VOID)gPmicGlinkApiInterface.GLinkQueueRxIntent(channelHandle, Context, 4096u);
         }
         Context->GlinkRxIntent += 1;
+        if (NT_SUCCESS(PmicGlinkEnsureLegacyBatteryRefreshTimer(Context))
+            && (Context->LegacyBatteryRefreshTimer != NULL))
+        {
+            (VOID)WdfTimerStart(
+                Context->LegacyBatteryRefreshTimer,
+                -((LONGLONG)PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS * 10000ll));
+        }
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
         (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkBootBatteryRefreshWorkItem);
         DbgPrintEx(
@@ -3767,6 +3877,10 @@ PmicGlinkStateNotificationCb(
 
     case PmicGlinkChannelLocalDisconnected:
         Context->GlinkChannelConnected = FALSE;
+        if (Context->LegacyBatteryRefreshTimer != NULL)
+        {
+            (VOID)WdfTimerStop(Context->LegacyBatteryRefreshTimer, FALSE);
+        }
         (VOID)KeClearEvent(&gPmicGlinkConnectedEvent);
         (VOID)KeSetEvent(&gPmicGlinkLocalDisconnectedEvent, IO_NO_INCREMENT, FALSE);
         if (Context->GlinkChannelRestart && Context->GlinkLinkStateUp)
@@ -3791,6 +3905,10 @@ PmicGlinkStateNotificationCb(
             gPmicGlinkMainChannelHandle = NULL;
             Context->GlinkChannelConnected = FALSE;
             Context->GlinkChannelRestart = TRUE;
+            if (Context->LegacyBatteryRefreshTimer != NULL)
+            {
+                (VOID)WdfTimerStop(Context->LegacyBatteryRefreshTimer, FALSE);
+            }
             (VOID)KeClearEvent(&gPmicGlinkConnectedEvent);
             (VOID)KeSetEvent(&gPmicGlinkRemoteDisconnectedEvent, IO_NO_INCREMENT, FALSE);
             (VOID)PmicGlinkCreateDeviceWorkItem(Context, PmicGlinkRegisterInterfaceWorkItem);
@@ -10899,6 +11017,7 @@ PmicGlink_RetrieveRxData(
             switch (notificationId)
             {
             case 0x800Au:
+                Context->LegacyLastAdspBatteryNotifyMsec = PmicGlink_Helper_get_rel_time_msec();
                 gPmicGlinkLastChargeStatusQueryMsec = 0;
                 gPmicGlinkLastBattInfoQueryMsec = 0;
                 Context->Notify = TRUE;

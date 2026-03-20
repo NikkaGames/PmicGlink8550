@@ -538,6 +538,7 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONGLONG LegacyLastChargeStatusQueryMsec;
     ULONGLONG LegacyLastBattInfoQueryMsec;
     ULONGLONG LegacyLastModernSocQueryMsec;
+    ULONGLONG LegacyLastAdspBatteryNotifyMsec;
     ULONG LegacyLastTestInfoRequestType;
     ULONG LegacyReserved;
 
@@ -576,6 +577,7 @@ typedef struct _PMIC_GLINK_DEVICE_CONTEXT
     ULONG UlogInterval;
     ULONG UlogLevel;
     ULONGLONG UlogCategories;
+    WDFTIMER LegacyBatteryRefreshTimer;
     WDFTIMER UlogTimer;
 } PMIC_GLINK_DEVICE_CONTEXT, *PPMIC_GLINK_DEVICE_CONTEXT;
 
