@@ -17,13 +17,13 @@ Environment:
 //
 // Define the tracing flags.
 //
-// Tracing GUID - 16f0c780-d6cf-4f60-a7ce-68f4c1d1bc1f
+// Tracing GUID - 595c0803-571e-433a-adbb-37bfdf223139
 //
 #pragma once
 
 #define WPP_CONTROL_GUIDS                                              \
     WPP_DEFINE_CONTROL_GUID(                                           \
-        PmicGlinkTraceGuid, (16f0c780,d6cf,4f60,a7ce,68f4c1d1bc1f), \
+        PmicGlinkTraceGuid, (595c0803,571e,433a,adbb,37bfdf223139), \
                                                                             \
         WPP_DEFINE_BIT(MYDRIVER_ALL_INFO)                              \
         WPP_DEFINE_BIT(TRACE_DRIVER)                                   \
