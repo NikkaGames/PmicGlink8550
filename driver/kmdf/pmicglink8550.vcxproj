@@ -230,19 +230,17 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
     <ClCompile>
+<TreatWarningAsError>false</TreatWarningAsError>
+      <SDLCheck>false</SDLCheck>
+      <DisableSpecificWarnings>4700;4701;4703;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);_UNICODE;UNICODE;POOL_NX_OPTIN=1</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);..\..\inc;..</AdditionalIncludeDirectories>
       <ExceptionHandling>
       </ExceptionHandling>
       <WppEnabled>true</WppEnabled>
-      <WppTraceFunction>
-      </WppTraceFunction>
       <WppScanConfigurationData>trace.h</WppScanConfigurationData>
-      <StructMemberAlignment>8Bytes</StructMemberAlignment>
-      <WppRecorderEnabled>true</WppRecorderEnabled>
-      <WppAdditionalIncludeDirectories>
-      </WppAdditionalIncludeDirectories>
-      <WppMinimalRebuildFromTracking>false</WppMinimalRebuildFromTracking>
+      <WppTraceFunction>Trace(LEVEL,FLAGS,MSG,...)</WppTraceFunction>
     </ClCompile>
     <Midl>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);_UNICODE;UNICODE;POOL_NX_OPTIN=1</PreprocessorDefinitions>
@@ -257,7 +255,7 @@
     </DriverSign>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\pmicglink8550.c">
+    <ClCompile Include="..\main.c">
       <WppEnabled Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">true</WppEnabled>
       <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">trace.h</WppScanConfigurationData>
       <WppTraceFunction Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">Trace(LEVEL,FLAGS,MSG,...)</WppTraceFunction>
@@ -272,14 +270,22 @@
     <None Exclude="@(None)" Include="*.txt;*.htm;*.html" />
     <None Exclude="@(None)" Include="*.ico;*.cur;*.bmp;*.dlg;*.rct;*.gif;*.jpg;*.jpeg;*.wav;*.jpe;*.tiff;*.tif;*.png;*.rc2" />
     <None Exclude="@(None)" Include="*.def;*.bat;*.hpj;*.asmx" />
-    <None Include="..\pmicglink8550_crashdump.c" />
-    <None Include="..\pmicglink8550_requests.c" />
-    <None Include="..\pmicglink8550_ulog.c" />
+    <None Include="..\battery.c" />
+    <None Include="..\channel.c" />
+    <None Include="..\crashdump.c" />
+    <None Include="..\device.c" />
+    <None Include="..\interfaces.c" />
+    <None Include="..\platform.c" />
+    <None Include="..\queue.c" />
+    <None Include="..\requests.c" />
+    <None Include="..\transport.c" />
+    <None Include="..\ulog.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Exclude="@(ClInclude)" Include="*.h;*.hpp;*.hxx;*.hm;*.inl;*.xsd" />
-    <ClInclude Include="..\pmicglink8550.h" />
-    <ClInclude Include="..\pmicglink8550_internal.h" />
+    <ClInclude Include="..\driver.h" />
+    <ClInclude Include="..\internal.h" />
+    <ClInclude Include="..\tag_aliases.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

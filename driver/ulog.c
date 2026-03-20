@@ -1,4 +1,4 @@
-/* ULOG channel and log collection subsystem. Included by pmicglink8550.c. */
+/* ULOG channel and log collection subsystem. Included by main.c. */
 
 VOID
 PmicGlinkUlogRxNotificationCb(

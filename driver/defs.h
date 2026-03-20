@@ -160,8 +160,8 @@ typedef char _UNKNOWN;
 #endif
 #define __fastfail(...) __fastfail(0)
 
-#include "pmicglink8550_tag_aliases.h"
-#include "pmicglink8550.h"
+#include "tag_aliases.h"
+#include "driver.h"
 
 extern void (__fastcall *const *WdfFunctions_01033)();
 extern unsigned int WdfMinimumVersionRequired;

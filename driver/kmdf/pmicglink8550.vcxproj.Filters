@@ -19,40 +19,32 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\pmicglink8550.c">
+    <ClCompile Include="..\main.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\pmicglink8550_crashdump.c">
-      <Filter>Source Files</Filter>
-    </None>
-    <None Include="..\pmicglink8550_requests.c">
-      <Filter>Source Files</Filter>
-    </None>
-    <None Include="..\pmicglink8550_ulog.c">
-      <Filter>Source Files</Filter>
-    </None>
+    <None Include="..\battery.c"><Filter>Source Files</Filter></None>
+    <None Include="..\channel.c"><Filter>Source Files</Filter></None>
+    <None Include="..\crashdump.c"><Filter>Source Files</Filter></None>
+    <None Include="..\device.c"><Filter>Source Files</Filter></None>
+    <None Include="..\interfaces.c"><Filter>Source Files</Filter></None>
+    <None Include="..\platform.c"><Filter>Source Files</Filter></None>
+    <None Include="..\queue.c"><Filter>Source Files</Filter></None>
+    <None Include="..\requests.c"><Filter>Source Files</Filter></None>
+    <None Include="..\transport.c"><Filter>Source Files</Filter></None>
+    <None Include="..\ulog.c"><Filter>Source Files</Filter></None>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="pmicglink8550.rc">
-      <Filter>Resource Files</Filter>
-    </ResourceCompile>
+    <ResourceCompile Include="pmicglink8550.rc"><Filter>Resource Files</Filter></ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <Inf Include="*.inx">
-      <Filter>Driver Files</Filter>
-    </Inf>
+    <Inf Include="*.inx"><Filter>Driver Files</Filter></Inf>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="*.h;*.hpp;*.hxx;*.hm;*.inl;*.xsd">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\pmicglink8550.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\pmicglink8550_internal.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
+    <ClInclude Include="*.h;*.hpp;*.hxx;*.hm;*.inl;*.xsd"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="..\driver.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="..\internal.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="..\tag_aliases.h"><Filter>Header Files</Filter></ClInclude>
   </ItemGroup>
 </Project>

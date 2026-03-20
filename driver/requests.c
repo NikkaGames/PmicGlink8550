@@ -1,4 +1,4 @@
-/* Request dispatch, battery handling, and glink RX path. Included by pmicglink8550.c. */
+/* Request dispatch, battery handling, and GLINK RX path. Included by main.c. */
 
 static NTSTATUS
 PmicGlinkUCSIWriteBuffer(

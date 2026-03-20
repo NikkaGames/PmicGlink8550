@@ -1,4 +1,4 @@
-/* Crashdump subsystem. Included by pmicglink8550.c. */
+/* Crashdump subsystem. Included by main.c. */
 
 static VOID
 CrashDumpGuidToHexKey(

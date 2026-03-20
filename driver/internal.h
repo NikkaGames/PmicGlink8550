@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pmicglink8550.h"
+#include "driver.h"
 
 #include <initguid.h>
 #include <wdmguid.h>
