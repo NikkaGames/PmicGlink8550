@@ -24,6 +24,17 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\pmicglink8550_crashdump.c">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="..\pmicglink8550_requests.c">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="..\pmicglink8550_ulog.c">
+      <Filter>Source Files</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
     <ResourceCompile Include="pmicglink8550.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
@@ -38,6 +49,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\pmicglink8550.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\pmicglink8550_internal.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

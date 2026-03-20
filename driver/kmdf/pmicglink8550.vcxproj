@@ -272,10 +272,14 @@
     <None Exclude="@(None)" Include="*.txt;*.htm;*.html" />
     <None Exclude="@(None)" Include="*.ico;*.cur;*.bmp;*.dlg;*.rct;*.gif;*.jpg;*.jpeg;*.wav;*.jpe;*.tiff;*.tif;*.png;*.rc2" />
     <None Exclude="@(None)" Include="*.def;*.bat;*.hpj;*.asmx" />
+    <None Include="..\pmicglink8550_crashdump.c" />
+    <None Include="..\pmicglink8550_requests.c" />
+    <None Include="..\pmicglink8550_ulog.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Exclude="@(ClInclude)" Include="*.h;*.hpp;*.hxx;*.hm;*.inl;*.xsd" />
     <ClInclude Include="..\pmicglink8550.h" />
+    <ClInclude Include="..\pmicglink8550_internal.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
