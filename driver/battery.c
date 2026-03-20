@@ -87,10 +87,9 @@ PmicGlinkEnsureLegacyBatteryRefreshTimer(
         return STATUS_SUCCESS;
     }
 
-    WDF_TIMER_CONFIG_INIT_PERIODIC(
+    WDF_TIMER_CONFIG_INIT(
         &timerConfig,
-        PmicGlinkLegacyBatteryRefreshTimerFunction,
-        PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS);
+        PmicGlinkLegacyBatteryRefreshTimerFunction);
     timerConfig.AutomaticSerialization = FALSE;
 
     WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
@@ -115,7 +114,7 @@ PmicGlinkEnsureLegacyBatteryRefreshTimer(
         DbgPrintEx(
             DPFLTR_IHVDRIVER_ID,
             PMICGLINK_TRACE_LEVEL,
-            "pmicglink: batt_fallback_timer created periodMs=%u\n",
+            "pmicglink: batt_fallback_timer created delayMs=%u\n",
             PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS);
     }
 
@@ -183,6 +182,9 @@ PmicGlinkLegacyBatteryRefreshTimerFunction(
         && ((nowMsec - context->LegacyLastAdspBatteryNotifyMsec)
             < (ULONGLONG)PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS))
     {
+        (VOID)WdfTimerStart(
+            Timer,
+            -((LONGLONG)PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS * 10000ll));
         return;
     }
 
@@ -202,6 +204,13 @@ PmicGlinkLegacyBatteryRefreshTimerFunction(
     context->LegacyStateChangePending = TRUE;
     context->Notify = TRUE;
     PmicGlinkPollBattMiniClass(context, "TIMER");
+
+    if (context->GlinkChannelConnected && !context->Hibernate)
+    {
+        (VOID)WdfTimerStart(
+            Timer,
+            -((LONGLONG)PMICGLINK_BATT_FALLBACK_REFRESH_PERIOD_MS * 10000ll));
+    }
 }
 
 
